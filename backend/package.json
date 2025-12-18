@@ -1,16 +1,14 @@
 {
   "name": "trading-master-pro-backend",
   "version": "1.0.0",
-  "description": "Backend API for Trading Master Pro",
+  "description": "Trading Master Pro API with OpenAI GPT-4 Vision",
   "main": "src/index.js",
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "nodemon src/index.js",
-    "test": "jest"
+    "dev": "nodemon src/index.js"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.24.0",
     "@supabase/supabase-js": "^2.39.0",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
@@ -18,6 +16,7 @@
     "express-rate-limit": "^7.1.5",
     "helmet": "^7.1.0",
     "multer": "^1.4.5-lts.1",
+    "openai": "^4.24.0",
     "stripe": "^14.10.0",
     "uuid": "^9.0.1",
     "zod": "^3.22.4"
