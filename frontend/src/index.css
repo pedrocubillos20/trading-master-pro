@@ -2,22 +2,26 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ============ BASE STYLES ============ */
+/* =============================================
+   TRADING MASTER PRO - ESTILOS GLOBALES
+   ============================================= */
+
+/* Variables CSS */
 :root {
-  --color-bg: #09090b;
+  --color-bg-primary: #09090b;
   --color-bg-secondary: #18181b;
   --color-bg-tertiary: #27272a;
-  --color-border: #27272a;
-  --color-text: #fafafa;
+  --color-border: #3f3f46;
+  --color-text-primary: #fafafa;
   --color-text-secondary: #a1a1aa;
   --color-text-muted: #71717a;
-  --color-primary: #22c55e;
-  --color-primary-dark: #16a34a;
-  --color-danger: #ef4444;
-  --color-warning: #f59e0b;
-  --color-info: #3b82f6;
+  --color-green: #22c55e;
+  --color-red: #ef4444;
+  --color-yellow: #eab308;
+  --color-blue: #3b82f6;
 }
 
+/* Reset y base */
 * {
   margin: 0;
   padding: 0;
@@ -30,69 +34,107 @@ html {
 
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  background-color: var(--color-bg);
-  color: var(--color-text);
+  background-color: var(--color-bg-primary);
+  color: var(--color-text-primary);
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* ============ SCROLLBAR ============ */
+/* Scrollbar personalizado */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--color-bg);
+  background: var(--color-bg-secondary);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-bg-tertiary);
+  background: var(--color-border);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #3f3f46;
+  background: #52525b;
 }
 
-/* ============ SELECTION ============ */
+/* Selección de texto */
 ::selection {
-  background-color: var(--color-primary);
-  color: #000;
+  background-color: rgba(34, 197, 94, 0.3);
+  color: white;
 }
 
-/* ============ FOCUS STYLES ============ */
+/* Focus visible */
 :focus-visible {
-  outline: 2px solid var(--color-primary);
+  outline: 2px solid var(--color-green);
   outline-offset: 2px;
 }
 
-/* ============ ANIMATIONS ============ */
+/* Links */
+a {
+  color: var(--color-green);
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+a:hover {
+  color: #4ade80;
+}
+
+/* Inputs */
+input, select, textarea {
+  font-family: inherit;
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+/* Animaciones */
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 @keyframes slideIn {
-  from { 
+  from {
     opacity: 0;
-    transform: translateY(10px);
+    transform: translateY(-10px);
   }
-  to { 
+  to {
     opacity: 1;
     transform: translateY(0);
   }
 }
 
 @keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
 }
 
 @keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .animate-fadeIn {
@@ -104,203 +146,173 @@ body {
 }
 
 .animate-pulse {
-  animation: pulse 2s infinite;
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
 .animate-spin {
   animation: spin 1s linear infinite;
 }
 
-/* ============ UTILITY CLASSES ============ */
+/* Utilidades personalizadas */
 .glass {
   background: rgba(24, 24, 27, 0.8);
-  backdrop-filter: blur(10px);
-  border: 1px solid var(--color-border);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
-.gradient-primary {
-  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-dark));
+.gradient-green {
+  background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
 }
 
-.gradient-danger {
-  background: linear-gradient(135deg, var(--color-danger), #dc2626);
-}
-
-.gradient-warning {
-  background: linear-gradient(135deg, var(--color-warning), #d97706);
+.gradient-red {
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
 }
 
 .text-gradient {
-  background: linear-gradient(90deg, var(--color-primary), #4ade80);
+  background: linear-gradient(135deg, #22c55e 0%, #4ade80 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
 
-/* ============ COMPONENT STYLES ============ */
+/* Botones base */
 .btn {
-  @apply px-4 py-2 rounded-lg font-semibold transition-all duration-200 
-         flex items-center justify-center gap-2 disabled:opacity-50 
-         disabled:cursor-not-allowed;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.75rem 1.5rem;
+  font-weight: 600;
+  font-size: 0.875rem;
+  border-radius: 0.5rem;
+  transition: all 0.2s;
+  cursor: pointer;
+  border: none;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .btn-primary {
-  @apply bg-gradient-to-r from-green-500 to-green-600 text-black 
-         hover:from-green-400 hover:to-green-500 shadow-lg shadow-green-500/20;
+  background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+  color: black;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: linear-gradient(135deg, #4ade80 0%, #22c55e 100%);
+  transform: translateY(-1px);
 }
 
 .btn-secondary {
-  @apply bg-zinc-800 text-white hover:bg-zinc-700 border border-zinc-700;
+  background-color: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background-color: #3f3f46;
+  border-color: #52525b;
 }
 
 .btn-danger {
-  @apply bg-gradient-to-r from-red-500 to-red-600 text-white 
-         hover:from-red-400 hover:to-red-500;
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  color: white;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: linear-gradient(135deg, #f87171 0%, #ef4444 100%);
 }
 
 .btn-ghost {
-  @apply bg-transparent text-zinc-400 hover:text-white hover:bg-zinc-800;
+  background: transparent;
+  color: var(--color-text-secondary);
 }
 
-.input {
-  @apply w-full px-4 py-3 bg-zinc-900 border border-zinc-800 rounded-lg 
-         text-white placeholder-zinc-500 focus:border-green-500 
-         focus:ring-1 focus:ring-green-500 transition-all duration-200;
+.btn-ghost:hover:not(:disabled) {
+  background-color: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
 }
 
+/* Cards */
 .card {
-  @apply bg-zinc-900/60 border border-zinc-800 rounded-2xl p-6 
-         backdrop-blur-sm;
+  background-color: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 1rem;
+  padding: 1.5rem;
 }
 
+.card-hover {
+  transition: all 0.2s;
+}
+
+.card-hover:hover {
+  border-color: #52525b;
+  transform: translateY(-2px);
+}
+
+/* Inputs estilizados */
+.input {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  background-color: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: 0.5rem;
+  color: var(--color-text-primary);
+  font-size: 0.875rem;
+  transition: all 0.2s;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--color-green);
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.1);
+}
+
+.input::placeholder {
+  color: var(--color-text-muted);
+}
+
+/* Badges */
 .badge {
-  @apply inline-flex items-center px-2.5 py-0.5 rounded-md text-xs 
-         font-semibold;
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border-radius: 9999px;
 }
 
-.badge-primary {
-  @apply bg-green-500/20 text-green-500 border border-green-500/30;
+.badge-green {
+  background-color: rgba(34, 197, 94, 0.1);
+  color: #22c55e;
 }
 
-.badge-danger {
-  @apply bg-red-500/20 text-red-500 border border-red-500/30;
+.badge-red {
+  background-color: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
 }
 
-.badge-warning {
-  @apply bg-yellow-500/20 text-yellow-500 border border-yellow-500/30;
+.badge-yellow {
+  background-color: rgba(234, 179, 8, 0.1);
+  color: #eab308;
 }
 
-.badge-info {
-  @apply bg-blue-500/20 text-blue-500 border border-blue-500/30;
+.badge-blue {
+  background-color: rgba(59, 130, 246, 0.1);
+  color: #3b82f6;
 }
 
-/* ============ SIDEBAR ============ */
-.sidebar {
-  @apply fixed left-0 top-0 h-screen bg-zinc-900 border-r border-zinc-800
-         flex flex-col transition-all duration-300 z-50;
+/* Toast notifications */
+.Toastify__toast {
+  background-color: var(--color-bg-secondary) !important;
+  border: 1px solid var(--color-border) !important;
+  border-radius: 0.75rem !important;
+  color: var(--color-text-primary) !important;
 }
 
-.sidebar-collapsed {
-  @apply w-[70px];
-}
-
-.sidebar-expanded {
-  @apply w-[260px];
-}
-
-.nav-item {
-  @apply flex items-center gap-3 px-4 py-3 mx-2 rounded-lg cursor-pointer
-         transition-all duration-200 text-zinc-400 hover:text-white 
-         hover:bg-zinc-800;
-}
-
-.nav-item.active {
-  @apply bg-green-500/10 text-green-500 border border-green-500/30;
-}
-
-/* ============ CHARTS ============ */
-.chart-container {
-  @apply w-full h-64 bg-zinc-900 rounded-lg border border-zinc-800;
-}
-
-/* ============ TABLES ============ */
-.table {
-  @apply w-full text-left;
-}
-
-.table th {
-  @apply px-4 py-3 text-xs font-semibold text-zinc-500 uppercase 
-         tracking-wider border-b border-zinc-800;
-}
-
-.table td {
-  @apply px-4 py-4 text-sm border-b border-zinc-800/50;
-}
-
-.table tr:hover td {
-  @apply bg-zinc-800/30;
-}
-
-/* ============ MODALS ============ */
-.modal-overlay {
-  @apply fixed inset-0 bg-black/70 backdrop-blur-sm z-50 
-         flex items-center justify-center p-4;
-}
-
-.modal-content {
-  @apply bg-zinc-900 border border-zinc-800 rounded-2xl p-6 
-         w-full max-w-lg max-h-[90vh] overflow-y-auto;
-}
-
-/* ============ DROPZONE ============ */
-.dropzone {
-  @apply border-2 border-dashed border-zinc-700 rounded-xl p-8 
-         text-center cursor-pointer transition-all duration-300
-         hover:border-green-500 hover:bg-green-500/5;
-}
-
-.dropzone.active {
-  @apply border-green-500 bg-green-500/10;
-}
-
-/* ============ EMOTION CARDS ============ */
-.emotion-card {
-  @apply p-4 rounded-xl border-2 cursor-pointer transition-all duration-200
-         text-center bg-zinc-900 border-zinc-800 hover:border-zinc-600;
-}
-
-.emotion-card.selected {
-  @apply border-current bg-current/10;
-}
-
-/* ============ CHECKLIST ============ */
-.checklist-item {
-  @apply flex items-center gap-3 p-4 rounded-lg border cursor-pointer
-         transition-all duration-200 bg-zinc-900 border-zinc-800;
-}
-
-.checklist-item.checked {
-  @apply bg-green-500/10 border-green-500/50;
-}
-
-.checklist-checkbox {
-  @apply w-6 h-6 rounded-md flex items-center justify-center
-         text-sm font-bold transition-all duration-200;
-}
-
-/* ============ LOADING ============ */
-.loading-spinner {
-  @apply w-8 h-8 border-4 border-zinc-700 border-t-green-500 
-         rounded-full animate-spin;
-}
-
-/* ============ RESPONSIVE ============ */
-@media (max-width: 768px) {
-  .sidebar {
-    @apply -translate-x-full;
-  }
-  
-  .sidebar.open {
-    @apply translate-x-0;
-  }
+/* React Hot Toast overrides */
+[data-sonner-toast] {
+  background-color: var(--color-bg-secondary) !important;
+  border: 1px solid var(--color-border) !important;
 }

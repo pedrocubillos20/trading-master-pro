@@ -12,15 +12,17 @@ ReactDOM.createRoot(document.getElementById('root')).render(
       <Toaster 
         position="top-right"
         toastOptions={{
+          duration: 3000,
           style: {
             background: '#18181b',
-            color: '#fff',
-            border: '1px solid #27272a',
+            color: '#fafafa',
+            border: '1px solid #3f3f46',
+            borderRadius: '0.75rem',
           },
           success: {
             iconTheme: {
               primary: '#22c55e',
-              secondary: '#fff',
+              secondary: '#000',
             },
           },
           error: {
@@ -32,5 +34,5 @@ ReactDOM.createRoot(document.getElementById('root')).render(
         }}
       />
     </BrowserRouter>
-  </React.StrictMode>,
+  </React.StrictMode>
 )
