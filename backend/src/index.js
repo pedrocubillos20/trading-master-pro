@@ -1,17 +1,18 @@
 // =============================================
 // TRADING MASTER PRO - BACKEND API v4.0
-// CommonJS Version - Compatible con Railway
+// ES Modules Version (import/export)
 // =============================================
 
-const express = require('express');
-const cors = require('cors');
-const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
-const { createClient } = require('@supabase/supabase-js');
-const OpenAI = require('openai');
-const multer = require('multer');
-const { v4: uuidv4 } = require('uuid');
-require('dotenv').config();
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import { createClient } from '@supabase/supabase-js';
+import OpenAI from 'openai';
+import multer from 'multer';
+import { v4 as uuidv4 } from 'uuid';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -25,13 +26,15 @@ console.log('SUPABASE_URL:', process.env.SUPABASE_URL ? '✅ Configurada' : '❌
 console.log('SUPABASE_SERVICE_ROLE_KEY:', process.env.SUPABASE_SERVICE_ROLE_KEY ? '✅ Configurada' : '❌ NO CONFIGURADA');
 console.log('\n');
 
-const supabase = process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
-  ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
-  : null;
+let supabase = null;
+if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+}
 
-const openai = process.env.OPENAI_API_KEY
-  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-  : null;
+let openai = null;
+if (process.env.OPENAI_API_KEY) {
+  openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+}
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -47,7 +50,7 @@ app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 
 // =============================================
-// REGLAS SMC/ICT PROFESIONALES
+// REGLAS SMC/ICT
 // =============================================
 
 const SMC_RULES = `
@@ -57,54 +60,34 @@ REGLAS ESTRICTAS SMC/ICT - SI NO SE CUMPLEN, NO HAY SEÑAL
 
 🚨 REGLA #1: ESTRUCTURA DE MERCADO CLARA
 - Debe existir un BOS (Break of Structure) o CHoCH (Change of Character) CONFIRMADO
-- BOS = Continuación de tendencia (rompe el último swing en dirección de la tendencia)
-- CHoCH = Cambio de tendencia (rompe estructura contraria)
 - Sin BOS o CHoCH claro = NO HAY SEÑAL
 
 🚨 REGLA #2: RETROCESO A ZONA DE INTERÉS
 - Después del BOS/CHoCH, el precio DEBE retroceder a:
-  * Order Block (OB) de oferta (para ventas) o demanda (para compras)
+  * Order Block (OB) de oferta o demanda
   * Fair Value Gap (FVG) sin mitigar
-  * Zona OTE (Optimal Trade Entry) 61.8%-79% del movimiento
-- Si no hay retroceso a zona de interés = NO HAY SEÑAL
+  * Zona OTE (61.8%-79%)
 
 🚨 REGLA #3: LIQUIDEZ BARRIDA
-- Preferiblemente debe existir un barrido de liquidez (sweep) antes de la entrada
-- BSL (Buy Side Liquidity) barrido para compras
-- SSL (Sell Side Liquidity) barrido para ventas
+- Debe existir un barrido de liquidez (sweep) antes de la entrada
 
 🚨 REGLA #4: CONFIRMACIÓN EN TEMPORALIDAD MENOR
-- La entrada se ejecuta en 5M o 1M
-- Debe haber confirmación: vela de rechazo, engulfing, o shift de estructura menor
+- La entrada se ejecuta en 5M o 1M con confirmación
 
 🚨 REGLA #5: ALINEACIÓN MULTI-TIMEFRAME
-- H1/H4: Define la TENDENCIA PRINCIPAL
-- 15M: Define ZONAS DE INTERÉS (OB, FVG)
-- 5M: REFINAMIENTO de entrada
-- 1M: ENTRADA PRECISA (sniper entry)
+- H1: Tendencia | 15M: Zonas | 5M: Refinamiento | 1M: Entrada
 
 ═══════════════════════════════════════════════════════════
-RATIO RIESGO:BENEFICIO POR MERCADO
+RATIO R:R POR MERCADO
 ═══════════════════════════════════════════════════════════
-
-📊 ÍNDICES SINTÉTICOS (Deriv): Mínimo 1:3, Objetivo 1:5
-📊 FOREX: Mínimo 1:2, Objetivo 1:3
-📊 METALES: Mínimo 1:2, Objetivo 1:3
-📊 CRYPTO: Mínimo 1:3, Objetivo 1:5
-
-═══════════════════════════════════════════════════════════
-CONCEPTOS SMC/ICT
-═══════════════════════════════════════════════════════════
-
-1. ESTRUCTURA: HH/HL (Alcista), LH/LL (Bajista), BOS, CHoCH, MSS
-2. ORDER BLOCKS: OB Demanda (última vela bajista antes de subida), OB Oferta (última vela alcista antes de bajada)
-3. FAIR VALUE GAP: Imbalance de 3 velas
-4. LIQUIDEZ: BSL, SSL, EQH, EQL
-5. ZONAS: Premium (vender), Discount (comprar), OTE (61.8%-79%)
+📊 ÍNDICES SINTÉTICOS: 1:3 - 1:5
+📊 FOREX: 1:2 - 1:3
+📊 METALES: 1:2 - 1:3
+📊 CRYPTO: 1:3 - 1:5
 `;
 
 // =============================================
-// PROMPT PRINCIPAL
+// PROMPT ANÁLISIS
 // =============================================
 
 const ANALYSIS_PROMPT = `Eres un TRADER INSTITUCIONAL experto en Smart Money Concepts (SMC) e Inner Circle Trader (ICT).
@@ -160,7 +143,7 @@ FORMATO DE RESPUESTA JSON:
 }`;
 
 // =============================================
-// PROMPT CHAT SEGUIMIENTO
+// PROMPT CHAT
 // =============================================
 
 const FOLLOWUP_PROMPT = `Eres un MENTOR DE TRADING experto en SMC/ICT ayudando a gestionar una operación EN VIVO.
@@ -168,7 +151,7 @@ const FOLLOWUP_PROMPT = `Eres un MENTOR DE TRADING experto en SMC/ICT ayudando a
 CONTEXTO DE LA OPERACIÓN:
 {TRADE_CONTEXT}
 
-Analiza las imágenes y responde:
+Responde en JSON:
 {
   "evaluacion": "¿La operación sigue válida?",
   "accion_recomendada": "MANTENER/CERRAR PARCIAL/CERRAR TODO/MOVER SL/AÑADIR",
@@ -191,8 +174,8 @@ const authenticate = async (req, res, next) => {
     }
 
     const token = authHeader.split(' ')[1];
-    const { data: { user }, error } = await supabase.auth.getUser(token);
-    req.user = error || !user ? { id: 'demo-user', email: 'demo@example.com' } : user;
+    const { data, error } = await supabase.auth.getUser(token);
+    req.user = error || !data?.user ? { id: 'demo-user', email: 'demo@example.com' } : data.user;
     next();
   } catch (error) {
     req.user = { id: 'demo-user', email: 'demo@example.com' };
@@ -349,10 +332,7 @@ RESPONDE SOLO CON JSON.`
     res.json({
       success: true,
       analysis,
-      meta: {
-        tokensUsed: response.usage?.total_tokens,
-        images: imageContents.length
-      }
+      meta: { tokensUsed: response.usage?.total_tokens, images: imageContents.length }
     });
 
   } catch (error) {
@@ -526,7 +506,6 @@ app.get('/api/stats/advanced', authenticate, async (req, res) => {
     const wins = trades.filter(t => t.result === 'win');
     const losses = trades.filter(t => t.result === 'loss');
     
-    // Por activo
     const assetMap = {};
     trades.forEach(t => {
       if (!assetMap[t.asset]) assetMap[t.asset] = { wins: 0, losses: 0, profit: 0 };
@@ -540,7 +519,6 @@ app.get('/api/stats/advanced', authenticate, async (req, res) => {
       winRate: data.wins + data.losses > 0 ? ((data.wins / (data.wins + data.losses)) * 100).toFixed(1) : 0
     }));
 
-    // Rachas
     let bestWinStreak = 0, worstLossStreak = 0, tempWin = 0, tempLoss = 0;
     trades.forEach(t => {
       if (t.result === 'win') { tempWin++; tempLoss = 0; if (tempWin > bestWinStreak) bestWinStreak = tempWin; }
@@ -589,13 +567,8 @@ app.listen(PORT, () => {
 ║  🚀 Puerto: ${PORT}                                          ║
 ║  🤖 OpenAI: ${openai ? '✅ Conectado' : '❌ No configurado'}                       ║
 ║  💾 Supabase: ${supabase ? '✅ Conectado' : '❌ No configurado'}                     ║
-╠═══════════════════════════════════════════════════════════╣
-║  Endpoints:                                               ║
-║  • POST /api/analyze - Análisis SMC                       ║
-║  • POST /api/chat - Chat seguimiento                      ║
-║  • GET /api/stats/advanced - Estadísticas                 ║
 ╚═══════════════════════════════════════════════════════════╝
   `);
 });
 
-module.exports = app;
+export default app;
