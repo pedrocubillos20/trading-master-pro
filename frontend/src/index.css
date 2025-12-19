@@ -2,317 +2,32 @@
 @tailwind components;
 @tailwind utilities;
 
-/* =============================================
-   TRADING MASTER PRO - ESTILOS GLOBALES
-   ============================================= */
-
-/* Variables CSS */
-:root {
-  --color-bg-primary: #09090b;
-  --color-bg-secondary: #18181b;
-  --color-bg-tertiary: #27272a;
-  --color-border: #3f3f46;
-  --color-text-primary: #fafafa;
-  --color-text-secondary: #a1a1aa;
-  --color-text-muted: #71717a;
-  --color-green: #22c55e;
-  --color-red: #ef4444;
-  --color-yellow: #eab308;
-  --color-blue: #3b82f6;
-}
-
-/* Reset y base */
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
 }
 
-html {
-  scroll-behavior: smooth;
-}
-
 body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  background-color: var(--color-bg-primary);
-  color: var(--color-text-primary);
-  line-height: 1.6;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  font-family: 'Inter', system-ui, sans-serif;
+  background-color: #0a0a0a;
+  color: #ffffff;
 }
 
-/* Scrollbar personalizado */
+/* Scrollbar */
 ::-webkit-scrollbar {
   width: 8px;
-  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--color-bg-secondary);
+  background: #18181b;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-border);
+  background: #3f3f46;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
   background: #52525b;
-}
-
-/* Selección de texto */
-::selection {
-  background-color: rgba(34, 197, 94, 0.3);
-  color: white;
-}
-
-/* Focus visible */
-:focus-visible {
-  outline: 2px solid var(--color-green);
-  outline-offset: 2px;
-}
-
-/* Links */
-a {
-  color: var(--color-green);
-  text-decoration: none;
-  transition: color 0.2s;
-}
-
-a:hover {
-  color: #4ade80;
-}
-
-/* Inputs */
-input, select, textarea {
-  font-family: inherit;
-}
-
-input[type="number"]::-webkit-inner-spin-button,
-input[type="number"]::-webkit-outer-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
-
-input[type="number"] {
-  -moz-appearance: textfield;
-}
-
-/* Animaciones */
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes slideIn {
-  from {
-    opacity: 0;
-    transform: translateY(-10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes pulse {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
-  }
-}
-
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.animate-fadeIn {
-  animation: fadeIn 0.3s ease-out;
-}
-
-.animate-slideIn {
-  animation: slideIn 0.3s ease-out;
-}
-
-.animate-pulse {
-  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-}
-
-.animate-spin {
-  animation: spin 1s linear infinite;
-}
-
-/* Utilidades personalizadas */
-.glass {
-  background: rgba(24, 24, 27, 0.8);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-}
-
-.gradient-green {
-  background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
-}
-
-.gradient-red {
-  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-}
-
-.text-gradient {
-  background: linear-gradient(135deg, #22c55e 0%, #4ade80 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-/* Botones base */
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0.75rem 1.5rem;
-  font-weight: 600;
-  font-size: 0.875rem;
-  border-radius: 0.5rem;
-  transition: all 0.2s;
-  cursor: pointer;
-  border: none;
-}
-
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.btn-primary {
-  background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
-  color: black;
-}
-
-.btn-primary:hover:not(:disabled) {
-  background: linear-gradient(135deg, #4ade80 0%, #22c55e 100%);
-  transform: translateY(-1px);
-}
-
-.btn-secondary {
-  background-color: var(--color-bg-tertiary);
-  color: var(--color-text-primary);
-  border: 1px solid var(--color-border);
-}
-
-.btn-secondary:hover:not(:disabled) {
-  background-color: #3f3f46;
-  border-color: #52525b;
-}
-
-.btn-danger {
-  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-  color: white;
-}
-
-.btn-danger:hover:not(:disabled) {
-  background: linear-gradient(135deg, #f87171 0%, #ef4444 100%);
-}
-
-.btn-ghost {
-  background: transparent;
-  color: var(--color-text-secondary);
-}
-
-.btn-ghost:hover:not(:disabled) {
-  background-color: var(--color-bg-tertiary);
-  color: var(--color-text-primary);
-}
-
-/* Cards */
-.card {
-  background-color: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
-  border-radius: 1rem;
-  padding: 1.5rem;
-}
-
-.card-hover {
-  transition: all 0.2s;
-}
-
-.card-hover:hover {
-  border-color: #52525b;
-  transform: translateY(-2px);
-}
-
-/* Inputs estilizados */
-.input {
-  width: 100%;
-  padding: 0.75rem 1rem;
-  background-color: var(--color-bg-tertiary);
-  border: 1px solid var(--color-border);
-  border-radius: 0.5rem;
-  color: var(--color-text-primary);
-  font-size: 0.875rem;
-  transition: all 0.2s;
-}
-
-.input:focus {
-  outline: none;
-  border-color: var(--color-green);
-  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.1);
-}
-
-.input::placeholder {
-  color: var(--color-text-muted);
-}
-
-/* Badges */
-.badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.25rem 0.75rem;
-  font-size: 0.75rem;
-  font-weight: 500;
-  border-radius: 9999px;
-}
-
-.badge-green {
-  background-color: rgba(34, 197, 94, 0.1);
-  color: #22c55e;
-}
-
-.badge-red {
-  background-color: rgba(239, 68, 68, 0.1);
-  color: #ef4444;
-}
-
-.badge-yellow {
-  background-color: rgba(234, 179, 8, 0.1);
-  color: #eab308;
-}
-
-.badge-blue {
-  background-color: rgba(59, 130, 246, 0.1);
-  color: #3b82f6;
-}
-
-/* Toast notifications */
-.Toastify__toast {
-  background-color: var(--color-bg-secondary) !important;
-  border: 1px solid var(--color-border) !important;
-  border-radius: 0.75rem !important;
-  color: var(--color-text-primary) !important;
-}
-
-/* React Hot Toast overrides */
-[data-sonner-toast] {
-  background-color: var(--color-bg-secondary) !important;
-  border: 1px solid var(--color-border) !important;
 }

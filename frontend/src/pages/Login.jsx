@@ -1,26 +1,43 @@
 // =============================================
-// LOGIN PAGE
+// TRADING MASTER PRO - LOGIN
 // =============================================
 
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
-import { useAuthStore } from '../store'
+import { Link, useNavigate } from 'react-router-dom'
+import { supabase } from '../services/supabase'
 import toast from 'react-hot-toast'
 
 export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
-  const { signIn } = useAuthStore()
+  const navigate = useNavigate()
 
-  const handleSubmit = async (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault()
+    
+    if (!email || !password) {
+      toast.error('Completa todos los campos')
+      return
+    }
+
     setLoading(true)
 
     try {
-      await signIn(email, password)
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password
+      })
+
+      if (error) throw error
+
       toast.success('¡Bienvenido de vuelta!')
+      
+      // Forzar redirección
+      window.location.href = '/'
+      
     } catch (error) {
+      console.error('Error:', error)
       toast.error(error.message || 'Error al iniciar sesión')
     } finally {
       setLoading(false)
@@ -30,58 +47,48 @@ export default function Login() {
   return (
     <div className="min-h-screen bg-zinc-950 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        {/* Logo */}
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-white mb-2">
-            Trading Master <span className="text-green-500">Pro</span>
+          <h1 className="text-3xl font-bold">
+            <span className="text-white">Trading Master</span>
+            <span className="text-green-500"> Pro</span>
           </h1>
-          <p className="text-zinc-400">Inicia sesión para continuar</p>
+          <p className="text-zinc-400 mt-2">Inicia sesión para continuar</p>
         </div>
 
-        {/* Form Card */}
-        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-8">
-          <form onSubmit={handleSubmit} className="space-y-6">
-            {/* Email */}
+        <form onSubmit={handleLogin} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-8">
+          <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-zinc-300 mb-2">
-                Email
-              </label>
+              <label className="text-zinc-400 text-sm block mb-2">Email</label>
               <input
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-lg text-white placeholder-zinc-500 focus:border-green-500 focus:ring-1 focus:ring-green-500 transition-all"
+                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-3 text-white focus:border-green-500 focus:outline-none"
                 placeholder="tu@email.com"
-                required
               />
             </div>
 
-            {/* Password */}
             <div>
-              <label className="block text-sm font-medium text-zinc-300 mb-2">
-                Contraseña
-              </label>
+              <label className="text-zinc-400 text-sm block mb-2">Contraseña</label>
               <input
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-lg text-white placeholder-zinc-500 focus:border-green-500 focus:ring-1 focus:ring-green-500 transition-all"
+                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-3 text-white focus:border-green-500 focus:outline-none"
                 placeholder="••••••••"
-                required
               />
             </div>
 
-            {/* Submit Button */}
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 bg-gradient-to-r from-green-500 to-green-600 text-black font-semibold rounded-lg hover:from-green-400 hover:to-green-500 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full bg-green-500 text-black font-bold py-3 rounded-lg hover:bg-green-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? (
                 <span className="flex items-center justify-center gap-2">
-                  <svg className="w-5 h-5 animate-spin" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                   </svg>
                   Iniciando...
                 </span>
@@ -89,26 +96,19 @@ export default function Login() {
                 'Iniciar Sesión'
               )}
             </button>
-          </form>
-
-          {/* Divider */}
-          <div className="flex items-center my-6">
-            <div className="flex-1 border-t border-zinc-700"></div>
-            <span className="px-4 text-sm text-zinc-500">o</span>
-            <div className="flex-1 border-t border-zinc-700"></div>
           </div>
 
-          {/* Register Link */}
-          <p className="text-center text-zinc-400">
-            ¿No tienes cuenta?{' '}
-            <Link to="/register" className="text-green-500 hover:text-green-400 font-medium">
-              Regístrate gratis
-            </Link>
-          </p>
-        </div>
+          <div className="mt-6 text-center">
+            <p className="text-zinc-500">
+              ¿No tienes cuenta?{' '}
+              <Link to="/register" className="text-green-500 hover:text-green-400">
+                Regístrate gratis
+              </Link>
+            </p>
+          </div>
+        </form>
 
-        {/* Footer */}
-        <p className="text-center text-zinc-600 text-sm mt-6">
+        <p className="text-center text-zinc-600 text-sm mt-8">
           Trading Master Pro © 2025
         </p>
       </div>
