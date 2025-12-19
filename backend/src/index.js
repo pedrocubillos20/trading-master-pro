@@ -1,6 +1,6 @@
 // =============================================
-// TRADING MASTER PRO - BACKEND API v2.0
-// Análisis SMC Multi-Timeframe con OpenAI GPT-4 Vision
+// TRADING MASTER PRO - BACKEND API v3.0
+// Sistema SMC Multi-Timeframe con Aprendizaje
 // =============================================
 
 import express from 'express';
@@ -9,7 +9,6 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
-import Stripe from 'stripe';
 import multer from 'multer';
 import { v4 as uuidv4 } from 'uuid';
 import dotenv from 'dotenv';
@@ -20,25 +19,51 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 // =============================================
+// VERIFICACIÓN DE CONFIGURACIÓN
+// =============================================
+console.log('\n🔧 VERIFICANDO CONFIGURACIÓN...\n');
+console.log('OPENAI_API_KEY:', process.env.OPENAI_API_KEY ? '✅ Configurada' : '❌ NO CONFIGURADA');
+console.log('SUPABASE_URL:', process.env.SUPABASE_URL ? '✅ Configurada' : '❌ NO CONFIGURADA');
+console.log('SUPABASE_SERVICE_ROLE_KEY:', process.env.SUPABASE_SERVICE_ROLE_KEY ? '✅ Configurada' : '❌ NO CONFIGURADA');
+console.log('FRONTEND_URL:', process.env.FRONTEND_URL || 'No configurada (usando *)');
+console.log('\n');
+
+// =============================================
 // CONFIGURACIÓN DE CLIENTES
 // =============================================
 
-const supabase = createClient(
-  process.env.SUPABASE_URL || '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY || ''
-);
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY || ''
-});
-
-const stripe = process.env.STRIPE_SECRET_KEY 
-  ? new Stripe(process.env.STRIPE_SECRET_KEY)
+const supabase = process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
+  ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
   : null;
 
+const openai = process.env.OPENAI_API_KEY
+  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  : null;
+
+// Verificar conexión con OpenAI al iniciar
+const verifyOpenAI = async () => {
+  if (!openai) {
+    console.log('⚠️ OpenAI NO está configurado - Los análisis no funcionarán');
+    return false;
+  }
+  try {
+    const test = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [{ role: 'user', content: 'test' }],
+      max_tokens: 5
+    });
+    console.log('✅ OpenAI conectado correctamente');
+    return true;
+  } catch (error) {
+    console.log('❌ Error conectando con OpenAI:', error.message);
+    return false;
+  }
+};
+
+// Multer para imágenes
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
   fileFilter: (req, file, cb) => {
     if (file.mimetype.startsWith('image/')) {
       cb(null, true);
@@ -52,51 +77,57 @@ const upload = multer({
 // MIDDLEWARE
 // =============================================
 
-app.use(helmet());
+app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 app.use(cors({
-  origin: process.env.FRONTEND_URL || '*',
-  credentials: true
+  origin: '*', // Permitir todos los orígenes por ahora
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
-app.use(express.json({ limit: '50mb' }));
+app.use(express.json({ limit: '100mb' }));
+app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 
-const generalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  message: { error: 'Demasiadas solicitudes, intenta más tarde' }
-});
-
+// Rate limiting
 const analysisLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
-  max: 20,
+  max: 50,
   message: { error: 'Límite de análisis alcanzado, espera 1 hora' }
 });
 
-app.use('/api', generalLimiter);
-app.use('/api/analyze', analysisLimiter);
-
 // =============================================
-// MIDDLEWARE DE AUTENTICACIÓN
+// MIDDLEWARE DE AUTENTICACIÓN (SIMPLIFICADO)
 // =============================================
 
 const authenticate = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
+    
+    // Si no hay supabase configurado, permitir acceso (modo demo)
+    if (!supabase) {
+      req.user = { id: 'demo-user', email: 'demo@example.com' };
+      return next();
+    }
+
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'Token no proporcionado' });
+      // Modo demo si no hay token
+      req.user = { id: 'demo-user', email: 'demo@example.com' };
+      return next();
     }
 
     const token = authHeader.split(' ')[1];
     const { data: { user }, error } = await supabase.auth.getUser(token);
 
     if (error || !user) {
-      return res.status(401).json({ error: 'Token inválido' });
+      req.user = { id: 'demo-user', email: 'demo@example.com' };
+      return next();
     }
 
     req.user = user;
     next();
   } catch (error) {
     console.error('Auth error:', error);
-    res.status(401).json({ error: 'Error de autenticación' });
+    req.user = { id: 'demo-user', email: 'demo@example.com' };
+    next();
   }
 };
 
@@ -107,418 +138,546 @@ const authenticate = async (req, res, next) => {
 app.get('/', (req, res) => {
   res.json({ 
     status: 'ok', 
-    service: 'Trading Master Pro API v2.0',
-    version: '2.0.0',
-    ai: 'OpenAI GPT-4 Vision',
-    features: ['Multi-Timeframe SMC Analysis', 'ICT Methodology', 'Precise Entries']
+    service: 'Trading Master Pro API v3.0',
+    version: '3.0.0',
+    ai: openai ? 'OpenAI GPT-4 Vision ✅' : 'OpenAI NO CONFIGURADO ❌',
+    supabase: supabase ? 'Conectado ✅' : 'No configurado',
+    features: [
+      'Multi-Timeframe SMC Analysis',
+      'ICT Methodology', 
+      'Precise Entries',
+      'Learning System',
+      'Risk Management'
+    ]
   });
 });
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'healthy', timestamp: new Date().toISOString() });
+  res.json({ 
+    status: 'healthy', 
+    timestamp: new Date().toISOString(),
+    openai: openai ? 'connected' : 'not configured',
+    supabase: supabase ? 'connected' : 'not configured'
+  });
 });
 
-// =============================================
-// PROMPT SMC/ICT MULTI-TIMEFRAME PROFESIONAL
-// =============================================
-
-const SMC_MULTI_TIMEFRAME_PROMPT = `Eres un analista de trading institucional EXPERTO en Smart Money Concepts (SMC) e Inner Circle Trader (ICT). 
-
-Tu trabajo es analizar 4 gráficos de diferentes temporalidades (H1, 15M, 5M, 1M) y proporcionar un análisis PROFESIONAL con entradas EXACTAS para que el trader solo tenga que ejecutar en MetaTrader.
-
-═══════════════════════════════════════════════════════════
-METODOLOGÍA DE ANÁLISIS MULTI-TIMEFRAME (DE MAYOR A MENOR)
-═══════════════════════════════════════════════════════════
-
-📊 H1 (TEMPORALIDAD ALTA - Contexto y Dirección):
-- Determinar la TENDENCIA PRINCIPAL (Alcista/Bajista/Rango)
-- Identificar la ESTRUCTURA DE MERCADO (HH/HL o LH/LL)
-- Localizar ZONAS DE LIQUIDEZ principales (BSL/SSL)
-- Marcar ORDER BLOCKS institucionales de H1
-- Identificar FAIR VALUE GAPS (FVG) sin rellenar
-
-📊 15M (TEMPORALIDAD MEDIA - Zonas de Interés):
-- Confirmar la dirección de H1
-- Identificar BOS (Break of Structure) o ChoCH (Change of Character)
-- Localizar ORDER BLOCKS refinados
-- Identificar zonas de PREMIUM/DISCOUNT
-- Buscar LIQUIDEZ que fue barrida o pendiente de barrer
-
-📊 5M (TEMPORALIDAD DE ENTRADA - Refinamiento):
-- Buscar el ORDER BLOCK de entrada preciso
-- Identificar FVG para entrada
-- Confirmar barrido de liquidez
-- Buscar SHIFT en estructura de mercado
-- Zona OTE (Optimal Trade Entry) 61.8%-79%
-
-📊 1M (TEMPORALIDAD DE PRECISIÓN - Entrada Exacta):
-- Entrada SNIPER en el Order Block
-- Confirmación de vela de rechazo
-- Stop Loss detrás del Order Block
-- Identificar el momento EXACTO de entrada
-
-═══════════════════════════════════════════════════════════
-CONCEPTOS SMC/ICT QUE DEBES APLICAR
-═══════════════════════════════════════════════════════════
-
-1. ESTRUCTURA DE MERCADO:
-   - BOS (Break of Structure): Continuación de tendencia
-   - ChoCH (Change of Character): Cambio de tendencia
-   - HH/HL (Higher High/Higher Low): Tendencia alcista
-   - LH/LL (Lower High/Lower Low): Tendencia bajista
-
-2. ZONAS DE INTERÉS INSTITUCIONAL:
-   - Order Block (OB): Última vela contraria antes de movimiento impulsivo
-   - Breaker Block: OB que fue invalidado y ahora actúa inverso
-   - Mitigation Block: OB que ya fue tocado parcialmente
-   - Fair Value Gap (FVG): Imbalance de 3 velas (la del medio no toca las otras)
-
-3. LIQUIDEZ:
-   - BSL (Buy Side Liquidity): Stops de vendedores sobre máximos
-   - SSL (Sell Side Liquidity): Stops de compradores bajo mínimos
-   - Equal Highs/Lows: Dobles/triples techos o suelos (liquidez acumulada)
-   - Liquidity Sweep: Barrido de liquidez antes de reversión
-
-4. CONCEPTOS DE ENTRADA:
-   - OTE (Optimal Trade Entry): Zona 61.8%-79% del movimiento
-   - Premium Zone: Por encima del 50% (zona para vender)
-   - Discount Zone: Por debajo del 50% (zona para comprar)
-
-═══════════════════════════════════════════════════════════
-FORMATO DE RESPUESTA (JSON ESTRICTO)
-═══════════════════════════════════════════════════════════
-
-RESPONDE ÚNICAMENTE con este JSON (sin texto adicional):
-
-{
-  "analisis_general": {
-    "tendencia_principal": "ALCISTA | BAJISTA | RANGO",
-    "sesgo": "COMPRA | VENTA | NEUTRAL",
-    "confianza": "ALTA | MEDIA | BAJA",
-    "probabilidad_exito": "XX%"
-  },
+// Verificar estado de OpenAI
+app.get('/api/check-ai', async (req, res) => {
+  if (!openai) {
+    return res.json({ 
+      connected: false, 
+      error: 'OPENAI_API_KEY no está configurada en el servidor' 
+    });
+  }
   
-  "analisis_por_temporalidad": {
-    "H1": {
-      "estructura": "Descripción de la estructura de mercado",
-      "zonas_clave": ["zona 1", "zona 2"],
-      "liquidez": "Descripción de liquidez BSL/SSL"
-    },
-    "M15": {
-      "estructura": "Descripción de estructura",
-      "order_blocks": ["OB 1", "OB 2"],
-      "fvg": ["FVG 1 si existe"]
-    },
-    "M5": {
-      "estructura": "Descripción de estructura",
-      "zona_entrada": "Descripción de la zona de entrada",
-      "confirmaciones": ["confirmación 1", "confirmación 2"]
-    },
-    "M1": {
-      "entrada_precisa": "Descripción del punto exacto de entrada",
-      "patron_vela": "Tipo de vela de confirmación esperada"
-    }
-  },
-  
-  "setup_de_entrada": {
-    "tipo": "COMPRA | VENTA",
-    "precio_entrada": "X.XXXXX (precio exacto)",
-    "stop_loss": "X.XXXXX (precio exacto)",
-    "take_profit_1": "X.XXXXX (primer objetivo)",
-    "take_profit_2": "X.XXXXX (segundo objetivo)", 
-    "take_profit_3": "X.XXXXX (tercer objetivo)",
-    "pips_de_riesgo": "XX pips",
-    "pips_de_ganancia_tp1": "XX pips",
-    "ratio_rr": "1:X.X"
-  },
-  
-  "instrucciones_metatrader": {
-    "accion_inmediata": "ESPERAR | ENTRAR AHORA | ORDEN PENDIENTE",
-    "tipo_orden": "BUY MARKET | SELL MARKET | BUY LIMIT | SELL LIMIT | BUY STOP | SELL STOP",
-    "pasos": [
-      "Paso 1: Descripción detallada",
-      "Paso 2: Descripción detallada",
-      "Paso 3: Descripción detallada",
-      "Paso 4: Descripción detallada"
-    ],
-    "confirmacion_necesaria": "Descripción de qué esperar antes de entrar (si aplica)",
-    "invalidacion": "Qué debe pasar para que el setup se invalide"
-  },
-  
-  "gestion_de_riesgo": {
-    "riesgo_recomendado": "1-2% del capital",
-    "parciales": [
-      {"en_tp1": "Cerrar 50% de la posición"},
-      {"en_tp2": "Cerrar 30% de la posición"},
-      {"en_tp3": "Cerrar 20% restante"}
-    ],
-    "mover_sl_a_be": "Cuando el precio alcance TP1, mover SL a Break Even"
-  },
-  
-  "advertencias": [
-    "Advertencia 1 si existe",
-    "Advertencia 2 si existe"
-  ],
-  
-  "resumen_ejecutivo": "Resumen de 2-3 oraciones explicando el setup de forma clara y concisa para que cualquier trader lo entienda."
-}
-
-═══════════════════════════════════════════════════════════
-REGLAS IMPORTANTES
-═══════════════════════════════════════════════════════════
-
-1. Si no hay setup claro, indica "ESPERAR" y explica qué condiciones faltan
-2. El SL siempre debe estar DETRÁS del Order Block de entrada
-3. Mínimo ratio R:R de 1:2 para considerar válido el setup
-4. Si la liquidez no ha sido barrida, recomienda esperar
-5. Prioriza setups con múltiples confluencias (OB + FVG + Liquidez barrida)
-6. Sé ESPECÍFICO con los precios - no uses rangos vagos
-7. Explica el "POR QUÉ" de cada nivel que sugieras
-8. Si las temporalidades están en conflicto, indica "NEUTRAL" y explica
-
-═══════════════════════════════════════════════════════════`;
-
-// =============================================
-// RUTA DE ANÁLISIS SMC MULTI-TIMEFRAME
-// =============================================
-
-app.post('/api/analyze', authenticate, upload.array('images', 4), async (req, res) => {
   try {
-    const { asset, direction, accountBalance, riskPercent } = req.body;
-    const images = req.files || [];
-    
-    // También aceptar imágenes en base64 desde el body
-    let base64Images = [];
-    if (req.body.images) {
-      try {
-        base64Images = JSON.parse(req.body.images);
-      } catch {
-        base64Images = [];
-      }
-    }
-
-    const totalImages = images.length + base64Images.length;
-
-    if (totalImages === 0) {
-      return res.status(400).json({ 
-        error: 'Se requieren imágenes para el análisis',
-        required: 'Sube 4 imágenes: H1, 15M, 5M, 1M'
-      });
-    }
-
-    if (totalImages < 4) {
-      return res.status(400).json({ 
-        error: `Solo subiste ${totalImages} imagen(es)`,
-        required: 'Para un análisis completo necesitas 4 imágenes: H1, 15M, 5M y 1M',
-        tip: 'Puedes continuar pero el análisis será menos preciso'
-      });
-    }
-
-    // Verificar que OpenAI está configurado
-    if (!process.env.OPENAI_API_KEY) {
-      return res.status(500).json({ error: 'OpenAI API no configurada' });
-    }
-
-    // Construir el mensaje para GPT-4 Vision
-    const userMessage = `
-ACTIVO A ANALIZAR: ${asset || 'Identificar del gráfico'}
-DIRECCIÓN QUE CONSIDERA EL TRADER: ${direction || 'Sin preferencia - analiza objetivamente'}
-${accountBalance ? `BALANCE DE CUENTA: $${accountBalance}` : ''}
-${riskPercent ? `RIESGO POR TRADE: ${riskPercent}%` : ''}
-
-IMÁGENES PROPORCIONADAS (en orden):
-- Imagen 1: Gráfico H1 (1 hora) - Contexto general
-- Imagen 2: Gráfico 15M (15 minutos) - Zonas de interés
-- Imagen 3: Gráfico 5M (5 minutos) - Refinamiento de entrada
-- Imagen 4: Gráfico 1M (1 minuto) - Entrada precisa
-
-Por favor, analiza estos 4 timeframes usando la metodología SMC/ICT y proporciona:
-1. Análisis completo de cada temporalidad
-2. Setup de entrada con precios EXACTOS (Entry, SL, TP1, TP2, TP3)
-3. Instrucciones paso a paso para ejecutar en MetaTrader
-4. Si debo ESPERAR alguna confirmación o ENTRAR AHORA
-
-Responde SOLO con el JSON estructurado.`;
-
-    const content = [
-      { type: 'text', text: userMessage }
-    ];
-
-    // Agregar imágenes subidas via multer
-    for (let i = 0; i < images.length; i++) {
-      const image = images[i];
-      const base64 = image.buffer.toString('base64');
-      content.push({
-        type: 'image_url',
-        image_url: {
-          url: `data:${image.mimetype};base64,${base64}`,
-          detail: 'high'
-        }
-      });
-    }
-
-    // Agregar imágenes en base64 del body
-    for (const img of base64Images) {
-      content.push({
-        type: 'image_url',
-        image_url: {
-          url: `data:image/png;base64,${img.data || img}`,
-          detail: 'high'
-        }
-      });
-    }
-
-    console.log(`
-╔═══════════════════════════════════════════════════════════╗
-║  📊 NUEVO ANÁLISIS SMC MULTI-TIMEFRAME                    ║
-╠═══════════════════════════════════════════════════════════╣
-║  Activo: ${(asset || 'No especificado').padEnd(43)}║
-║  Imágenes: ${String(totalImages).padEnd(42)}║
-║  Usuario: ${(req.user.email || 'N/A').substring(0, 42).padEnd(42)}║
-╚═══════════════════════════════════════════════════════════╝
-    `);
-
-    // Llamar a OpenAI GPT-4 Vision
-    const response = await openai.chat.completions.create({
+    const test = await openai.chat.completions.create({
       model: 'gpt-4o',
-      messages: [
-        { role: 'system', content: SMC_MULTI_TIMEFRAME_PROMPT },
-        { role: 'user', content: content }
-      ],
-      max_tokens: 4000,
-      temperature: 0.2 // Más bajo para respuestas más consistentes
+      messages: [{ role: 'user', content: 'Responde solo: OK' }],
+      max_tokens: 10
     });
-
-    const analysisText = response.choices[0]?.message?.content || '';
-    
-    // Intentar parsear como JSON
-    let analysisData;
-    try {
-      // Limpiar el texto y buscar JSON
-      let cleanText = analysisText
-        .replace(/```json\n?/g, '')
-        .replace(/```\n?/g, '')
-        .trim();
-      
-      const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        analysisData = JSON.parse(jsonMatch[0]);
-      } else {
-        throw new Error('No JSON found');
-      }
-    } catch (parseError) {
-      console.error('Error parsing JSON:', parseError);
-      // Si no se puede parsear, crear estructura básica
-      analysisData = { 
-        analisis_general: {
-          tendencia_principal: 'NO DETERMINADA',
-          sesgo: 'NEUTRAL',
-          confianza: 'BAJA',
-          probabilidad_exito: 'N/A'
-        },
-        resumen_ejecutivo: analysisText,
-        error_parsing: true
-      };
-    }
-
-    // Guardar en base de datos
-    if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
-      try {
-        await supabase.from('analyses').insert({
-          user_id: req.user.id,
-          asset: asset || 'Unknown',
-          timeframe: 'Multi-TF (H1, 15M, 5M, 1M)',
-          direction: analysisData.setup_de_entrada?.tipo || analysisData.analisis_general?.sesgo,
-          analysis_data: analysisData,
-          tokens_used: response.usage?.total_tokens || 0,
-          created_at: new Date().toISOString()
-        });
-      } catch (dbError) {
-        console.error('Error guardando análisis:', dbError);
-      }
-    }
-
-    res.json({
-      success: true,
-      analysis: analysisData,
-      tokensUsed: response.usage?.total_tokens || 0,
+    res.json({ 
+      connected: true, 
       model: 'gpt-4o',
-      timestamp: new Date().toISOString()
+      response: test.choices[0]?.message?.content 
     });
-
   } catch (error) {
-    console.error('Error en análisis:', error);
-    res.status(500).json({ 
-      error: 'Error al analizar',
-      details: error.message 
+    res.json({ 
+      connected: false, 
+      error: error.message 
     });
   }
 });
 
 // =============================================
-// RUTA DE ANÁLISIS RÁPIDO (1 sola imagen)
+// PROMPT SMC/ICT PROFESIONAL v3
 // =============================================
 
-app.post('/api/analyze-quick', authenticate, upload.single('image'), async (req, res) => {
+const createAnalysisPrompt = (asset, userHistory) => {
+  const historyContext = userHistory && userHistory.length > 0
+    ? `
+HISTORIAL DEL TRADER (últimos ${userHistory.length} trades):
+- Win Rate: ${userHistory.winRate}%
+- Trades ganados: ${userHistory.wins}
+- Trades perdidos: ${userHistory.losses}
+- Activos más operados: ${userHistory.topAssets?.join(', ') || 'N/A'}
+- Errores comunes: ${userHistory.commonMistakes?.join(', ') || 'N/A'}
+
+Considera este historial para dar recomendaciones personalizadas.
+`
+    : '';
+
+  return `Eres un TRADER INSTITUCIONAL EXPERTO con más de 15 años de experiencia en Smart Money Concepts (SMC) e Inner Circle Trader (ICT).
+
+Tu rol es analizar gráficos como lo haría un trader de un banco de inversión o hedge fund. Debes ser PRECISO, PROFESIONAL y PRÁCTICO.
+
+${historyContext}
+
+═══════════════════════════════════════════════════════════
+METODOLOGÍA DE ANÁLISIS MULTI-TIMEFRAME
+═══════════════════════════════════════════════════════════
+
+📊 ANÁLISIS H1 (Macro):
+- Identificar TENDENCIA PRINCIPAL usando estructura HH/HL o LH/LL
+- Localizar zonas de LIQUIDEZ MAYOR (máximos/mínimos de swing)
+- Identificar ORDER BLOCKS institucionales
+- Buscar IMBALANCES (FVG) significativos
+
+📊 ANÁLISIS 15M (Contexto):
+- Confirmar dirección de H1
+- Identificar BOS o ChoCH reciente
+- Localizar ORDER BLOCKS de interés
+- Identificar zonas PREMIUM/DISCOUNT
+
+📊 ANÁLISIS 5M (Refinamiento):
+- Buscar el OB de entrada específico
+- Confirmar barrido de liquidez (sweep)
+- Identificar OTE (61.8%-79% Fibonacci)
+- Buscar FVG para entrada
+
+📊 ANÁLISIS 1M (Entrada Sniper):
+- Esperar confirmación de entrada (rejection, engulfing)
+- Definir SL preciso (detrás del OB)
+- Entrada en el OB o FVG confirmado
+
+═══════════════════════════════════════════════════════════
+CONCEPTOS CLAVE SMC/ICT
+═══════════════════════════════════════════════════════════
+
+ESTRUCTURA:
+• BOS (Break of Structure) = Continuación de tendencia
+• ChoCH (Change of Character) = Posible reversión
+• MSS (Market Structure Shift) = Cambio confirmado
+
+LIQUIDEZ:
+• BSL (Buy Side Liquidity) = Stops sobre máximos (target para shorts)
+• SSL (Sell Side Liquidity) = Stops bajo mínimos (target para longs)
+• EQH/EQL = Liquidez acumulada en dobles techos/suelos
+
+ZONAS DE INTERÉS:
+• Order Block (OB) = Zona donde entró el dinero institucional
+• Fair Value Gap (FVG) = Imbalance que el precio tiende a rellenar
+• Breaker Block = OB invalidado que actúa en reversa
+
+ENTRADA:
+• OTE = Optimal Trade Entry (61.8%-79% del retroceso)
+• Confirmation Entry = Esperar vela de confirmación
+• Aggressive Entry = Entrar en la zona sin confirmación
+
+═══════════════════════════════════════════════════════════
+RESPUESTA JSON OBLIGATORIA
+═══════════════════════════════════════════════════════════
+
+IMPORTANTE: Responde ÚNICAMENTE con este JSON, sin texto adicional antes o después:
+
+{
+  "analisis_general": {
+    "tendencia_principal": "ALCISTA | BAJISTA | RANGO",
+    "sesgo_operativo": "COMPRA | VENTA | ESPERAR",
+    "confianza": "ALTA | MEDIA | BAJA",
+    "probabilidad_exito": "XX%",
+    "confluencias_encontradas": 0
+  },
+  
+  "analisis_por_timeframe": {
+    "H1": {
+      "tendencia": "Descripción clara",
+      "estructura": "HH/HL o LH/LL detectados",
+      "liquidez_pendiente": "BSL o SSL por barrer",
+      "order_blocks": ["OB 1 en precio X", "OB 2 en precio Y"],
+      "fvg": ["FVG en zona X-Y"]
+    },
+    "M15": {
+      "alineacion_con_H1": true,
+      "ultimo_bos_choch": "Descripción",
+      "zona_actual": "PREMIUM | DISCOUNT | EQUILIBRIO",
+      "poi_identificados": ["POI 1", "POI 2"]
+    },
+    "M5": {
+      "ob_de_entrada": "Descripción del OB específico",
+      "liquidity_sweep": "¿Se barrió liquidez? Sí/No - Descripción",
+      "fvg_entrada": "FVG identificado para entrada",
+      "ote_zone": "Zona OTE identificada"
+    },
+    "M1": {
+      "confirmacion": "Tipo de confirmación esperada",
+      "patron_vela": "Engulfing, Pin Bar, etc.",
+      "timing": "Descripción del momento de entrada"
+    }
+  },
+  
+  "setup_operativo": {
+    "direccion": "COMPRA | VENTA",
+    "tipo_entrada": "AGRESIVA | CONFIRMACIÓN | LIMIT ORDER",
+    "precio_entrada": "X.XXXXX",
+    "stop_loss": "X.XXXXX",
+    "take_profit_1": "X.XXXXX",
+    "take_profit_2": "X.XXXXX",
+    "take_profit_3": "X.XXXXX",
+    "pips_riesgo": "XX",
+    "pips_tp1": "XX",
+    "ratio_rr": "1:X.X",
+    "ratio_rr_tp2": "1:X.X",
+    "ratio_rr_tp3": "1:X.X"
+  },
+  
+  "ejecucion_metatrader": {
+    "accion": "ENTRAR AHORA | ESPERAR CONFIRMACIÓN | COLOCAR ORDEN PENDIENTE | NO OPERAR",
+    "tipo_orden": "BUY MARKET | SELL MARKET | BUY LIMIT | SELL LIMIT | BUY STOP | SELL STOP",
+    "instrucciones": [
+      "1. Instrucción específica",
+      "2. Instrucción específica",
+      "3. Instrucción específica",
+      "4. Instrucción específica",
+      "5. Instrucción específica"
+    ],
+    "confirmacion_requerida": "Descripción de qué esperar antes de entrar",
+    "tiempo_validez": "Setup válido por X horas/minutos",
+    "invalidacion": "El setup se invalida si..."
+  },
+  
+  "gestion_riesgo": {
+    "riesgo_sugerido": "1-2%",
+    "gestion_parciales": {
+      "tp1": "Cerrar 50%, mover SL a BE",
+      "tp2": "Cerrar 30%",
+      "tp3": "Cerrar 20% restante"
+    },
+    "breakeven": "Mover a BE cuando precio alcance TP1"
+  },
+  
+  "confluencias": [
+    "✅ Confluencia 1 identificada",
+    "✅ Confluencia 2 identificada",
+    "✅ Confluencia 3 identificada"
+  ],
+  
+  "advertencias": [
+    "⚠️ Advertencia 1",
+    "⚠️ Advertencia 2"
+  ],
+  
+  "consejo_personalizado": "Consejo específico basado en el análisis actual",
+  
+  "resumen_ejecutivo": "Resumen de 2-3 oraciones explicando claramente el setup: qué hacer, dónde entrar, dónde poner SL y TP, y por qué."
+}`;
+};
+
+// =============================================
+// RUTA PRINCIPAL DE ANÁLISIS
+// =============================================
+
+app.post('/api/analyze', authenticate, upload.array('images', 4), async (req, res) => {
+  console.log('\n═══════════════════════════════════════');
+  console.log('📊 NUEVA SOLICITUD DE ANÁLISIS');
+  console.log('═══════════════════════════════════════');
+  
   try {
-    const { asset, timeframe } = req.body;
-    const image = req.file;
+    // Verificar que OpenAI esté configurado
+    if (!openai) {
+      console.log('❌ OpenAI no configurado');
+      return res.status(500).json({ 
+        error: 'El servicio de IA no está configurado',
+        details: 'OPENAI_API_KEY no está configurada en el servidor. Contacta al administrador.',
+        solution: 'Configura OPENAI_API_KEY en las variables de entorno de Railway'
+      });
+    }
+
+    const { asset, accountBalance, riskPercent } = req.body;
     
-    let base64Image = null;
-    if (req.body.image) {
-      base64Image = req.body.image;
-    }
-
-    if (!image && !base64Image) {
-      return res.status(400).json({ error: 'Se requiere una imagen' });
-    }
-
-    if (!process.env.OPENAI_API_KEY) {
-      return res.status(500).json({ error: 'OpenAI API no configurada' });
-    }
-
-    const content = [
-      { 
-        type: 'text', 
-        text: `Analiza este gráfico de ${asset || 'trading'} en temporalidad ${timeframe || 'desconocida'}.
-        
-Proporciona un análisis SMC/ICT rápido con:
-- Tendencia actual
-- Zonas de interés (OB, FVG)
-- Posible dirección
-- Nivel de entrada sugerido
-- Stop Loss y Take Profit
-
-Responde de forma concisa y práctica.`
+    // Obtener imágenes de múltiples fuentes
+    let imageContents = [];
+    
+    // 1. Imágenes subidas via multer (form-data)
+    if (req.files && req.files.length > 0) {
+      console.log(`📷 Recibidas ${req.files.length} imágenes via form-data`);
+      for (const file of req.files) {
+        const base64 = file.buffer.toString('base64');
+        imageContents.push({
+          type: 'image_url',
+          image_url: {
+            url: `data:${file.mimetype};base64,${base64}`,
+            detail: 'high'
+          }
+        });
       }
-    ];
+    }
+    
+    // 2. Imágenes en base64 desde JSON body
+    if (req.body.images) {
+      let imagesArray = [];
+      try {
+        imagesArray = typeof req.body.images === 'string' 
+          ? JSON.parse(req.body.images) 
+          : req.body.images;
+      } catch (e) {
+        console.log('Error parseando imágenes JSON:', e.message);
+      }
+      
+      if (Array.isArray(imagesArray) && imagesArray.length > 0) {
+        console.log(`📷 Recibidas ${imagesArray.length} imágenes via JSON`);
+        for (const img of imagesArray) {
+          const imgData = typeof img === 'string' ? img : (img.data || img);
+          if (imgData && imgData.length > 100) { // Verificar que hay datos reales
+            imageContents.push({
+              type: 'image_url',
+              image_url: {
+                url: imgData.startsWith('data:') ? imgData : `data:image/png;base64,${imgData}`,
+                detail: 'high'
+              }
+            });
+          }
+        }
+      }
+    }
 
-    if (image) {
-      const base64 = image.buffer.toString('base64');
-      content.push({
-        type: 'image_url',
-        image_url: {
-          url: `data:${image.mimetype};base64,${base64}`,
-          detail: 'high'
+    // 3. Imágenes individuales (image1, image2, etc.)
+    for (let i = 1; i <= 4; i++) {
+      const imgKey = `image${i}`;
+      if (req.body[imgKey]) {
+        const imgData = req.body[imgKey];
+        if (imgData && imgData.length > 100) {
+          imageContents.push({
+            type: 'image_url',
+            image_url: {
+              url: imgData.startsWith('data:') ? imgData : `data:image/png;base64,${imgData}`,
+              detail: 'high'
+            }
+          });
+        }
+      }
+    }
+
+    console.log(`📊 Total imágenes procesadas: ${imageContents.length}`);
+    console.log(`📈 Activo: ${asset || 'No especificado'}`);
+    console.log(`👤 Usuario: ${req.user?.email || 'demo'}`);
+
+    if (imageContents.length === 0) {
+      return res.status(400).json({ 
+        error: 'No se recibieron imágenes',
+        details: 'Debes subir al menos 1 imagen del gráfico para analizar',
+        received: {
+          files: req.files?.length || 0,
+          bodyImages: req.body.images ? 'presente' : 'no',
         }
       });
-    } else if (base64Image) {
-      content.push({
-        type: 'image_url',
-        image_url: {
-          url: `data:image/png;base64,${base64Image}`,
-          detail: 'high'
+    }
+
+    // Obtener historial del usuario para aprendizaje
+    let userHistory = null;
+    if (supabase && req.user?.id && req.user.id !== 'demo-user') {
+      try {
+        const { data: trades } = await supabase
+          .from('trades')
+          .select('*')
+          .eq('user_id', req.user.id)
+          .order('created_at', { ascending: false })
+          .limit(100);
+
+        if (trades && trades.length > 0) {
+          const wins = trades.filter(t => t.result === 'win').length;
+          const losses = trades.filter(t => t.result === 'loss').length;
+          userHistory = {
+            totalTrades: trades.length,
+            wins,
+            losses,
+            winRate: ((wins / (wins + losses)) * 100).toFixed(1),
+            topAssets: [...new Set(trades.map(t => t.asset))].slice(0, 5)
+          };
         }
+      } catch (e) {
+        console.log('No se pudo obtener historial:', e.message);
+      }
+    }
+
+    // Construir mensaje para GPT-4 Vision
+    const userMessage = {
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text: `ANALIZA ESTOS GRÁFICOS DE TRADING:
+
+ACTIVO: ${asset || 'Identificar del gráfico'}
+BALANCE: $${accountBalance || 1000}
+RIESGO POR TRADE: ${riskPercent || 1}%
+
+IMÁGENES ADJUNTAS (${imageContents.length}):
+${imageContents.length >= 4 ? '- Imagen 1: H1 (contexto)\n- Imagen 2: 15M (zonas)\n- Imagen 3: 5M (refinamiento)\n- Imagen 4: 1M (entrada)' : 
+  imageContents.length === 1 ? '- Una sola imagen para análisis rápido' :
+  `- ${imageContents.length} imágenes proporcionadas`}
+
+INSTRUCCIONES:
+1. Analiza la estructura de mercado (HH/HL o LH/LL)
+2. Identifica zonas de liquidez (BSL/SSL)
+3. Localiza Order Blocks y FVGs
+4. Determina si hay setup válido
+5. Si hay setup, da precios EXACTOS de entrada, SL y TP
+6. Explica paso a paso cómo ejecutar en MetaTrader
+
+RESPONDE SOLO CON EL JSON ESTRUCTURADO.`
+        },
+        ...imageContents
+      ]
+    };
+
+    console.log('\n🤖 Enviando a GPT-4 Vision...');
+    const startTime = Date.now();
+
+    // Llamar a OpenAI
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [
+        { role: 'system', content: createAnalysisPrompt(asset, userHistory) },
+        userMessage
+      ],
+      max_tokens: 4000,
+      temperature: 0.3
+    });
+
+    const endTime = Date.now();
+    console.log(`✅ Respuesta recibida en ${(endTime - startTime) / 1000}s`);
+    console.log(`📊 Tokens usados: ${response.usage?.total_tokens || 'N/A'}`);
+
+    const analysisText = response.choices[0]?.message?.content || '';
+    
+    // Parsear respuesta JSON
+    let analysisData;
+    try {
+      // Limpiar el texto
+      let cleanText = analysisText
+        .replace(/```json\n?/gi, '')
+        .replace(/```\n?/gi, '')
+        .trim();
+      
+      // Buscar el JSON
+      const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        analysisData = JSON.parse(jsonMatch[0]);
+        console.log('✅ JSON parseado correctamente');
+      } else {
+        throw new Error('No se encontró JSON en la respuesta');
+      }
+    } catch (parseError) {
+      console.log('⚠️ Error parseando JSON, usando texto raw');
+      analysisData = { 
+        analisis_general: {
+          tendencia_principal: 'VER ANÁLISIS',
+          sesgo_operativo: 'VER ANÁLISIS',
+          confianza: 'MEDIA',
+          probabilidad_exito: 'N/A'
+        },
+        resumen_ejecutivo: analysisText,
+        raw_response: true
+      };
+    }
+
+    // Guardar análisis en BD
+    if (supabase && req.user?.id && req.user.id !== 'demo-user') {
+      try {
+        await supabase.from('analyses').insert({
+          user_id: req.user.id,
+          asset: asset || 'Unknown',
+          timeframe: `Multi-TF (${imageContents.length} imgs)`,
+          direction: analysisData.setup_operativo?.direccion || analysisData.analisis_general?.sesgo_operativo,
+          analysis_data: analysisData,
+          tokens_used: response.usage?.total_tokens || 0,
+          created_at: new Date().toISOString()
+        });
+        console.log('💾 Análisis guardado en BD');
+      } catch (dbError) {
+        console.log('⚠️ Error guardando en BD:', dbError.message);
+      }
+    }
+
+    // Respuesta exitosa
+    res.json({
+      success: true,
+      analysis: analysisData,
+      meta: {
+        tokensUsed: response.usage?.total_tokens || 0,
+        model: 'gpt-4o',
+        imagesAnalyzed: imageContents.length,
+        processingTime: `${(endTime - startTime) / 1000}s`,
+        timestamp: new Date().toISOString()
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error en análisis:', error);
+    
+    // Errores específicos de OpenAI
+    if (error.code === 'insufficient_quota') {
+      return res.status(402).json({
+        error: 'Créditos de OpenAI agotados',
+        details: 'La cuenta de OpenAI no tiene créditos suficientes',
+        solution: 'Agrega créditos en platform.openai.com'
       });
+    }
+    
+    if (error.code === 'invalid_api_key') {
+      return res.status(401).json({
+        error: 'API Key de OpenAI inválida',
+        details: 'La OPENAI_API_KEY configurada no es válida',
+        solution: 'Verifica la API key en Railway'
+      });
+    }
+
+    res.status(500).json({ 
+      error: 'Error al procesar el análisis',
+      details: error.message,
+      type: error.code || 'unknown'
+    });
+  }
+});
+
+// =============================================
+// RUTA DE ANÁLISIS RÁPIDO (1 imagen)
+// =============================================
+
+app.post('/api/analyze-quick', authenticate, async (req, res) => {
+  try {
+    if (!openai) {
+      return res.status(500).json({ error: 'OpenAI no configurado' });
+    }
+
+    const { image, asset, timeframe } = req.body;
+
+    if (!image) {
+      return res.status(400).json({ error: 'Se requiere una imagen' });
     }
 
     const response = await openai.chat.completions.create({
       model: 'gpt-4o',
       messages: [
-        { role: 'system', content: 'Eres un analista de trading experto en SMC/ICT. Proporciona análisis concisos y accionables.' },
-        { role: 'user', content: content }
+        { 
+          role: 'system', 
+          content: 'Eres un analista de trading experto en SMC/ICT. Proporciona análisis concisos y prácticos.' 
+        },
+        {
+          role: 'user',
+          content: [
+            { 
+              type: 'text', 
+              text: `Analiza rápidamente este gráfico de ${asset || 'trading'} en ${timeframe || 'el timeframe mostrado'}.
+              
+Da una respuesta breve con:
+- Tendencia actual
+- Zona de interés más cercana
+- Posible dirección
+- Nivel clave a observar` 
+            },
+            {
+              type: 'image_url',
+              image_url: {
+                url: image.startsWith('data:') ? image : `data:image/png;base64,${image}`,
+                detail: 'high'
+              }
+            }
+          ]
+        }
       ],
-      max_tokens: 1500,
+      max_tokens: 1000,
       temperature: 0.3
     });
 
@@ -530,15 +689,20 @@ Responde de forma concisa y práctica.`
 
   } catch (error) {
     console.error('Error en análisis rápido:', error);
-    res.status(500).json({ error: 'Error al analizar', details: error.message });
+    res.status(500).json({ error: error.message });
   }
 });
 
 // =============================================
-// RUTAS DE TRADES
+// RUTAS DE DATOS (Trades, Stats, etc.)
 // =============================================
 
+// Obtener trades
 app.get('/api/trades', authenticate, async (req, res) => {
+  if (!supabase) {
+    return res.json([]);
+  }
+  
   try {
     const { data, error } = await supabase
       .from('trades')
@@ -549,12 +713,16 @@ app.get('/api/trades', authenticate, async (req, res) => {
     if (error) throw error;
     res.json(data || []);
   } catch (error) {
-    console.error('Error obteniendo trades:', error);
-    res.status(500).json({ error: 'Error al obtener trades' });
+    res.status(500).json({ error: error.message });
   }
 });
 
+// Crear trade
 app.post('/api/trades', authenticate, async (req, res) => {
+  if (!supabase) {
+    return res.json({ id: uuidv4(), ...req.body });
+  }
+  
   try {
     const trade = {
       ...req.body,
@@ -571,52 +739,22 @@ app.post('/api/trades', authenticate, async (req, res) => {
     if (error) throw error;
     res.json(data);
   } catch (error) {
-    console.error('Error creando trade:', error);
-    res.status(500).json({ error: 'Error al crear trade' });
+    res.status(500).json({ error: error.message });
   }
 });
 
-app.put('/api/trades/:id', authenticate, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { data, error } = await supabase
-      .from('trades')
-      .update(req.body)
-      .eq('id', id)
-      .eq('user_id', req.user.id)
-      .select()
-      .single();
-
-    if (error) throw error;
-    res.json(data);
-  } catch (error) {
-    console.error('Error actualizando trade:', error);
-    res.status(500).json({ error: 'Error al actualizar trade' });
-  }
-});
-
-app.delete('/api/trades/:id', authenticate, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { error } = await supabase
-      .from('trades')
-      .delete()
-      .eq('id', id)
-      .eq('user_id', req.user.id);
-
-    if (error) throw error;
-    res.json({ success: true });
-  } catch (error) {
-    console.error('Error eliminando trade:', error);
-    res.status(500).json({ error: 'Error al eliminar trade' });
-  }
-});
-
-// =============================================
-// RUTAS DE ESTADÍSTICAS
-// =============================================
-
+// Estadísticas
 app.get('/api/stats', authenticate, async (req, res) => {
+  if (!supabase) {
+    return res.json({
+      totalTrades: 0,
+      wins: 0,
+      losses: 0,
+      winRate: 0,
+      totalProfit: 0
+    });
+  }
+  
   try {
     const { data: trades, error } = await supabase
       .from('trades')
@@ -626,144 +764,28 @@ app.get('/api/stats', authenticate, async (req, res) => {
     if (error) throw error;
 
     const closedTrades = trades?.filter(t => t.result && t.result !== 'open') || [];
-    
-    const stats = {
+    const wins = closedTrades.filter(t => t.result === 'win').length;
+    const losses = closedTrades.filter(t => t.result === 'loss').length;
+
+    res.json({
       totalTrades: trades?.length || 0,
-      closedTrades: closedTrades.length,
-      wins: closedTrades.filter(t => t.result === 'win').length,
-      losses: closedTrades.filter(t => t.result === 'loss').length,
+      wins,
+      losses,
       breakeven: closedTrades.filter(t => t.result === 'be').length,
-      totalProfit: closedTrades.reduce((sum, t) => sum + (parseFloat(t.profit) || 0), 0),
-      winRate: 0,
-      avgRR: 0,
-      profitFactor: 0
-    };
-
-    if (stats.wins + stats.losses > 0) {
-      stats.winRate = ((stats.wins / (stats.wins + stats.losses)) * 100).toFixed(1);
-    }
-
-    const winningTrades = closedTrades.filter(t => t.result === 'win' && t.profit > 0);
-    const losingTrades = closedTrades.filter(t => t.result === 'loss' && t.profit < 0);
-    
-    const totalWinnings = winningTrades.reduce((sum, t) => sum + parseFloat(t.profit), 0);
-    const totalLosses = Math.abs(losingTrades.reduce((sum, t) => sum + parseFloat(t.profit), 0));
-    
-    if (totalLosses > 0) {
-      stats.profitFactor = (totalWinnings / totalLosses).toFixed(2);
-    }
-
-    res.json(stats);
+      winRate: (wins + losses) > 0 ? ((wins / (wins + losses)) * 100).toFixed(1) : 0,
+      totalProfit: closedTrades.reduce((sum, t) => sum + (parseFloat(t.profit) || 0), 0).toFixed(2)
+    });
   } catch (error) {
-    console.error('Error obteniendo stats:', error);
-    res.status(500).json({ error: 'Error al obtener estadísticas' });
+    res.status(500).json({ error: error.message });
   }
 });
 
-// =============================================
-// RUTAS DE PERFIL
-// =============================================
-
-app.get('/api/profile', authenticate, async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', req.user.id)
-      .single();
-
-    if (error && error.code !== 'PGRST116') throw error;
-    res.json(data || { id: req.user.id, email: req.user.email });
-  } catch (error) {
-    console.error('Error obteniendo perfil:', error);
-    res.status(500).json({ error: 'Error al obtener perfil' });
-  }
-});
-
-app.put('/api/profile', authenticate, async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from('profiles')
-      .upsert({
-        id: req.user.id,
-        ...req.body,
-        updated_at: new Date().toISOString()
-      })
-      .select()
-      .single();
-
-    if (error) throw error;
-    res.json(data);
-  } catch (error) {
-    console.error('Error actualizando perfil:', error);
-    res.status(500).json({ error: 'Error al actualizar perfil' });
-  }
-});
-
-// =============================================
-// RUTAS DE ALERTAS
-// =============================================
-
-app.get('/api/alerts', authenticate, async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from('alerts')
-      .select('*')
-      .eq('user_id', req.user.id)
-      .order('created_at', { ascending: false });
-
-    if (error) throw error;
-    res.json(data || []);
-  } catch (error) {
-    console.error('Error obteniendo alertas:', error);
-    res.status(500).json({ error: 'Error al obtener alertas' });
-  }
-});
-
-app.post('/api/alerts', authenticate, async (req, res) => {
-  try {
-    const alert = {
-      ...req.body,
-      user_id: req.user.id,
-      id: uuidv4()
-    };
-
-    const { data, error } = await supabase
-      .from('alerts')
-      .insert(alert)
-      .select()
-      .single();
-
-    if (error) throw error;
-    res.json(data);
-  } catch (error) {
-    console.error('Error creando alerta:', error);
-    res.status(500).json({ error: 'Error al crear alerta' });
-  }
-});
-
-app.delete('/api/alerts/:id', authenticate, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { error } = await supabase
-      .from('alerts')
-      .delete()
-      .eq('id', id)
-      .eq('user_id', req.user.id);
-
-    if (error) throw error;
-    res.json({ success: true });
-  } catch (error) {
-    console.error('Error eliminando alerta:', error);
-    res.status(500).json({ error: 'Error al eliminar alerta' });
-  }
-});
-
-// =============================================
-// RUTA DE HISTORIAL DE ANÁLISIS
-// =============================================
-
+// Historial de análisis
 app.get('/api/analyses', authenticate, async (req, res) => {
+  if (!supabase) {
+    return res.json([]);
+  }
+  
   try {
     const { data, error } = await supabase
       .from('analyses')
@@ -775,47 +797,19 @@ app.get('/api/analyses', authenticate, async (req, res) => {
     if (error) throw error;
     res.json(data || []);
   } catch (error) {
-    console.error('Error obteniendo análisis:', error);
-    res.status(500).json({ error: 'Error al obtener historial de análisis' });
+    res.status(500).json({ error: error.message });
   }
 });
-
-// =============================================
-// STRIPE (Suscripciones) - Opcional
-// =============================================
-
-if (stripe) {
-  app.post('/api/stripe/create-checkout', authenticate, async (req, res) => {
-    try {
-      const { priceId } = req.body;
-      
-      const session = await stripe.checkout.sessions.create({
-        mode: 'subscription',
-        payment_method_types: ['card'],
-        line_items: [{ price: priceId, quantity: 1 }],
-        success_url: `${process.env.FRONTEND_URL}/settings?success=true`,
-        cancel_url: `${process.env.FRONTEND_URL}/settings?canceled=true`,
-        customer_email: req.user.email,
-        metadata: { userId: req.user.id }
-      });
-
-      res.json({ url: session.url });
-    } catch (error) {
-      console.error('Stripe error:', error);
-      res.status(500).json({ error: 'Error al crear sesión de pago' });
-    }
-  });
-}
 
 // =============================================
 // MANEJO DE ERRORES
 // =============================================
 
 app.use((err, req, res, next) => {
-  console.error('Error:', err);
+  console.error('Error global:', err);
   res.status(500).json({ 
     error: 'Error interno del servidor',
-    message: process.env.NODE_ENV === 'development' ? err.message : undefined
+    message: err.message
   });
 });
 
@@ -823,19 +817,28 @@ app.use((err, req, res, next) => {
 // INICIAR SERVIDOR
 // =============================================
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════╗
-║       TRADING MASTER PRO - API SERVER v2.0                ║
+║       TRADING MASTER PRO - API SERVER v3.0                ║
 ╠═══════════════════════════════════════════════════════════╣
-║  🚀 Server running on port ${String(PORT).padEnd(28)}║
-║  🤖 AI: OpenAI GPT-4 Vision                               ║
-║  📊 Analysis: Multi-Timeframe SMC/ICT                     ║
-║  📈 Timeframes: H1, 15M, 5M, 1M                           ║
-║  💾 Database: Supabase                                    ║
-║  💳 Payments: ${stripe ? 'Stripe Enabled' : 'Stripe Disabled'}                           ║
+║  🚀 Server: http://localhost:${PORT}                         ║
+║  🤖 AI: ${openai ? 'OpenAI GPT-4 Vision ✅' : 'NO CONFIGURADO ❌'}
+║  💾 DB: ${supabase ? 'Supabase ✅' : 'NO CONFIGURADO ⚠️'}
+╠═══════════════════════════════════════════════════════════╣
+║  Endpoints:                                               ║
+║  GET  /              - Status del servidor                ║
+║  GET  /health        - Health check                       ║
+║  GET  /api/check-ai  - Verificar conexión OpenAI          ║
+║  POST /api/analyze   - Análisis Multi-Timeframe           ║
+║  POST /api/analyze-quick - Análisis rápido (1 imagen)     ║
 ╚═══════════════════════════════════════════════════════════╝
   `);
+  
+  // Verificar OpenAI al iniciar
+  if (openai) {
+    await verifyOpenAI();
+  }
 });
 
 export default app;
