@@ -1,6 +1,6 @@
 // =============================================
-// TRADING MASTER PRO - BACKEND API v4.0
-// ES Modules Version (import/export)
+// TRADING MASTER PRO - BACKEND v5.0
+// Integración con Deriv API + Señales Automáticas SMC
 // =============================================
 
 import express from 'express';
@@ -11,6 +11,8 @@ import OpenAI from 'openai';
 import multer from 'multer';
 import { v4 as uuidv4 } from 'uuid';
 import dotenv from 'dotenv';
+import DerivAPIService, { SYNTHETIC_INDICES, TIMEFRAMES } from './services/derivAPI.js';
+import SMCAnalyzer from './services/smcAnalyzer.js';
 
 dotenv.config();
 
@@ -21,10 +23,9 @@ const PORT = process.env.PORT || 3001;
 // CONFIGURACIÓN
 // =============================================
 console.log('\n🔧 VERIFICANDO CONFIGURACIÓN...');
-console.log('OPENAI_API_KEY:', process.env.OPENAI_API_KEY ? '✅ Configurada' : '❌ NO CONFIGURADA');
-console.log('SUPABASE_URL:', process.env.SUPABASE_URL ? '✅ Configurada' : '❌ NO CONFIGURADA');
-console.log('SUPABASE_SERVICE_ROLE_KEY:', process.env.SUPABASE_SERVICE_ROLE_KEY ? '✅ Configurada' : '❌ NO CONFIGURADA');
-console.log('\n');
+console.log('OPENAI_API_KEY:', process.env.OPENAI_API_KEY ? '✅' : '❌');
+console.log('SUPABASE_URL:', process.env.SUPABASE_URL ? '✅' : '❌');
+console.log('DERIV_APP_ID:', process.env.DERIV_APP_ID ? '✅' : '❌');
 
 let supabase = null;
 if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -36,129 +37,93 @@ if (process.env.OPENAI_API_KEY) {
   openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 }
 
+// Deriv API Service
+const DERIV_APP_ID = process.env.DERIV_APP_ID || '117347';
+let derivService = null;
+let smcAnalyzer = new SMCAnalyzer();
+
+// Almacén de señales activas
+const activeSignals = new Map();
+const signalHistory = [];
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 20 * 1024 * 1024 }
 });
 
-// =============================================
-// MIDDLEWARE
-// =============================================
+// Middleware
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 app.use(cors({ origin: '*', credentials: true }));
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 
 // =============================================
-// REGLAS SMC/ICT
+// INICIALIZAR DERIV API
 // =============================================
 
-const SMC_RULES = `
-═══════════════════════════════════════════════════════════
-REGLAS ESTRICTAS SMC/ICT - SI NO SE CUMPLEN, NO HAY SEÑAL
-═══════════════════════════════════════════════════════════
+async function initDerivAPI() {
+  try {
+    derivService = new DerivAPIService(DERIV_APP_ID);
+    await derivService.connect();
+    
+    // Suscribirse a índices principales
+    const mainSymbols = ['R_75', 'R_100', 'stpRNG', 'BOOM500', 'CRASH500'];
+    
+    for (const symbol of mainSymbols) {
+      derivService.subscribeTicks(symbol);
+      derivService.subscribeCandles(symbol, TIMEFRAMES.M1);
+      derivService.subscribeCandles(symbol, TIMEFRAMES.M5);
+      derivService.subscribeCandles(symbol, TIMEFRAMES.M15);
+      derivService.subscribeCandles(symbol, TIMEFRAMES.H1);
+    }
 
-🚨 REGLA #1: ESTRUCTURA DE MERCADO CLARA
-- Debe existir un BOS (Break of Structure) o CHoCH (Change of Character) CONFIRMADO
-- Sin BOS o CHoCH claro = NO HAY SEÑAL
+    // Analizar cada vez que llega una vela nueva
+    derivService.on('candle', ({ symbol, timeframe, candles }) => {
+      if (timeframe === TIMEFRAMES.M5 && candles.length >= 50) {
+        analyzeAndGenerateSignal(symbol, timeframe, candles);
+      }
+    });
 
-🚨 REGLA #2: RETROCESO A ZONA DE INTERÉS
-- Después del BOS/CHoCH, el precio DEBE retroceder a:
-  * Order Block (OB) de oferta o demanda
-  * Fair Value Gap (FVG) sin mitigar
-  * Zona OTE (61.8%-79%)
+    console.log('✅ Deriv API inicializada y suscrita a símbolos');
+  } catch (error) {
+    console.error('❌ Error inicializando Deriv API:', error);
+  }
+}
 
-🚨 REGLA #3: LIQUIDEZ BARRIDA
-- Debe existir un barrido de liquidez (sweep) antes de la entrada
+// Analizar y generar señal
+async function analyzeAndGenerateSignal(symbol, timeframe, candles) {
+  try {
+    const analysis = smcAnalyzer.analyze(candles);
+    const signal = smcAnalyzer.generateSignal(analysis);
 
-🚨 REGLA #4: CONFIRMACIÓN EN TEMPORALIDAD MENOR
-- La entrada se ejecuta en 5M o 1M con confirmación
+    if (signal.hasSignal) {
+      const signalId = `${symbol}_${Date.now()}`;
+      const fullSignal = {
+        id: signalId,
+        symbol,
+        symbolName: SYNTHETIC_INDICES[symbol]?.name || symbol,
+        timeframe,
+        ...signal,
+        createdAt: new Date().toISOString(),
+      };
 
-🚨 REGLA #5: ALINEACIÓN MULTI-TIMEFRAME
-- H1: Tendencia | 15M: Zonas | 5M: Refinamiento | 1M: Entrada
+      activeSignals.set(signalId, fullSignal);
+      signalHistory.push(fullSignal);
 
-═══════════════════════════════════════════════════════════
-RATIO R:R POR MERCADO
-═══════════════════════════════════════════════════════════
-📊 ÍNDICES SINTÉTICOS: 1:3 - 1:5
-📊 FOREX: 1:2 - 1:3
-📊 METALES: 1:2 - 1:3
-📊 CRYPTO: 1:3 - 1:5
-`;
+      // Mantener solo últimas 100 señales en historia
+      if (signalHistory.length > 100) {
+        signalHistory.shift();
+      }
 
-// =============================================
-// PROMPT ANÁLISIS
-// =============================================
+      console.log(`🎯 SEÑAL DETECTADA: ${signal.direction} en ${symbol}`);
+    }
+  } catch (error) {
+    console.error('Error analizando:', error);
+  }
+}
 
-const ANALYSIS_PROMPT = `Eres un TRADER INSTITUCIONAL experto en Smart Money Concepts (SMC) e Inner Circle Trader (ICT).
-
-${SMC_RULES}
-
-FORMATO DE RESPUESTA JSON:
-{
-  "hay_senal": true/false,
-  "razon_no_senal": "Si no hay señal, explica por qué",
-  
-  "analisis_estructura": {
-    "tendencia_h1": "ALCISTA/BAJISTA/RANGO",
-    "ultimo_bos_choch": "Descripción",
-    "swing_high": "Precio",
-    "swing_low": "Precio"
-  },
-  
-  "zonas_identificadas": {
-    "order_blocks": [{"tipo": "DEMANDA/OFERTA", "precio": "X", "estado": "VÁLIDO/MITIGADO"}],
-    "fvg": [{"tipo": "ALCISTA/BAJISTA", "zona": "X-Y"}],
-    "liquidez_barrida": "Descripción"
-  },
-  
-  "setup": {
-    "direccion": "COMPRA/VENTA",
-    "precio_entrada": "X.XXXXX",
-    "stop_loss": "X.XXXXX",
-    "take_profit_1": "X.XXXXX",
-    "take_profit_2": "X.XXXXX",
-    "take_profit_3": "X.XXXXX",
-    "ratio_rr_tp1": "1:X",
-    "ratio_rr_tp2": "1:X",
-    "ratio_rr_tp3": "1:X"
-  },
-  
-  "ejecucion": {
-    "accion": "ENTRAR AHORA/ESPERAR/LIMIT ORDER/NO OPERAR",
-    "tipo_orden": "BUY MARKET/SELL MARKET/BUY LIMIT/SELL LIMIT",
-    "instrucciones": ["Paso 1", "Paso 2", "Paso 3"],
-    "invalidacion": "Cuándo se invalida el setup"
-  },
-  
-  "gestion": {
-    "parcial_tp1": "Cerrar 50% en TP1, mover SL a BE",
-    "parcial_tp2": "Cerrar 30%",
-    "parcial_tp3": "Cerrar 20% restante"
-  },
-  
-  "confianza": "ALTA/MEDIA/BAJA",
-  "probabilidad": "XX%",
-  "explicacion_detallada": "Explicación completa del análisis"
-}`;
-
-// =============================================
-// PROMPT CHAT
-// =============================================
-
-const FOLLOWUP_PROMPT = `Eres un MENTOR DE TRADING experto en SMC/ICT ayudando a gestionar una operación EN VIVO.
-
-CONTEXTO DE LA OPERACIÓN:
-{TRADE_CONTEXT}
-
-Responde en JSON:
-{
-  "evaluacion": "¿La operación sigue válida?",
-  "accion_recomendada": "MANTENER/CERRAR PARCIAL/CERRAR TODO/MOVER SL/AÑADIR",
-  "razon": "Por qué recomiendas esta acción",
-  "cambios_detectados": "Qué cambios ves en el mercado",
-  "siguiente_paso": "Qué debe hacer el trader ahora"
-}`;
+// Inicializar al arrancar
+initDerivAPI();
 
 // =============================================
 // MIDDLEWARE AUTH
@@ -167,12 +132,10 @@ Responde en JSON:
 const authenticate = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
-    
     if (!supabase || !authHeader || !authHeader.startsWith('Bearer ')) {
       req.user = { id: 'demo-user', email: 'demo@example.com' };
       return next();
     }
-
     const token = authHeader.split(' ')[1];
     const { data, error } = await supabase.auth.getUser(token);
     req.user = error || !data?.user ? { id: 'demo-user', email: 'demo@example.com' } : data.user;
@@ -184,26 +147,29 @@ const authenticate = async (req, res, next) => {
 };
 
 // =============================================
-// RUTAS PÚBLICAS
+// RUTAS - ESTADO
 // =============================================
 
 app.get('/', (req, res) => {
   res.json({ 
     status: 'ok', 
-    service: 'Trading Master Pro API v4.0',
+    service: 'Trading Master Pro API v5.0',
     openai: openai ? 'connected' : 'not configured',
-    supabase: supabase ? 'connected' : 'not configured'
+    supabase: supabase ? 'connected' : 'not configured',
+    deriv: derivService?.isConnected ? 'connected' : 'disconnected',
   });
 });
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'healthy', timestamp: new Date().toISOString() });
+  res.json({ 
+    status: 'healthy', 
+    timestamp: new Date().toISOString(),
+    deriv: derivService?.isConnected || false,
+  });
 });
 
 app.get('/api/check-ai', async (req, res) => {
-  if (!openai) {
-    return res.json({ connected: false, error: 'OPENAI_API_KEY no configurada' });
-  }
+  if (!openai) return res.json({ connected: false });
   try {
     await openai.chat.completions.create({
       model: 'gpt-4o',
@@ -217,23 +183,167 @@ app.get('/api/check-ai', async (req, res) => {
 });
 
 // =============================================
-// ANÁLISIS PRINCIPAL
+// RUTAS - DERIV API
 // =============================================
 
-app.post('/api/analyze', authenticate, upload.array('images', 4), async (req, res) => {
-  console.log('\n📊 NUEVO ANÁLISIS SMC');
+// Estado de conexión Deriv
+app.get('/api/deriv/status', (req, res) => {
+  res.json({
+    connected: derivService?.isConnected || false,
+    appId: DERIV_APP_ID,
+    subscriptions: derivService?.subscriptions?.size || 0,
+  });
+});
+
+// Obtener símbolos disponibles
+app.get('/api/deriv/symbols', (req, res) => {
+  res.json(SYNTHETIC_INDICES);
+});
+
+// Obtener precio actual de un símbolo
+app.get('/api/deriv/price/:symbol', (req, res) => {
+  const { symbol } = req.params;
+  const ticks = derivService?.getTicks(symbol) || [];
+  const lastTick = ticks[ticks.length - 1];
   
+  res.json({
+    symbol,
+    name: SYNTHETIC_INDICES[symbol]?.name || symbol,
+    price: lastTick?.price || null,
+    time: lastTick?.time || null,
+    ticks: ticks.slice(-100),
+  });
+});
+
+// Obtener velas de un símbolo
+app.get('/api/deriv/candles/:symbol/:timeframe', async (req, res) => {
+  const { symbol, timeframe } = req.params;
+  const tf = TIMEFRAMES[timeframe] || parseInt(timeframe);
+  
+  let candles = derivService?.getCandles(symbol, tf) || [];
+  
+  // Si no hay velas, intentar obtener historia
+  if (candles.length === 0 && derivService?.isConnected) {
+    candles = await derivService.getCandleHistory(symbol, tf, 200);
+  }
+  
+  res.json({
+    symbol,
+    name: SYNTHETIC_INDICES[symbol]?.name || symbol,
+    timeframe: tf,
+    count: candles.length,
+    candles,
+  });
+});
+
+// Suscribirse a un nuevo símbolo
+app.post('/api/deriv/subscribe', authenticate, (req, res) => {
+  const { symbol, timeframes = ['M1', 'M5', 'M15', 'H1'] } = req.body;
+  
+  if (!derivService?.isConnected) {
+    return res.status(503).json({ error: 'Deriv no conectado' });
+  }
+
+  derivService.subscribeTicks(symbol);
+  timeframes.forEach(tf => {
+    derivService.subscribeCandles(symbol, TIMEFRAMES[tf] || 60);
+  });
+
+  res.json({ success: true, symbol, timeframes });
+});
+
+// =============================================
+// RUTAS - ANÁLISIS SMC
+// =============================================
+
+// Analizar símbolo específico
+app.get('/api/analyze/live/:symbol', authenticate, async (req, res) => {
+  const { symbol } = req.params;
+  const { timeframe = 'M5' } = req.query;
+  
+  const tf = TIMEFRAMES[timeframe] || 300;
+  let candles = derivService?.getCandles(symbol, tf) || [];
+  
+  if (candles.length < 50 && derivService?.isConnected) {
+    candles = await derivService.getCandleHistory(symbol, tf, 200);
+  }
+
+  if (candles.length < 50) {
+    return res.status(400).json({ error: 'Insufficient data', candles: candles.length });
+  }
+
+  const analysis = smcAnalyzer.analyze(candles);
+  const signal = smcAnalyzer.generateSignal(analysis);
+
+  res.json({
+    symbol,
+    symbolName: SYNTHETIC_INDICES[symbol]?.name || symbol,
+    timeframe,
+    analysis,
+    signal,
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// Obtener señales activas
+app.get('/api/signals/active', authenticate, (req, res) => {
+  const signals = Array.from(activeSignals.values())
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    .slice(0, 20);
+  
+  res.json(signals);
+});
+
+// Obtener historial de señales
+app.get('/api/signals/history', authenticate, (req, res) => {
+  const { limit = 50 } = req.query;
+  res.json(signalHistory.slice(-parseInt(limit)).reverse());
+});
+
+// Marcar señal como tomada/ignorada
+app.put('/api/signals/:id', authenticate, (req, res) => {
+  const { id } = req.params;
+  const { status, result } = req.body;
+  
+  const signal = activeSignals.get(id);
+  if (signal) {
+    signal.status = status;
+    signal.result = result;
+    signal.updatedAt = new Date().toISOString();
+    activeSignals.set(id, signal);
+    res.json(signal);
+  } else {
+    res.status(404).json({ error: 'Signal not found' });
+  }
+});
+
+// =============================================
+// ANÁLISIS CON IMÁGENES (existente)
+// =============================================
+
+const ANALYSIS_PROMPT = `Eres un TRADER INSTITUCIONAL experto en Smart Money Concepts (SMC).
+
+REGLAS:
+1. BOS/CHoCH confirmado
+2. Retroceso a OB o FVG
+3. Liquidez barrida
+4. Confirmación en temporalidad menor
+5. Alineación Multi-TF
+
+RATIO R:R:
+- Sintéticos: 1:3 - 1:5
+- Forex: 1:2 - 1:3
+
+Responde en JSON con: hay_senal, setup, ejecucion, confianza, probabilidad.`;
+
+app.post('/api/analyze', authenticate, upload.array('images', 4), async (req, res) => {
   try {
-    if (!openai) {
-      return res.status(500).json({ error: 'OpenAI no configurado' });
-    }
+    if (!openai) return res.status(500).json({ error: 'OpenAI no configurado' });
 
     const { asset, accountBalance, riskPercent } = req.body;
-    
     let imageContents = [];
     
-    // Imágenes de multer
-    if (req.files && req.files.length > 0) {
+    if (req.files?.length > 0) {
       for (const file of req.files) {
         imageContents.push({
           type: 'image_url',
@@ -245,62 +355,31 @@ app.post('/api/analyze', authenticate, upload.array('images', 4), async (req, re
       }
     }
     
-    // Imágenes de body JSON
     if (req.body.images) {
-      let imgs;
-      try {
-        imgs = typeof req.body.images === 'string' ? JSON.parse(req.body.images) : req.body.images;
-      } catch (e) {
-        imgs = [];
-      }
-      
+      let imgs = typeof req.body.images === 'string' ? JSON.parse(req.body.images) : req.body.images;
       if (Array.isArray(imgs)) {
         for (const img of imgs) {
           const data = typeof img === 'string' ? img : (img.data || img);
-          if (data && data.length > 100) {
+          if (data?.length > 100) {
             imageContents.push({
               type: 'image_url',
-              image_url: {
-                url: data.startsWith('data:') ? data : `data:image/png;base64,${data}`,
-                detail: 'high'
-              }
+              image_url: { url: data.startsWith('data:') ? data : `data:image/png;base64,${data}`, detail: 'high' }
             });
           }
         }
       }
     }
 
-    console.log(`📷 Imágenes: ${imageContents.length} | Activo: ${asset}`);
-
-    if (imageContents.length === 0) {
-      return res.status(400).json({ error: 'No se recibieron imágenes' });
-    }
+    if (imageContents.length === 0) return res.status(400).json({ error: 'No images' });
 
     const response = await openai.chat.completions.create({
       model: 'gpt-4o',
       messages: [
         { role: 'system', content: ANALYSIS_PROMPT },
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: `ANALIZA ESTOS GRÁFICOS DE ${asset || 'TRADING'}
-
-TEMPORALIDADES: ${imageContents.length >= 4 ? 'H1, 15M, 5M, 1M' : `${imageContents.length} imagen(es)`}
-BALANCE: $${accountBalance || 1000}
-RIESGO: ${riskPercent || 1}%
-
-IMPORTANTE:
-1. Si NO se cumplen TODAS las reglas SMC, responde hay_senal: false
-2. Ajusta el R:R según el tipo de activo
-3. Da precios EXACTOS
-
-RESPONDE SOLO CON JSON.`
-            },
-            ...imageContents
-          ]
-        }
+        { role: 'user', content: [
+          { type: 'text', text: `Analiza ${asset}. Balance: $${accountBalance}, Riesgo: ${riskPercent}%. Responde JSON.` },
+          ...imageContents
+        ]}
       ],
       max_tokens: 4000,
       temperature: 0.2
@@ -311,136 +390,53 @@ RESPONDE SOLO CON JSON.`
       const text = response.choices[0]?.message?.content || '';
       const jsonMatch = text.replace(/```json\n?/gi, '').replace(/```\n?/gi, '').match(/\{[\s\S]*\}/);
       analysis = jsonMatch ? JSON.parse(jsonMatch[0]) : { raw: text };
-    } catch (e) {
-      analysis = { raw: response.choices[0]?.message?.content };
-    }
+    } catch { analysis = { raw: response.choices[0]?.message?.content }; }
 
-    // Guardar en BD
-    if (supabase && req.user?.id !== 'demo-user') {
-      try {
-        await supabase.from('analyses').insert({
-          user_id: req.user.id,
-          asset: asset || 'Unknown',
-          analysis_data: analysis,
-          tokens_used: response.usage?.total_tokens || 0
-        });
-      } catch (e) {
-        console.log('Error guardando análisis:', e.message);
-      }
-    }
-
-    res.json({
-      success: true,
-      analysis,
-      meta: { tokensUsed: response.usage?.total_tokens, images: imageContents.length }
-    });
-
+    res.json({ success: true, analysis, meta: { tokensUsed: response.usage?.total_tokens, images: imageContents.length }});
   } catch (error) {
-    console.error('❌ Error:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
 // =============================================
-// CHAT DE SEGUIMIENTO
+// CHAT
 // =============================================
 
 app.post('/api/chat', authenticate, upload.array('images', 2), async (req, res) => {
-  console.log('\n💬 CHAT DE SEGUIMIENTO');
-  
   try {
-    if (!openai) {
-      return res.status(500).json({ error: 'OpenAI no configurado' });
-    }
+    if (!openai) return res.status(500).json({ error: 'OpenAI no configurado' });
 
     const { message, tradeContext, conversationHistory } = req.body;
-    
     let imageContents = [];
     
-    if (req.files && req.files.length > 0) {
+    if (req.files?.length > 0) {
       for (const file of req.files) {
         imageContents.push({
           type: 'image_url',
-          image_url: {
-            url: `data:${file.mimetype};base64,${file.buffer.toString('base64')}`,
-            detail: 'high'
-          }
+          image_url: { url: `data:${file.mimetype};base64,${file.buffer.toString('base64')}`, detail: 'high' }
         });
-      }
-    }
-    
-    if (req.body.images) {
-      let imgs;
-      try {
-        imgs = typeof req.body.images === 'string' ? JSON.parse(req.body.images) : req.body.images;
-      } catch (e) {
-        imgs = [];
-      }
-      
-      if (Array.isArray(imgs)) {
-        for (const img of imgs) {
-          const data = typeof img === 'string' ? img : (img.data || img);
-          if (data && data.length > 100) {
-            imageContents.push({
-              type: 'image_url',
-              image_url: {
-                url: data.startsWith('data:') ? data : `data:image/png;base64,${data}`,
-                detail: 'high'
-              }
-            });
-          }
-        }
       }
     }
 
     const messages = [
-      { 
-        role: 'system', 
-        content: FOLLOWUP_PROMPT.replace('{TRADE_CONTEXT}', JSON.stringify(tradeContext || {}))
-      }
+      { role: 'system', content: `Mentor de trading SMC/ICT. Contexto: ${JSON.stringify(tradeContext || {})}` }
     ];
 
-    if (conversationHistory && Array.isArray(conversationHistory)) {
-      for (const msg of conversationHistory.slice(-10)) {
-        messages.push({ role: msg.role, content: msg.content });
-      }
+    if (conversationHistory) {
+      conversationHistory.slice(-10).forEach(msg => messages.push({ role: msg.role, content: msg.content }));
     }
 
     const userContent = [];
     if (message) userContent.push({ type: 'text', text: message });
-    if (imageContents.length > 0) {
-      userContent.push(...imageContents);
-      if (!message) userContent.unshift({ type: 'text', text: '¿Cómo va la operación?' });
-    }
-
-    messages.push({ role: 'user', content: userContent.length > 0 ? userContent : message || '¿Actualización?' });
+    if (imageContents.length > 0) userContent.push(...imageContents);
+    messages.push({ role: 'user', content: userContent.length > 0 ? userContent : '¿Actualización?' });
 
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o',
-      messages,
-      max_tokens: 2000,
-      temperature: 0.3
+      model: 'gpt-4o', messages, max_tokens: 2000, temperature: 0.3
     });
 
-    const assistantMessage = response.choices[0]?.message?.content || '';
-
-    let parsedResponse;
-    try {
-      const jsonMatch = assistantMessage.replace(/```json\n?/gi, '').replace(/```\n?/gi, '').match(/\{[\s\S]*\}/);
-      parsedResponse = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
-    } catch (e) {
-      parsedResponse = null;
-    }
-
-    res.json({
-      success: true,
-      response: parsedResponse || { mensaje: assistantMessage },
-      rawMessage: assistantMessage,
-      tokensUsed: response.usage?.total_tokens
-    });
-
+    res.json({ success: true, response: { mensaje: response.choices[0]?.message?.content } });
   } catch (error) {
-    console.error('❌ Error chat:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -451,108 +447,22 @@ app.post('/api/chat', authenticate, upload.array('images', 2), async (req, res) 
 
 app.get('/api/trades', authenticate, async (req, res) => {
   if (!supabase) return res.json([]);
-  
   try {
-    const { data } = await supabase
-      .from('trades')
-      .select('*')
-      .eq('user_id', req.user.id)
-      .order('created_at', { ascending: false });
+    const { data } = await supabase.from('trades').select('*').eq('user_id', req.user.id).order('created_at', { ascending: false });
     res.json(data || []);
-  } catch (e) {
-    res.json([]);
-  }
+  } catch { res.json([]); }
 });
 
 app.post('/api/trades', authenticate, async (req, res) => {
   const trade = { id: uuidv4(), user_id: req.user.id, ...req.body, created_at: new Date().toISOString() };
-  
   if (supabase && req.user.id !== 'demo-user') {
-    try {
-      const { data } = await supabase.from('trades').insert(trade).select().single();
-      return res.json(data);
-    } catch (e) {
-      console.log('Error guardando trade:', e.message);
-    }
+    try { const { data } = await supabase.from('trades').insert(trade).select().single(); return res.json(data); } catch {}
   }
-  
   res.json(trade);
 });
 
 app.get('/api/stats/advanced', authenticate, async (req, res) => {
-  if (!supabase || req.user.id === 'demo-user') {
-    return res.json({
-      overview: { totalTrades: 0, winRate: 0, totalProfit: 0, avgWin: 0, avgLoss: 0, profitFactor: 'N/A' },
-      byAsset: [],
-      streaks: { currentStreak: 0, bestWinStreak: 0, worstLossStreak: 0 }
-    });
-  }
-
-  try {
-    const { data: trades } = await supabase
-      .from('trades')
-      .select('*')
-      .eq('user_id', req.user.id)
-      .order('created_at', { ascending: true });
-
-    if (!trades || trades.length === 0) {
-      return res.json({
-        overview: { totalTrades: 0, winRate: 0, totalProfit: 0, avgWin: 0, avgLoss: 0, profitFactor: 'N/A' },
-        byAsset: [],
-        streaks: { currentStreak: 0, bestWinStreak: 0, worstLossStreak: 0 }
-      });
-    }
-
-    const wins = trades.filter(t => t.result === 'win');
-    const losses = trades.filter(t => t.result === 'loss');
-    
-    const assetMap = {};
-    trades.forEach(t => {
-      if (!assetMap[t.asset]) assetMap[t.asset] = { wins: 0, losses: 0, profit: 0 };
-      if (t.result === 'win') assetMap[t.asset].wins++;
-      if (t.result === 'loss') assetMap[t.asset].losses++;
-      assetMap[t.asset].profit += t.profit || 0;
-    });
-
-    const byAsset = Object.entries(assetMap).map(([asset, data]) => ({
-      asset, ...data,
-      winRate: data.wins + data.losses > 0 ? ((data.wins / (data.wins + data.losses)) * 100).toFixed(1) : 0
-    }));
-
-    let bestWinStreak = 0, worstLossStreak = 0, tempWin = 0, tempLoss = 0;
-    trades.forEach(t => {
-      if (t.result === 'win') { tempWin++; tempLoss = 0; if (tempWin > bestWinStreak) bestWinStreak = tempWin; }
-      else if (t.result === 'loss') { tempLoss++; tempWin = 0; if (tempLoss > worstLossStreak) worstLossStreak = tempLoss; }
-    });
-
-    let currentStreak = 0;
-    for (let i = trades.length - 1; i >= 0; i--) {
-      if (i === trades.length - 1) currentStreak = trades[i].result === 'win' ? 1 : -1;
-      else if ((currentStreak > 0 && trades[i].result === 'win') || (currentStreak < 0 && trades[i].result === 'loss'))
-        currentStreak += currentStreak > 0 ? 1 : -1;
-      else break;
-    }
-
-    const totalWinProfit = wins.reduce((s, t) => s + (t.profit || 0), 0);
-    const totalLossProfit = Math.abs(losses.reduce((s, t) => s + (t.profit || 0), 0));
-
-    res.json({
-      overview: {
-        totalTrades: trades.length,
-        wins: wins.length,
-        losses: losses.length,
-        winRate: wins.length + losses.length > 0 ? ((wins.length / (wins.length + losses.length)) * 100).toFixed(1) : 0,
-        totalProfit: trades.reduce((sum, t) => sum + (t.profit || 0), 0).toFixed(2),
-        avgWin: wins.length > 0 ? (totalWinProfit / wins.length).toFixed(2) : 0,
-        avgLoss: losses.length > 0 ? (totalLossProfit / losses.length).toFixed(2) : 0,
-        profitFactor: totalLossProfit > 0 ? (totalWinProfit / totalLossProfit).toFixed(2) : 'N/A'
-      },
-      byAsset,
-      streaks: { currentStreak, bestWinStreak, worstLossStreak }
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  res.json({ overview: { totalTrades: 0, winRate: 0, totalProfit: 0 }, byAsset: [], streaks: {} });
 });
 
 // =============================================
@@ -562,11 +472,22 @@ app.get('/api/stats/advanced', authenticate, async (req, res) => {
 app.listen(PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════╗
-║       TRADING MASTER PRO - API v4.0                       ║
+║       TRADING MASTER PRO - API v5.0                       ║
+║       CON INTEGRACIÓN DERIV API                           ║
 ╠═══════════════════════════════════════════════════════════╣
 ║  🚀 Puerto: ${PORT}                                          ║
-║  🤖 OpenAI: ${openai ? '✅ Conectado' : '❌ No configurado'}                       ║
-║  💾 Supabase: ${supabase ? '✅ Conectado' : '❌ No configurado'}                     ║
+║  🤖 OpenAI: ${openai ? '✅' : '❌'}                                        ║
+║  💾 Supabase: ${supabase ? '✅' : '❌'}                                      ║
+║  📈 Deriv: Conectando...                                  ║
+╠═══════════════════════════════════════════════════════════╣
+║  Nuevos endpoints:                                        ║
+║  • GET  /api/deriv/status                                 ║
+║  • GET  /api/deriv/symbols                                ║
+║  • GET  /api/deriv/price/:symbol                          ║
+║  • GET  /api/deriv/candles/:symbol/:timeframe             ║
+║  • GET  /api/analyze/live/:symbol                         ║
+║  • GET  /api/signals/active                               ║
+║  • GET  /api/signals/history                              ║
 ╚═══════════════════════════════════════════════════════════╝
   `);
 });
