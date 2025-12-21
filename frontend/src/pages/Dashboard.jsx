@@ -1,6 +1,6 @@
 // =============================================
-// TRADING MASTER PRO - DASHBOARD v6.0
-// SMC Institutional + Gráfico con CHoCH/BOS/Fib
+// TRADING MASTER PRO - DASHBOARD v6.1
+// Selector TF + Narración en Vivo + BOS/CHoCH
 // =============================================
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -8,9 +8,9 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 const API_URL = import.meta.env.VITE_API_URL || 'https://trading-master-pro-production.up.railway.app';
 
 // =============================================
-// GRÁFICO SMC CON MARCADORES
+// GRÁFICO SMC
 // =============================================
-const SMCChart = ({ candles, markers, symbol, height = 450 }) => {
+const SMCChart = ({ candles, markers, symbol, height = 400 }) => {
   const canvasRef = useRef(null);
   
   useEffect(() => {
@@ -27,13 +27,9 @@ const SMCChart = ({ candles, markers, symbol, height = 450 }) => {
     const visibleCandles = candles.slice(-80);
     const allPrices = visibleCandles.flatMap(c => [c.high, c.low]);
     
-    // Incluir niveles de fibonacci en el rango
     if (markers?.fibonacci?.optimalZone) {
       allPrices.push(markers.fibonacci.optimalZone.start, markers.fibonacci.optimalZone.end);
     }
-    if (markers?.entry) allPrices.push(markers.entry);
-    if (markers?.stopLoss) allPrices.push(markers.stopLoss);
-    if (markers?.takeProfit) allPrices.push(markers.takeProfit);
     
     const minPrice = Math.min(...allPrices);
     const maxPrice = Math.max(...allPrices);
@@ -53,94 +49,76 @@ const SMCChart = ({ candles, markers, symbol, height = 450 }) => {
       ctx.moveTo(0, y);
       ctx.lineTo(chartRight, y);
       ctx.stroke();
-      
       const price = maxPrice + padding - ((priceRange + padding * 2) / 5) * i;
       ctx.fillStyle = '#52525b';
       ctx.font = '10px monospace';
-      ctx.textAlign = 'left';
-      ctx.fillText(price.toFixed(4), chartRight + 5, y + 3);
+      ctx.fillText(price.toFixed(2), chartRight + 5, y + 3);
     }
 
-    // =============================================
-    // DIBUJAR ZONA FIBONACCI (70.6% - 92.6%)
-    // =============================================
+    // Fibonacci Zone (70.6% - 92.6%)
     if (markers?.fibonacci?.optimalZone) {
       const fib = markers.fibonacci;
       const zoneTop = scaleY(fib.optimalZone.start);
       const zoneBottom = scaleY(fib.optimalZone.end);
       
-      // Zona sombreada
-      ctx.fillStyle = 'rgba(251, 191, 36, 0.1)';
-      ctx.fillRect(0, zoneTop, chartRight, zoneBottom - zoneTop);
+      ctx.fillStyle = 'rgba(251, 191, 36, 0.08)';
+      ctx.fillRect(0, Math.min(zoneTop, zoneBottom), chartRight, Math.abs(zoneBottom - zoneTop));
       
-      // Líneas de fibonacci
-      const fibLevels = [
-        { level: 70.6, price: fib.fib_706, color: '#f59e0b' },
-        { level: 78.6, price: fib.fib_786, color: '#eab308' },
-        { level: 92.6, price: fib.fib_926, color: '#f59e0b' },
-      ];
-      
-      fibLevels.forEach(({ level, price, color }) => {
+      // Líneas Fib
+      [
+        { level: '70.6%', price: fib.fib_706 },
+        { level: '78.6%', price: fib.fib_786 },
+        { level: '92.6%', price: fib.fib_926 },
+      ].forEach(({ level, price }) => {
         if (price) {
           const y = scaleY(price);
-          ctx.strokeStyle = color;
+          ctx.strokeStyle = '#f59e0b';
           ctx.lineWidth = 1;
-          ctx.setLineDash([4, 4]);
+          ctx.setLineDash([3, 3]);
           ctx.beginPath();
           ctx.moveTo(0, y);
           ctx.lineTo(chartRight, y);
           ctx.stroke();
           ctx.setLineDash([]);
-          
-          ctx.fillStyle = color;
-          ctx.font = 'bold 9px sans-serif';
-          ctx.fillText(`${level}%`, 5, y - 3);
+          ctx.fillStyle = '#f59e0b';
+          ctx.font = '9px sans-serif';
+          ctx.fillText(level, 5, y - 3);
         }
       });
     }
 
-    // =============================================
-    // DIBUJAR ORDER BLOCKS
-    // =============================================
+    // Order Blocks
     if (markers?.orderBlocks) {
-      const { decisional, original } = markers.orderBlocks;
-      
-      [decisional, original].forEach((ob, i) => {
+      [markers.orderBlocks.original, markers.orderBlocks.decisional].forEach((ob) => {
         if (ob) {
           const y1 = scaleY(ob.high);
           const y2 = scaleY(ob.low);
-          const color = ob.obType === 'DEMAND' ? 'rgba(16, 185, 129, 0.25)' : 'rgba(239, 68, 68, 0.25)';
-          const borderColor = ob.obType === 'DEMAND' ? '#10b981' : '#ef4444';
+          const isDemand = ob.obType === 'DEMAND';
           
-          ctx.fillStyle = color;
-          ctx.fillRect(0, y1, chartRight, y2 - y1);
+          ctx.fillStyle = isDemand ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)';
+          ctx.fillRect(0, Math.min(y1, y2), chartRight, Math.abs(y2 - y1));
           
-          ctx.strokeStyle = borderColor;
+          ctx.strokeStyle = isDemand ? '#10b981' : '#ef4444';
           ctx.lineWidth = 1.5;
-          ctx.strokeRect(0, y1, chartRight, y2 - y1);
+          ctx.strokeRect(0, Math.min(y1, y2), chartRight, Math.abs(y2 - y1));
           
-          // Label
-          ctx.fillStyle = borderColor;
-          ctx.font = 'bold 10px sans-serif';
-          ctx.fillText(ob.type === 'ORIGINAL' ? 'OB Original' : 'OB Decisional', 5, y1 - 5);
+          ctx.fillStyle = isDemand ? '#10b981' : '#ef4444';
+          ctx.font = 'bold 9px sans-serif';
+          ctx.fillText(`OB ${ob.type}`, 5, Math.min(y1, y2) - 3);
         }
       });
     }
 
-    // =============================================
-    // DIBUJAR VELAS
-    // =============================================
+    // Velas
     visibleCandles.forEach((candle, i) => {
       const x = 10 + i * candleWidth + candleWidth / 2;
       const open = scaleY(candle.open);
       const close = scaleY(candle.close);
       const high = scaleY(candle.high);
       const low = scaleY(candle.low);
-      
       const isBullish = candle.close > candle.open;
       const color = isBullish ? '#10b981' : '#ef4444';
       
-      // Mecha
       ctx.strokeStyle = color;
       ctx.lineWidth = 1;
       ctx.beginPath();
@@ -148,313 +126,191 @@ const SMCChart = ({ candles, markers, symbol, height = 450 }) => {
       ctx.lineTo(x, low);
       ctx.stroke();
       
-      // Cuerpo
       ctx.fillStyle = color;
-      const bodyTop = Math.min(open, close);
-      const bodyHeight = Math.abs(close - open) || 1;
-      ctx.fillRect(x - candleWidth * 0.35, bodyTop, candleWidth * 0.7, bodyHeight);
+      ctx.fillRect(x - candleWidth * 0.35, Math.min(open, close), candleWidth * 0.7, Math.abs(close - open) || 1);
     });
 
-    // =============================================
-    // DIBUJAR CHoCH
-    // =============================================
-    if (markers?.choch) {
-      const y = scaleY(markers.choch.price);
-      const color = markers.choch.direction === 'BULLISH' ? '#22c55e' : '#ef4444';
-      
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(chartRight, y);
-      ctx.stroke();
-      
-      // Label CHoCH
-      ctx.fillStyle = '#000';
-      ctx.fillRect(chartRight - 60, y - 12, 55, 18);
-      ctx.fillStyle = color;
-      ctx.fillRect(chartRight - 58, y - 10, 51, 14);
-      ctx.fillStyle = '#000';
-      ctx.font = 'bold 10px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('CHoCH', chartRight - 33, y + 1);
-    }
-
-    // =============================================
-    // DIBUJAR BOS
-    // =============================================
+    // BOS Line
     if (markers?.bos) {
       const y = scaleY(markers.bos.price);
       const color = markers.bos.direction === 'BULLISH' ? '#3b82f6' : '#f97316';
-      
       ctx.strokeStyle = color;
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([6, 3]);
+      ctx.lineWidth = 2;
+      ctx.setLineDash([8, 4]);
       ctx.beginPath();
       ctx.moveTo(0, y);
       ctx.lineTo(chartRight, y);
       ctx.stroke();
       ctx.setLineDash([]);
       
+      // Label
       ctx.fillStyle = color;
-      ctx.font = 'bold 9px sans-serif';
-      ctx.textAlign = 'left';
-      ctx.fillText('BOS', chartRight - 50, y - 5);
-    }
-
-    // =============================================
-    // DIBUJAR NIVELES ENTRY / SL / TP
-    // =============================================
-    const drawLevel = (price, label, color, style = 'solid') => {
-      if (!price) return;
-      const y = scaleY(price);
-      
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
-      if (style === 'dashed') ctx.setLineDash([8, 4]);
-      ctx.beginPath();
-      ctx.moveTo(chartRight - 150, y);
-      ctx.lineTo(chartRight, y);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      
-      // Badge
-      ctx.fillStyle = color;
-      ctx.fillRect(chartRight + 2, y - 10, 65, 20);
+      ctx.fillRect(chartRight - 45, y - 10, 40, 16);
       ctx.fillStyle = '#fff';
       ctx.font = 'bold 9px sans-serif';
-      ctx.textAlign = 'left';
-      ctx.fillText(label, chartRight + 5, y + 4);
-    };
+      ctx.fillText('BOS', chartRight - 35, y + 2);
+    }
 
-    drawLevel(markers?.entry, 'ENTRY', '#3b82f6');
-    drawLevel(markers?.stopLoss, 'SL', '#ef4444', 'dashed');
-    drawLevel(markers?.takeProfit, 'TP', '#10b981', 'dashed');
-
-    // =============================================
-    // PRECIO ACTUAL
-    // =============================================
-    if (visibleCandles.length > 0) {
-      const currentPrice = visibleCandles[visibleCandles.length - 1].close;
-      const y = scaleY(currentPrice);
-      
-      ctx.fillStyle = '#3b82f6';
+    // CHoCH Line
+    if (markers?.choch) {
+      const y = scaleY(markers.choch.price);
+      const color = markers.choch.direction === 'BULLISH' ? '#22c55e' : '#ef4444';
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2.5;
       ctx.beginPath();
-      ctx.moveTo(chartRight, y);
-      ctx.lineTo(chartRight + 8, y - 6);
-      ctx.lineTo(chartRight + 8, y + 6);
-      ctx.fill();
+      ctx.moveTo(0, y);
+      ctx.lineTo(chartRight, y);
+      ctx.stroke();
+      
+      // Label
+      ctx.fillStyle = color;
+      ctx.fillRect(chartRight - 55, y - 10, 50, 16);
+      ctx.fillStyle = '#000';
+      ctx.font = 'bold 9px sans-serif';
+      ctx.fillText('CHoCH', chartRight - 50, y + 2);
+    }
+
+    // Entry/SL/TP Lines
+    if (markers?.levels) {
+      const { entry, stopLoss, takeProfit1 } = markers.levels;
+      
+      if (entry) {
+        const y = scaleY(parseFloat(entry));
+        ctx.strokeStyle = '#3b82f6';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(chartRight - 120, y);
+        ctx.lineTo(chartRight, y);
+        ctx.stroke();
+        ctx.fillStyle = '#3b82f6';
+        ctx.font = 'bold 9px sans-serif';
+        ctx.fillText(`ENTRY ${entry}`, chartRight - 115, y - 3);
+      }
+      
+      if (stopLoss) {
+        const y = scaleY(parseFloat(stopLoss));
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(chartRight - 120, y);
+        ctx.lineTo(chartRight, y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#ef4444';
+        ctx.fillText(`SL ${stopLoss}`, chartRight - 115, y - 3);
+      }
+      
+      if (takeProfit1) {
+        const y = scaleY(parseFloat(takeProfit1));
+        ctx.strokeStyle = '#10b981';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(chartRight - 120, y);
+        ctx.lineTo(chartRight, y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#10b981';
+        ctx.fillText(`TP ${takeProfit1}`, chartRight - 115, y - 3);
+      }
     }
 
     // Título
     ctx.fillStyle = '#fff';
-    ctx.font = 'bold 14px sans-serif';
-    ctx.textAlign = 'left';
-    ctx.fillText(symbol || 'Chart', 10, 20);
+    ctx.font = 'bold 12px sans-serif';
+    ctx.fillText(symbol || '', 10, 18);
     
   }, [candles, markers, symbol]);
   
   return (
     <canvas 
       ref={canvasRef} 
-      width={900} 
+      width={850} 
       height={height}
       className="w-full rounded-xl border border-zinc-800"
-      style={{ background: '#09090b' }}
     />
   );
 };
 
 // =============================================
-// CARD DE SEÑAL CON NIVELES
+// NARRACIÓN EN VIVO
 // =============================================
-const SignalCard = ({ signal, onClick, compact = false }) => {
-  if (!signal) return null;
-  
-  const isBuy = signal.direction === 'BULLISH' || signal.direction === 'COMPRA';
-  
+const NarrationPanel = ({ narration, waiting, status, levels }) => {
+  const statusColors = {
+    'ENTRADA_LISTA': 'bg-emerald-500/20 border-emerald-500/50',
+    'ESPERANDO_RETROCESO': 'bg-amber-500/20 border-amber-500/50',
+    'ESPERANDO_BREAK': 'bg-blue-500/20 border-blue-500/50',
+    'ESPERANDO_OB': 'bg-purple-500/20 border-purple-500/50',
+    'SIN_ESTRUCTURA': 'bg-zinc-500/20 border-zinc-500/50',
+    'BUSCANDO': 'bg-zinc-500/20 border-zinc-500/50',
+  };
+
+  const statusLabels = {
+    'ENTRADA_LISTA': '🎯 ENTRADA LISTA',
+    'ESPERANDO_RETROCESO': '⏳ Esperando Retroceso',
+    'ESPERANDO_BREAK': '👀 Esperando BOS/CHoCH',
+    'ESPERANDO_OB': '🔍 Buscando Order Block',
+    'SIN_ESTRUCTURA': '📊 Sin Estructura Clara',
+    'BUSCANDO': '🔄 Analizando...',
+  };
+
   return (
-    <div 
-      onClick={() => onClick?.(signal)}
-      className={`border rounded-xl p-4 cursor-pointer transition hover:scale-[1.02] ${
-        isBuy 
-          ? 'bg-emerald-500/10 border-emerald-500/30 hover:border-emerald-500/50' 
-          : 'bg-red-500/10 border-red-500/30 hover:border-red-500/50'
-      }`}
-    >
+    <div className={`rounded-xl border p-4 ${statusColors[status] || statusColors.BUSCANDO}`}>
+      {/* Status Badge */}
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
-          <span className="text-2xl">{isBuy ? '🟢' : '🔴'}</span>
-          <div>
-            <div className="font-bold text-white">{signal.symbolName || signal.symbol}</div>
-            <div className="text-xs text-zinc-400">
-              {new Date(signal.createdAt).toLocaleTimeString()}
-            </div>
-          </div>
+          <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+          <span className="text-sm font-medium text-white">Narración en Vivo</span>
         </div>
-        <div className="text-right">
-          <div className={`font-bold ${isBuy ? 'text-emerald-400' : 'text-red-400'}`}>
-            {isBuy ? 'COMPRA' : 'VENTA'}
-          </div>
-          <div className="text-xs text-amber-400">
-            {signal.scoring?.classification} ({signal.scoring?.score}/100)
-          </div>
-        </div>
+        <span className="text-xs px-2 py-1 rounded bg-zinc-800 text-zinc-300">
+          {statusLabels[status] || status}
+        </span>
       </div>
       
-      {signal.levels && !compact && (
-        <div className="grid grid-cols-4 gap-2 text-xs mb-3">
-          <div className="bg-zinc-800/50 rounded p-2 text-center">
-            <div className="text-zinc-500">Entry</div>
-            <div className="font-mono font-bold text-blue-400">{signal.levels.entry}</div>
-          </div>
-          <div className="bg-zinc-800/50 rounded p-2 text-center">
-            <div className="text-zinc-500">SL</div>
-            <div className="font-mono font-bold text-red-400">{signal.levels.stopLoss}</div>
-          </div>
-          <div className="bg-zinc-800/50 rounded p-2 text-center">
-            <div className="text-zinc-500">TP</div>
-            <div className="font-mono font-bold text-emerald-400">{signal.levels.takeProfit}</div>
-          </div>
-          <div className="bg-zinc-800/50 rounded p-2 text-center">
-            <div className="text-zinc-500">R:R</div>
-            <div className="font-mono font-bold text-amber-400">{signal.levels.riskReward}</div>
+      {/* Narración */}
+      <div className="bg-zinc-900/50 rounded-lg p-3 mb-3">
+        <p className="text-zinc-200 text-sm leading-relaxed">
+          {narration || 'Analizando el mercado...'}
+        </p>
+      </div>
+      
+      {/* Qué estamos esperando */}
+      {waiting && waiting.length > 0 && (
+        <div className="mb-3">
+          <div className="text-xs text-zinc-400 mb-2">⏳ Esperando:</div>
+          <div className="space-y-1">
+            {waiting.map((item, i) => (
+              <div key={i} className="flex items-center gap-2 text-xs">
+                <span className="text-amber-400">○</span>
+                <span className="text-zinc-300">{item}</span>
+              </div>
+            ))}
           </div>
         </div>
       )}
       
-      {signal.reason && !compact && (
-        <div className="text-xs text-zinc-400 border-t border-zinc-800 pt-2">
-          💡 {signal.reason}
+      {/* Niveles si hay entrada lista */}
+      {status === 'ENTRADA_LISTA' && levels && (
+        <div className="grid grid-cols-4 gap-2 pt-3 border-t border-zinc-700">
+          <div className="text-center">
+            <div className="text-xs text-zinc-500">Entry</div>
+            <div className="font-mono text-sm text-blue-400">{levels.entry}</div>
+          </div>
+          <div className="text-center">
+            <div className="text-xs text-zinc-500">SL</div>
+            <div className="font-mono text-sm text-red-400">{levels.stopLoss}</div>
+          </div>
+          <div className="text-center">
+            <div className="text-xs text-zinc-500">TP1</div>
+            <div className="font-mono text-sm text-emerald-400">{levels.takeProfit1}</div>
+          </div>
+          <div className="text-center">
+            <div className="text-xs text-zinc-500">R:R</div>
+            <div className="font-mono text-sm text-amber-400">{levels.riskReward}</div>
+          </div>
         </div>
       )}
-    </div>
-  );
-};
-
-// =============================================
-// MODAL DE DETALLE DE SEÑAL
-// =============================================
-const SignalDetailModal = ({ signal, onClose }) => {
-  if (!signal) return null;
-  
-  const isBuy = signal.direction === 'BULLISH' || signal.direction === 'COMPRA';
-  
-  return (
-    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div 
-        className="bg-zinc-900 rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto"
-        onClick={e => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className={`p-4 border-b border-zinc-800 flex items-center justify-between ${
-          isBuy ? 'bg-emerald-500/10' : 'bg-red-500/10'
-        }`}>
-          <div className="flex items-center gap-3">
-            <span className="text-3xl">{isBuy ? '🟢' : '🔴'}</span>
-            <div>
-              <h2 className="text-xl font-bold text-white">{signal.symbolName}</h2>
-              <div className="text-sm text-zinc-400">
-                {new Date(signal.createdAt).toLocaleString()}
-              </div>
-            </div>
-          </div>
-          <button onClick={onClose} className="text-zinc-400 hover:text-white text-2xl">×</button>
-        </div>
-        
-        {/* Gráfico */}
-        <div className="p-4">
-          <SMCChart 
-            candles={signal.candles?.m15 || []}
-            markers={signal.chartMarkers}
-            symbol={`${signal.symbolName} - M15`}
-            height={400}
-          />
-        </div>
-        
-        {/* Niveles */}
-        {signal.levels && (
-          <div className="px-4 pb-4">
-            <div className="grid grid-cols-4 gap-3">
-              <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-4 text-center">
-                <div className="text-blue-400 text-sm mb-1">📍 Entry</div>
-                <div className="font-mono font-bold text-xl text-white">{signal.levels.entry}</div>
-              </div>
-              <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 text-center">
-                <div className="text-red-400 text-sm mb-1">🛑 Stop Loss</div>
-                <div className="font-mono font-bold text-xl text-white">{signal.levels.stopLoss}</div>
-              </div>
-              <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-4 text-center">
-                <div className="text-emerald-400 text-sm mb-1">🎯 Take Profit</div>
-                <div className="font-mono font-bold text-xl text-white">{signal.levels.takeProfit}</div>
-              </div>
-              <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 text-center">
-                <div className="text-amber-400 text-sm mb-1">📈 Risk:Reward</div>
-                <div className="font-mono font-bold text-xl text-white">{signal.levels.riskReward}</div>
-              </div>
-            </div>
-          </div>
-        )}
-        
-        {/* Análisis */}
-        <div className="px-4 pb-4">
-          <div className="bg-zinc-800/50 rounded-xl p-4">
-            <h3 className="font-bold text-white mb-3">📊 Análisis SMC</h3>
-            
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <div>
-                <div className="text-zinc-400 mb-1">Estructura M15</div>
-                <div className="text-white font-medium">{signal.m15Structure?.trend || 'N/A'}</div>
-              </div>
-              <div>
-                <div className="text-zinc-400 mb-1">CHoCH</div>
-                <div className={`font-medium ${signal.choch ? 'text-emerald-400' : 'text-zinc-500'}`}>
-                  {signal.choch ? `✓ ${signal.choch.direction}` : '✗ No detectado'}
-                </div>
-              </div>
-              <div>
-                <div className="text-zinc-400 mb-1">Zona Fibonacci</div>
-                <div className={`font-medium ${signal.inFibZone ? 'text-amber-400' : 'text-zinc-500'}`}>
-                  {signal.inFibZone ? '✓ En zona 70.6-92.6%' : '✗ Fuera de zona'}
-                </div>
-              </div>
-              <div>
-                <div className="text-zinc-400 mb-1">Order Block</div>
-                <div className={`font-medium ${signal.orderBlocks?.decisional ? 'text-blue-400' : 'text-zinc-500'}`}>
-                  {signal.orderBlocks?.original ? 'Original (A+)' : 
-                   signal.orderBlocks?.decisional ? 'Decisional (A)' : 'No encontrado'}
-                </div>
-              </div>
-            </div>
-            
-            {/* Score breakdown */}
-            {signal.scoring?.details && (
-              <div className="mt-4 pt-4 border-t border-zinc-700">
-                <div className="text-zinc-400 mb-2">Score Breakdown</div>
-                <div className="flex gap-2">
-                  {Object.entries(signal.scoring.details).map(([key, value]) => (
-                    <div key={key} className="flex-1 bg-zinc-900 rounded p-2 text-center">
-                      <div className="text-xs text-zinc-500">{key.replace('_', ' ')}</div>
-                      <div className={`font-bold ${value >= 15 ? 'text-emerald-400' : value >= 10 ? 'text-amber-400' : 'text-zinc-500'}`}>
-                        {value}/20
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-        
-        {/* Razón */}
-        <div className="px-4 pb-4">
-          <div className={`rounded-xl p-4 ${isBuy ? 'bg-emerald-500/10' : 'bg-red-500/10'}`}>
-            <div className="text-sm text-zinc-300">
-              💡 <strong>Por qué esta señal:</strong> {signal.reason}
-            </div>
-          </div>
-        </div>
-      </div>
     </div>
   );
 };
@@ -462,113 +318,199 @@ const SignalDetailModal = ({ signal, onClose }) => {
 // =============================================
 // SELECTOR DE SÍMBOLO
 // =============================================
-const SymbolSelector = ({ symbols, selected, onSelect, dailyCounts }) => {
+const SymbolSelector = ({ symbols, selected, onSelect, dailyCounts }) => (
+  <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-thin">
+    {Object.entries(symbols).map(([key, info]) => (
+      <button
+        key={key}
+        onClick={() => onSelect(key)}
+        className={`px-3 py-2 rounded-lg whitespace-nowrap transition flex items-center gap-2 text-sm ${
+          selected === key 
+            ? 'bg-blue-600 text-white' 
+            : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
+        }`}
+      >
+        <span>{info.name}</span>
+        <span className={`text-xs px-1.5 py-0.5 rounded ${
+          (dailyCounts?.[key] || 0) >= 7 ? 'bg-red-500/30 text-red-400' : 'bg-zinc-700/50 text-zinc-500'
+        }`}>
+          {dailyCounts?.[key] || 0}/7
+        </span>
+      </button>
+    ))}
+  </div>
+);
+
+// =============================================
+// SELECTOR DE TIMEFRAME
+// =============================================
+const TimeframeSelector = ({ selected, onSelect }) => {
+  const tfs = [
+    { id: 'M15', label: 'M15', desc: 'Estructura' },
+    { id: 'M5', label: 'M5', desc: 'Zonas' },
+    { id: 'M1', label: 'M1', desc: 'Entrada' },
+  ];
+  
   return (
-    <div className="flex gap-2 overflow-x-auto pb-2">
-      {Object.entries(symbols).map(([key, info]) => {
-        const count = dailyCounts?.[key] || 0;
-        return (
-          <button
-            key={key}
-            onClick={() => onSelect(key)}
-            className={`px-4 py-2 rounded-lg whitespace-nowrap transition flex items-center gap-2 ${
-              selected === key 
-                ? 'bg-blue-600 text-white' 
-                : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
-            }`}
-          >
-            <span>{info.name}</span>
-            <span className={`text-xs px-1.5 py-0.5 rounded ${
-              count >= 7 ? 'bg-red-500/30 text-red-400' : 'bg-zinc-700 text-zinc-400'
-            }`}>
-              {count}/7
-            </span>
-          </button>
-        );
-      })}
+    <div className="flex gap-1 bg-zinc-800/50 rounded-lg p-1">
+      {tfs.map(tf => (
+        <button
+          key={tf.id}
+          onClick={() => onSelect(tf.id)}
+          className={`px-3 py-1.5 rounded transition ${
+            selected === tf.id 
+              ? 'bg-zinc-600 text-white' 
+              : 'text-zinc-400 hover:text-white'
+          }`}
+        >
+          <div className="text-sm font-medium">{tf.label}</div>
+          <div className="text-[10px] text-zinc-500">{tf.desc}</div>
+        </button>
+      ))}
     </div>
   );
 };
 
 // =============================================
-// PANEL DE ANÁLISIS EN VIVO
+// PANEL DE ANÁLISIS
 // =============================================
-const LiveAnalysisPanel = ({ analysis }) => {
+const AnalysisPanel = ({ analysis }) => {
   if (!analysis) return null;
   
+  const { structure, bos, choch, orderBlocks, zoneCheck, scoring } = analysis;
+  
   return (
-    <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-4">
-      <h3 className="font-bold text-white mb-3 flex items-center gap-2">
-        <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-        Análisis en Vivo
+    <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-4 space-y-4">
+      <h3 className="font-bold text-white flex items-center gap-2">
+        <span className="w-2 h-2 bg-blue-500 rounded-full" />
+        Análisis SMC
       </h3>
       
-      <div className="grid grid-cols-2 gap-3 text-sm">
-        <div className="bg-zinc-800/50 rounded-lg p-3">
-          <div className="text-zinc-500 text-xs mb-1">Tendencia M15</div>
+      {/* Estructura */}
+      <div className="grid grid-cols-2 gap-2">
+        <div className="bg-zinc-800/50 rounded-lg p-2">
+          <div className="text-xs text-zinc-500">Tendencia</div>
           <div className={`font-bold ${
-            analysis.m15Structure?.trend === 'BULLISH' ? 'text-emerald-400' :
-            analysis.m15Structure?.trend === 'BEARISH' ? 'text-red-400' : 'text-zinc-400'
+            structure?.trend === 'BULLISH' ? 'text-emerald-400' :
+            structure?.trend === 'BEARISH' ? 'text-red-400' : 'text-zinc-400'
           }`}>
-            {analysis.m15Structure?.trend || 'Analizando...'}
+            {structure?.trend || 'N/A'}
           </div>
         </div>
-        
-        <div className="bg-zinc-800/50 rounded-lg p-3">
-          <div className="text-zinc-500 text-xs mb-1">CHoCH M15</div>
-          <div className={`font-bold ${analysis.choch ? 'text-emerald-400' : 'text-zinc-500'}`}>
-            {analysis.choch ? `✓ ${analysis.choch.direction}` : 'Esperando...'}
-          </div>
-        </div>
-        
-        <div className="bg-zinc-800/50 rounded-lg p-3">
-          <div className="text-zinc-500 text-xs mb-1">Zona Fib (70.6-92.6%)</div>
-          <div className={`font-bold ${analysis.inFibZone ? 'text-amber-400' : 'text-zinc-500'}`}>
-            {analysis.inFibZone ? '✓ En zona' : '✗ Fuera'}
-          </div>
-        </div>
-        
-        <div className="bg-zinc-800/50 rounded-lg p-3">
-          <div className="text-zinc-500 text-xs mb-1">Order Block</div>
-          <div className={`font-bold ${
-            analysis.orderBlocks?.original ? 'text-emerald-400' :
-            analysis.orderBlocks?.decisional ? 'text-blue-400' : 'text-zinc-500'
-          }`}>
-            {analysis.orderBlocks?.original ? 'Original ✓' :
-             analysis.orderBlocks?.decisional ? 'Decisional ✓' : 'Buscando...'}
+        <div className="bg-zinc-800/50 rounded-lg p-2">
+          <div className="text-xs text-zinc-500">Estructura</div>
+          <div className="font-bold text-white text-sm">
+            {structure?.structure?.join(' → ') || 'N/A'}
           </div>
         </div>
       </div>
       
-      {analysis.scoring && (
-        <div className="mt-3 pt-3 border-t border-zinc-800">
-          <div className="flex items-center justify-between">
-            <span className="text-zinc-400 text-sm">Score Total</span>
-            <div className="flex items-center gap-2">
-              <div className="w-32 h-2 bg-zinc-800 rounded-full overflow-hidden">
-                <div 
-                  className={`h-full transition-all ${
-                    analysis.scoring.score >= 85 ? 'bg-emerald-500' :
-                    analysis.scoring.score >= 70 ? 'bg-blue-500' :
-                    analysis.scoring.score >= 55 ? 'bg-amber-500' : 'bg-red-500'
-                  }`}
-                  style={{ width: `${analysis.scoring.score}%` }}
-                />
-              </div>
-              <span className={`font-bold ${
-                analysis.scoring.score >= 85 ? 'text-emerald-400' :
-                analysis.scoring.score >= 70 ? 'text-blue-400' : 'text-zinc-400'
-              }`}>
-                {analysis.scoring.score}/100 ({analysis.scoring.classification})
-              </span>
-            </div>
+      {/* BOS / CHoCH */}
+      <div className="grid grid-cols-2 gap-2">
+        <div className={`rounded-lg p-2 ${bos ? 'bg-blue-500/10 border border-blue-500/30' : 'bg-zinc-800/50'}`}>
+          <div className="text-xs text-zinc-500">BOS</div>
+          <div className={`font-bold ${bos ? 'text-blue-400' : 'text-zinc-600'}`}>
+            {bos ? `✓ ${bos.direction}` : '○ No'}
+          </div>
+        </div>
+        <div className={`rounded-lg p-2 ${choch ? 'bg-emerald-500/10 border border-emerald-500/30' : 'bg-zinc-800/50'}`}>
+          <div className="text-xs text-zinc-500">CHoCH</div>
+          <div className={`font-bold ${choch ? 'text-emerald-400' : 'text-zinc-600'}`}>
+            {choch ? `✓ ${choch.direction}` : '○ No'}
+          </div>
+        </div>
+      </div>
+      
+      {/* Order Block & Fib */}
+      <div className="grid grid-cols-2 gap-2">
+        <div className={`rounded-lg p-2 ${orderBlocks?.decisional || orderBlocks?.original ? 'bg-purple-500/10 border border-purple-500/30' : 'bg-zinc-800/50'}`}>
+          <div className="text-xs text-zinc-500">Order Block</div>
+          <div className={`font-bold text-sm ${orderBlocks?.original ? 'text-purple-400' : orderBlocks?.decisional ? 'text-purple-300' : 'text-zinc-600'}`}>
+            {orderBlocks?.original ? 'Original ✓' : orderBlocks?.decisional ? 'Decisional ✓' : '○ Buscando'}
+          </div>
+        </div>
+        <div className={`rounded-lg p-2 ${zoneCheck?.inFibZone ? 'bg-amber-500/10 border border-amber-500/30' : 'bg-zinc-800/50'}`}>
+          <div className="text-xs text-zinc-500">Zona Fib</div>
+          <div className={`font-bold text-sm ${zoneCheck?.inFibZone ? 'text-amber-400' : zoneCheck?.nearZone ? 'text-amber-300' : 'text-zinc-600'}`}>
+            {zoneCheck?.inFibZone ? '✓ En zona' : zoneCheck?.nearZone ? '~ Cerca' : '○ Fuera'}
+          </div>
+        </div>
+      </div>
+      
+      {/* Score */}
+      {scoring && (
+        <div className="pt-3 border-t border-zinc-800">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-zinc-400 text-sm">Score</span>
+            <span className={`font-bold ${
+              scoring.score >= 85 ? 'text-emerald-400' :
+              scoring.score >= 70 ? 'text-blue-400' :
+              scoring.score >= 55 ? 'text-amber-400' : 'text-zinc-400'
+            }`}>
+              {scoring.score}/100 ({scoring.classification})
+            </span>
+          </div>
+          <div className="h-2 bg-zinc-800 rounded-full overflow-hidden">
+            <div 
+              className={`h-full transition-all ${
+                scoring.score >= 85 ? 'bg-emerald-500' :
+                scoring.score >= 70 ? 'bg-blue-500' :
+                scoring.score >= 55 ? 'bg-amber-500' : 'bg-zinc-600'
+              }`}
+              style={{ width: `${scoring.score}%` }}
+            />
           </div>
         </div>
       )}
+    </div>
+  );
+};
+
+// =============================================
+// SIGNAL CARD
+// =============================================
+const SignalCard = ({ signal, onClick }) => {
+  if (!signal?.hasSignal) return null;
+  const isBuy = signal.direction === 'BULLISH';
+  
+  return (
+    <div 
+      onClick={() => onClick?.(signal)}
+      className={`rounded-xl border p-4 cursor-pointer transition hover:scale-[1.01] ${
+        isBuy ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-red-500/10 border-red-500/30'
+      }`}
+    >
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <span className="text-2xl">{isBuy ? '🟢' : '🔴'}</span>
+          <div>
+            <div className="font-bold text-white">{signal.symbolName}</div>
+            <div className="text-xs text-zinc-400">{signal.breakSignal?.type} - {new Date(signal.createdAt).toLocaleTimeString()}</div>
+          </div>
+        </div>
+        <div className={`font-bold ${isBuy ? 'text-emerald-400' : 'text-red-400'}`}>
+          {isBuy ? 'COMPRA' : 'VENTA'}
+        </div>
+      </div>
       
-      {analysis.reason && (
-        <div className="mt-3 text-xs text-zinc-400 bg-zinc-800/30 rounded-lg p-2">
-          💡 {analysis.reason}
+      {signal.levels && (
+        <div className="grid grid-cols-4 gap-2 text-xs">
+          <div className="bg-zinc-800/50 rounded p-2 text-center">
+            <div className="text-zinc-500">Entry</div>
+            <div className="font-mono text-blue-400">{signal.levels.entry}</div>
+          </div>
+          <div className="bg-zinc-800/50 rounded p-2 text-center">
+            <div className="text-zinc-500">SL</div>
+            <div className="font-mono text-red-400">{signal.levels.stopLoss}</div>
+          </div>
+          <div className="bg-zinc-800/50 rounded p-2 text-center">
+            <div className="text-zinc-500">TP1</div>
+            <div className="font-mono text-emerald-400">{signal.levels.takeProfit1}</div>
+          </div>
+          <div className="bg-zinc-800/50 rounded p-2 text-center">
+            <div className="text-zinc-500">Score</div>
+            <div className="font-mono text-amber-400">{signal.scoring?.score}</div>
+          </div>
         </div>
       )}
     </div>
@@ -580,83 +522,70 @@ const LiveAnalysisPanel = ({ analysis }) => {
 // =============================================
 export default function Dashboard() {
   const [isConnected, setIsConnected] = useState(false);
-  const [derivConnected, setDerivConnected] = useState(false);
   const [symbols, setSymbols] = useState({});
   const [selectedSymbol, setSelectedSymbol] = useState('R_75');
+  const [selectedTF, setSelectedTF] = useState('M15');
   const [analysis, setAnalysis] = useState(null);
+  const [narration, setNarration] = useState(null);
   const [signals, setSignals] = useState([]);
   const [dailyCounts, setDailyCounts] = useState({});
-  const [selectedSignal, setSelectedSignal] = useState(null);
   const [activeTab, setActiveTab] = useState('live');
   const [loading, setLoading] = useState(false);
 
-  // Cargar datos iniciales
+  // Init
   useEffect(() => {
     const init = async () => {
       try {
-        const [healthRes, symbolsRes, signalsRes, countsRes] = await Promise.all([
-          fetch(`${API_URL}/health`),
-          fetch(`${API_URL}/api/deriv/symbols`),
-          fetch(`${API_URL}/api/signals/history`),
-          fetch(`${API_URL}/api/signals/daily-count`)
+        const [health, syms, sigs, counts] = await Promise.all([
+          fetch(`${API_URL}/health`).then(r => r.json()),
+          fetch(`${API_URL}/api/deriv/symbols`).then(r => r.json()),
+          fetch(`${API_URL}/api/signals/history`).then(r => r.json()),
+          fetch(`${API_URL}/api/signals/daily-count`).then(r => r.json()),
         ]);
-        
-        const health = await healthRes.json();
-        setIsConnected(true);
-        setDerivConnected(health.deriv);
-        
-        const symbolsData = await symbolsRes.json();
-        setSymbols(symbolsData);
-        
-        const signalsData = await signalsRes.json();
-        setSignals(signalsData);
-        
-        const counts = await countsRes.json();
+        setIsConnected(health.deriv);
+        setSymbols(syms);
+        setSignals(sigs);
         setDailyCounts(counts);
-        
       } catch (e) {
-        console.error('Error:', e);
         setIsConnected(false);
       }
     };
     init();
   }, []);
 
-  // Obtener análisis en vivo
-  const fetchAnalysis = useCallback(async () => {
+  // Fetch analysis
+  const fetchData = useCallback(async () => {
     if (!selectedSymbol) return;
     setLoading(true);
-    
     try {
-      const res = await fetch(`${API_URL}/api/analyze/live/${selectedSymbol}`);
-      const data = await res.json();
-      setAnalysis(data);
-    } catch (e) {
-      console.error('Error:', e);
-    }
-    
+      const [analysisRes, narrationRes] = await Promise.all([
+        fetch(`${API_URL}/api/analyze/live/${selectedSymbol}?timeframe=${selectedTF}`).then(r => r.json()),
+        fetch(`${API_URL}/api/narration/${selectedSymbol}?timeframe=${selectedTF}`).then(r => r.json()),
+      ]);
+      setAnalysis(analysisRes);
+      setNarration(narrationRes);
+    } catch (e) {}
     setLoading(false);
-  }, [selectedSymbol]);
+  }, [selectedSymbol, selectedTF]);
 
   useEffect(() => {
-    fetchAnalysis();
-    const interval = setInterval(fetchAnalysis, 10000);
+    fetchData();
+    const interval = setInterval(fetchData, 8000);
     return () => clearInterval(interval);
-  }, [fetchAnalysis]);
+  }, [fetchData]);
 
-  // Obtener señales periódicamente
+  // Fetch signals
   useEffect(() => {
     const fetchSignals = async () => {
       try {
-        const [signalsRes, countsRes] = await Promise.all([
-          fetch(`${API_URL}/api/signals/history`),
-          fetch(`${API_URL}/api/signals/daily-count`)
+        const [sigs, counts] = await Promise.all([
+          fetch(`${API_URL}/api/signals/history`).then(r => r.json()),
+          fetch(`${API_URL}/api/signals/daily-count`).then(r => r.json()),
         ]);
-        setSignals(await signalsRes.json());
-        setDailyCounts(await countsRes.json());
+        setSignals(sigs);
+        setDailyCounts(counts);
       } catch (e) {}
     };
-    
     const interval = setInterval(fetchSignals, 30000);
     return () => clearInterval(interval);
   }, []);
@@ -664,29 +593,21 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-[#09090b] text-white">
       {/* Header */}
-      <header className="border-b border-zinc-800 px-6 py-4">
+      <header className="border-b border-zinc-800 px-4 py-3">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <h1 className="text-xl font-bold">
-              Trading<span className="text-blue-500">Pro</span>
-              <span className="text-xs text-zinc-500 ml-2">v6.0</span>
-            </h1>
-            <div className="flex items-center gap-2">
-              <div className={`w-2 h-2 rounded-full ${derivConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
-              <span className="text-sm text-zinc-400">
-                {derivConnected ? 'Deriv Online' : 'Desconectado'}
-              </span>
+          <div className="flex items-center gap-3">
+            <h1 className="text-lg font-bold">Trading<span className="text-blue-500">Pro</span></h1>
+            <div className="flex items-center gap-1.5">
+              <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+              <span className="text-xs text-zinc-400">{isConnected ? 'Online' : 'Offline'}</span>
             </div>
           </div>
-          
-          <div className="text-sm text-zinc-400">
-            SMC Institutional Strategy
-          </div>
+          <span className="text-xs text-zinc-500">v6.1 SMC</span>
         </div>
       </header>
 
       {/* Tabs */}
-      <nav className="border-b border-zinc-800 px-6">
+      <nav className="border-b border-zinc-800 px-4">
         <div className="max-w-7xl mx-auto flex gap-1">
           {[
             { id: 'live', label: '📊 Trading en Vivo' },
@@ -696,7 +617,7 @@ export default function Dashboard() {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`px-4 py-3 text-sm font-medium transition border-b-2 ${
+              className={`px-4 py-2.5 text-sm transition border-b-2 ${
                 activeTab === tab.id
                   ? 'border-blue-500 text-white'
                   : 'border-transparent text-zinc-400 hover:text-white'
@@ -709,173 +630,93 @@ export default function Dashboard() {
       </nav>
 
       {/* Main */}
-      <main className="max-w-7xl mx-auto p-6">
-        
-        {/* TAB: Trading en Vivo */}
+      <main className="max-w-7xl mx-auto p-4">
         {activeTab === 'live' && (
-          <div className="space-y-6">
-            <SymbolSelector 
-              symbols={symbols} 
-              selected={selectedSymbol} 
-              onSelect={setSelectedSymbol}
-              dailyCounts={dailyCounts}
-            />
+          <div className="space-y-4">
+            {/* Selectors */}
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <SymbolSelector 
+                symbols={symbols} 
+                selected={selectedSymbol} 
+                onSelect={setSelectedSymbol}
+                dailyCounts={dailyCounts}
+              />
+              <TimeframeSelector selected={selectedTF} onSelect={setSelectedTF} />
+            </div>
             
-            <div className="grid grid-cols-3 gap-6">
-              <div className="col-span-2 space-y-4">
-                {/* Gráfico */}
+            {/* Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              {/* Chart + Narration */}
+              <div className="lg:col-span-2 space-y-4">
                 <div className="relative">
                   {loading && (
-                    <div className="absolute inset-0 bg-zinc-900/50 flex items-center justify-center z-10 rounded-xl">
-                      <div className="text-zinc-400">Analizando...</div>
+                    <div className="absolute inset-0 bg-zinc-900/70 flex items-center justify-center z-10 rounded-xl">
+                      <div className="text-zinc-400 text-sm">Analizando...</div>
                     </div>
                   )}
                   <SMCChart 
-                    candles={analysis?.candles?.m15 || []}
+                    candles={analysis?.candles || []}
                     markers={analysis?.chartMarkers}
-                    symbol={`${symbols[selectedSymbol]?.name || selectedSymbol} - M15`}
+                    symbol={`${symbols[selectedSymbol]?.name || selectedSymbol} - ${selectedTF}`}
                   />
                 </div>
                 
-                {/* Señal activa si existe */}
-                {analysis?.hasSignal && (
-                  <SignalCard signal={analysis} onClick={setSelectedSignal} />
-                )}
+                <NarrationPanel 
+                  narration={narration?.narration}
+                  waiting={narration?.waiting}
+                  status={narration?.status}
+                  levels={narration?.levels}
+                />
+                
+                {analysis?.hasSignal && <SignalCard signal={analysis} />}
               </div>
               
-              <div className="space-y-4">
-                <LiveAnalysisPanel analysis={analysis} />
-                
-                {/* Reglas */}
-                <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-4">
-                  <h3 className="font-bold text-white mb-3">📋 Reglas SMC</h3>
-                  <div className="space-y-2 text-xs text-zinc-400">
-                    <div className="flex items-center gap-2">
-                      <span className={analysis?.choch ? 'text-emerald-400' : 'text-zinc-600'}>
-                        {analysis?.choch ? '✓' : '○'}
-                      </span>
-                      CHoCH en M15 (obligatorio)
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className={analysis?.inFibZone ? 'text-emerald-400' : 'text-zinc-600'}>
-                        {analysis?.inFibZone ? '✓' : '○'}
-                      </span>
-                      Precio en zona 70.6% - 92.6%
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className={analysis?.orderBlocks?.decisional ? 'text-emerald-400' : 'text-zinc-600'}>
-                        {analysis?.orderBlocks?.decisional ? '✓' : '○'}
-                      </span>
-                      Order Block válido
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className={analysis?.scoring?.score >= 70 ? 'text-emerald-400' : 'text-zinc-600'}>
-                        {analysis?.scoring?.score >= 70 ? '✓' : '○'}
-                      </span>
-                      Score ≥ 70 (A o A+)
-                    </div>
-                  </div>
-                </div>
-                
-                {/* Timeframes por índice */}
-                <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-4">
-                  <h3 className="font-bold text-white mb-3">⏱️ Timeframes</h3>
-                  <div className="text-xs space-y-1">
-                    <div className="flex justify-between text-zinc-400">
-                      <span>HTF (Estructura)</span>
-                      <span className="text-white">M15</span>
-                    </div>
-                    <div className="flex justify-between text-zinc-400">
-                      <span>Ejecución Boom/Crash</span>
-                      <span className="text-white">M5</span>
-                    </div>
-                    <div className="flex justify-between text-zinc-400">
-                      <span>Ejecución Vol/Step</span>
-                      <span className="text-white">M1</span>
-                    </div>
-                  </div>
-                </div>
+              {/* Analysis Panel */}
+              <div>
+                <AnalysisPanel analysis={analysis} />
               </div>
             </div>
           </div>
         )}
 
-        {/* TAB: Señales Activas */}
         {activeTab === 'signals' && (
           <div className="space-y-4">
             <h2 className="text-lg font-bold">🎯 Señales Activas</h2>
             {signals.filter(s => s.hasSignal).length === 0 ? (
-              <div className="text-center text-zinc-500 py-12">
-                No hay señales activas en este momento
-              </div>
+              <div className="text-center text-zinc-500 py-8">No hay señales activas</div>
             ) : (
-              <div className="grid grid-cols-2 gap-4">
-                {signals.filter(s => s.hasSignal).slice(0, 10).map(signal => (
-                  <SignalCard 
-                    key={signal.id} 
-                    signal={signal} 
-                    onClick={setSelectedSignal}
-                  />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {signals.filter(s => s.hasSignal).slice(0, 10).map(s => (
+                  <SignalCard key={s.id} signal={s} />
                 ))}
               </div>
             )}
           </div>
         )}
 
-        {/* TAB: Historial */}
         {activeTab === 'history' && (
           <div className="space-y-4">
-            <h2 className="text-lg font-bold">📜 Historial de Señales</h2>
-            <p className="text-sm text-zinc-400">Click en una señal para ver el gráfico y análisis completo</p>
-            
+            <h2 className="text-lg font-bold">📜 Historial</h2>
             {signals.length === 0 ? (
-              <div className="text-center text-zinc-500 py-12">
-                No hay señales en el historial
-              </div>
+              <div className="text-center text-zinc-500 py-8">Sin historial</div>
             ) : (
               <div className="space-y-2">
-                {signals.map(signal => (
-                  <div 
-                    key={signal.id}
-                    onClick={() => setSelectedSignal(signal)}
-                    className={`flex items-center justify-between p-4 rounded-xl border cursor-pointer transition hover:scale-[1.01] ${
-                      signal.direction === 'BULLISH'
-                        ? 'bg-emerald-500/5 border-emerald-500/20 hover:border-emerald-500/40'
-                        : 'bg-red-500/5 border-red-500/20 hover:border-red-500/40'
-                    }`}
-                  >
-                    <div className="flex items-center gap-4">
-                      <span className="text-2xl">
-                        {signal.direction === 'BULLISH' ? '🟢' : '🔴'}
-                      </span>
+                {signals.slice(0, 30).map(s => (
+                  <div key={s.id} className={`flex items-center justify-between p-3 rounded-lg border ${
+                    s.direction === 'BULLISH' ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-red-500/5 border-red-500/20'
+                  }`}>
+                    <div className="flex items-center gap-3">
+                      <span>{s.direction === 'BULLISH' ? '🟢' : '🔴'}</span>
                       <div>
-                        <div className="font-bold text-white">{signal.symbolName}</div>
-                        <div className="text-xs text-zinc-500">
-                          {new Date(signal.createdAt).toLocaleString()}
-                        </div>
+                        <div className="font-medium text-white text-sm">{s.symbolName}</div>
+                        <div className="text-xs text-zinc-500">{s.breakSignal?.type} - {new Date(s.createdAt).toLocaleString()}</div>
                       </div>
                     </div>
-                    
-                    <div className="flex items-center gap-6">
-                      {signal.levels && (
-                        <div className="text-right text-xs">
-                          <div className="text-zinc-500">Entry: <span className="text-blue-400">{signal.levels.entry}</span></div>
-                          <div className="text-zinc-500">R:R: <span className="text-amber-400">{signal.levels.riskReward}</span></div>
-                        </div>
-                      )}
-                      
-                      <div className="text-right">
-                        <div className={`font-bold ${
-                          signal.direction === 'BULLISH' ? 'text-emerald-400' : 'text-red-400'
-                        }`}>
-                          {signal.direction === 'BULLISH' ? 'COMPRA' : 'VENTA'}
-                        </div>
-                        <div className="text-xs text-amber-400">
-                          {signal.scoring?.classification} ({signal.scoring?.score}/100)
-                        </div>
+                    <div className="text-right">
+                      <div className={`font-bold text-sm ${s.direction === 'BULLISH' ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {s.direction === 'BULLISH' ? 'COMPRA' : 'VENTA'}
                       </div>
-                      
-                      <div className="text-zinc-600">→</div>
+                      <div className="text-xs text-zinc-500">Entry: {s.levels?.entry}</div>
                     </div>
                   </div>
                 ))}
@@ -884,14 +725,6 @@ export default function Dashboard() {
           </div>
         )}
       </main>
-
-      {/* Modal de detalle */}
-      {selectedSignal && (
-        <SignalDetailModal 
-          signal={selectedSignal} 
-          onClose={() => setSelectedSignal(null)} 
-        />
-      )}
     </div>
   );
 }
