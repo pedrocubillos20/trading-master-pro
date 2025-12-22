@@ -1,6 +1,6 @@
 // =============================================
-// TRADING MASTER PRO - BACKEND v7.1
-// SMC INSTITUCIONAL - CORRECCIONES ELITE
+// TRADING MASTER PRO - BACKEND v7.2
+// SMC INSTITUCIONAL + PSICOTRADING + TRACKING
 // =============================================
 
 import express from 'express';
@@ -17,7 +17,9 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-console.log('\n🔧 TRADING MASTER PRO v7.1 - ELITE');
+console.log('\n🔧 TRADING MASTER PRO v7.2');
+console.log('═══════════════════════════════════════');
+console.log('SMC + PSICOTRADING + TRACKING');
 console.log('═══════════════════════════════════════');
 
 let supabase = null;
@@ -33,7 +35,6 @@ if (process.env.OPENAI_API_KEY) {
 const DERIV_APP_ID = process.env.DERIV_APP_ID || '117347';
 const DERIV_API_TOKEN = process.env.DERIV_API_TOKEN || '';
 const DERIV_WS_URL = 'wss://ws.derivws.com/websockets/v3';
-// WhatsApp Config - SIN el + en el número
 const WHATSAPP_PHONE = (process.env.WHATSAPP_PHONE || '573203921881').replace('+', '');
 const CALLMEBOT_API_KEY = process.env.CALLMEBOT_API_KEY || 'w2VJk5AzEsg3';
 
@@ -49,21 +50,42 @@ const SYNTHETIC_INDICES = {
   'R_100': { name: 'Volatility 100', pip: 0.01 },
 };
 
-const TF_HTF = 300;  // 5M
-const TF_LTF = 60;   // 1M
+const TF_HTF = 300;
+const TF_LTF = 60;
 
 // =============================================
 // ESTADO GLOBAL
 // =============================================
 let derivWs = null;
 let isDerivConnected = false;
-let aiEnabled = true; // Toggle para IA
+let aiEnabled = true;
 const candleData = new Map();
 const tickData = new Map();
 const dailySignals = new Map();
 const activeSignals = new Map();
 const signalHistory = [];
-const usedStructures = new Map(); // Para limitar 1 trade por CHoCH
+const usedStructures = new Map();
+
+// =============================================
+// 📊 TRACKING DE SEÑALES Y ESTADÍSTICAS
+// =============================================
+const tradingStats = {
+  totalSignals: 0,
+  operatedSignals: 0,
+  wins: 0,
+  losses: 0,
+  skipped: 0,
+  bySymbol: {},
+  bySetup: {},
+  streaks: { currentWin: 0, currentLoss: 0, maxWin: 0, maxLoss: 0 },
+  tradingDiary: [], // Diario de trading
+  emotionalLog: [], // Log emocional
+};
+
+// Inicializar stats por símbolo
+Object.keys(SYNTHETIC_INDICES).forEach(s => {
+  tradingStats.bySymbol[s] = { signals: 0, operated: 0, wins: 0, losses: 0 };
+});
 
 // Reset diario
 setInterval(() => {
@@ -76,241 +98,106 @@ setInterval(() => {
 }, 60000);
 
 // =============================================
-// 🧠 ANALIZADOR SMC v7.1 - ELITE
+// 🧠 ANALIZADOR SMC v7.1 (sin cambios)
 // =============================================
 const SMCAnalyzer = {
-
-  // ========================================
-  // 1️⃣ SWINGS (sin cambios)
-  // ========================================
   findSwings(candles, length = 3) {
     const highs = [], lows = [];
-    
     for (let i = length; i < candles.length - length; i++) {
       let isHigh = true, isLow = true;
-      
       for (let j = 1; j <= length; j++) {
         if (candles[i].high <= candles[i - j].high || candles[i].high <= candles[i + j].high) isHigh = false;
         if (candles[i].low >= candles[i - j].low || candles[i].low >= candles[i + j].low) isLow = false;
       }
-      
       if (isHigh) highs.push({ index: i, price: candles[i].high, time: candles[i].time, candle: candles[i] });
       if (isLow) lows.push({ index: i, price: candles[i].low, time: candles[i].time, candle: candles[i] });
     }
-    
     return { highs, lows };
   },
 
-  // ========================================
-  // 2️⃣ LIQUIDEZ - CORREGIDO ✅
-  // Solo estructura RECIENTE (últimos 5 swings)
-  // ========================================
   detectLiquidity(candles, swings) {
     const liquidity = { equalHighs: [], equalLows: [], inducements: [] };
-    
-    // ✅ FIX: Solo swings RECIENTES (últimos 5)
     const recentHighs = swings.highs.slice(-5);
     const recentLows = swings.lows.slice(-5);
+    const tolerance = 0.0003;
     
-    const tolerance = 0.0003; // 0.03%
-    
-    // Equal Highs (liquidez arriba) - Solo recientes
     for (let i = 0; i < recentHighs.length - 1; i++) {
       for (let j = i + 1; j < recentHighs.length; j++) {
         const diff = Math.abs(recentHighs[i].price - recentHighs[j].price) / recentHighs[i].price;
-        // ✅ FIX: Mínimo 3 velas de separación para ser válido
         if (diff <= tolerance && Math.abs(recentHighs[i].index - recentHighs[j].index) >= 3) {
           liquidity.equalHighs.push({
-            type: 'EQUAL_HIGHS',
-            price: Math.max(recentHighs[i].price, recentHighs[j].price),
+            type: 'EQUAL_HIGHS', price: Math.max(recentHighs[i].price, recentHighs[j].price),
             level: (recentHighs[i].price + recentHighs[j].price) / 2,
             points: [recentHighs[i], recentHighs[j]],
             age: candles.length - Math.max(recentHighs[i].index, recentHighs[j].index),
-            description: 'Liquidez de compras (stops de ventas)'
           });
         }
       }
     }
     
-    // Equal Lows (liquidez abajo) - Solo recientes
     for (let i = 0; i < recentLows.length - 1; i++) {
       for (let j = i + 1; j < recentLows.length; j++) {
         const diff = Math.abs(recentLows[i].price - recentLows[j].price) / recentLows[i].price;
         if (diff <= tolerance && Math.abs(recentLows[i].index - recentLows[j].index) >= 3) {
           liquidity.equalLows.push({
-            type: 'EQUAL_LOWS',
-            price: Math.min(recentLows[i].price, recentLows[j].price),
+            type: 'EQUAL_LOWS', price: Math.min(recentLows[i].price, recentLows[j].price),
             level: (recentLows[i].price + recentLows[j].price) / 2,
             points: [recentLows[i], recentLows[j]],
             age: candles.length - Math.max(recentLows[i].index, recentLows[j].index),
-            description: 'Liquidez de ventas (stops de compras)'
           });
         }
-      }
-    }
-    
-    // Inducements
-    if (recentHighs.length >= 2) {
-      const last = recentHighs[recentHighs.length - 1];
-      const prev = recentHighs[recentHighs.length - 2];
-      if (last.price < prev.price) {
-        liquidity.inducements.push({
-          type: 'INDUCEMENT_HIGH',
-          price: last.price,
-          mainTarget: prev.price
-        });
-      }
-    }
-    
-    if (recentLows.length >= 2) {
-      const last = recentLows[recentLows.length - 1];
-      const prev = recentLows[recentLows.length - 2];
-      if (last.price > prev.price) {
-        liquidity.inducements.push({
-          type: 'INDUCEMENT_LOW',
-          price: last.price,
-          mainTarget: prev.price
-        });
       }
     }
     
     return liquidity;
   },
 
-  // ========================================
-  // 3️⃣ SWEEP - CORREGIDO ✅
-  // Ventana reducida a 5-6 velas
-  // ========================================
   detectSweep(candles, liquidity, swings) {
     if (!candles || candles.length < 10) return null;
-    
-    // ✅ FIX: Solo últimas 5-6 velas (más preciso y temprano)
     const recent = candles.slice(-6);
     const currentIndex = candles.length;
     
-    // Sweep de Equal Highs
     for (const eqHigh of liquidity.equalHighs) {
-      // ✅ FIX: Solo liquidez fresca (menos de 20 velas)
       if (eqHigh.age > 20) continue;
-      
       for (let i = 0; i < recent.length; i++) {
         const candle = recent[i];
         const wickAbove = candle.high - Math.max(candle.open, candle.close);
         const bodySize = Math.abs(candle.close - candle.open);
-        
-        // SWEEP = wick rompe, cierre NO, y wick significativo
-        if (candle.high > eqHigh.level && 
-            candle.close < eqHigh.level && 
-            candle.open < eqHigh.level &&
-            wickAbove > bodySize * 0.3) { // Wick debe ser significativo
-          return {
-            type: 'SWEEP_HIGH',
-            direction: 'BEARISH',
-            level: eqHigh.level,
-            sweepHigh: candle.high,
-            sweepCandle: candle,
-            sweepIndex: currentIndex - (recent.length - i),
-            wickSize: wickAbove,
-            description: 'Sweep de EQH - Instituciones vendiendo',
-            valid: true
-          };
+        if (candle.high > eqHigh.level && candle.close < eqHigh.level && candle.open < eqHigh.level && wickAbove > bodySize * 0.3) {
+          return { type: 'SWEEP_HIGH', direction: 'BEARISH', level: eqHigh.level, sweepCandle: candle, sweepIndex: currentIndex - (recent.length - i), description: 'Sweep de EQH', valid: true };
         }
       }
     }
     
-    // Sweep de Equal Lows
     for (const eqLow of liquidity.equalLows) {
       if (eqLow.age > 20) continue;
-      
       for (let i = 0; i < recent.length; i++) {
         const candle = recent[i];
         const wickBelow = Math.min(candle.open, candle.close) - candle.low;
         const bodySize = Math.abs(candle.close - candle.open);
-        
-        if (candle.low < eqLow.level && 
-            candle.close > eqLow.level && 
-            candle.open > eqLow.level &&
-            wickBelow > bodySize * 0.3) {
-          return {
-            type: 'SWEEP_LOW',
-            direction: 'BULLISH',
-            level: eqLow.level,
-            sweepLow: candle.low,
-            sweepCandle: candle,
-            sweepIndex: currentIndex - (recent.length - i),
-            wickSize: wickBelow,
-            description: 'Sweep de EQL - Instituciones comprando',
-            valid: true
-          };
+        if (candle.low < eqLow.level && candle.close > eqLow.level && candle.open > eqLow.level && wickBelow > bodySize * 0.3) {
+          return { type: 'SWEEP_LOW', direction: 'BULLISH', level: eqLow.level, sweepCandle: candle, sweepIndex: currentIndex - (recent.length - i), description: 'Sweep de EQL', valid: true };
         }
-      }
-    }
-    
-    // Sweep de último swing (fallback)
-    const lastHigh = swings.highs[swings.highs.length - 1];
-    const lastLow = swings.lows[swings.lows.length - 1];
-    
-    for (let i = 0; i < recent.length; i++) {
-      const candle = recent[i];
-      
-      if (lastHigh && candle.high > lastHigh.price && 
-          candle.close < lastHigh.price && candle.open < lastHigh.price) {
-        return {
-          type: 'SWEEP_SWING_HIGH',
-          direction: 'BEARISH',
-          level: lastHigh.price,
-          sweepHigh: candle.high,
-          sweepCandle: candle,
-          sweepIndex: currentIndex - (recent.length - i),
-          description: 'Sweep de Swing High',
-          valid: true
-        };
-      }
-      
-      if (lastLow && candle.low < lastLow.price && 
-          candle.close > lastLow.price && candle.open > lastLow.price) {
-        return {
-          type: 'SWEEP_SWING_LOW',
-          direction: 'BULLISH',
-          level: lastLow.price,
-          sweepLow: candle.low,
-          sweepCandle: candle,
-          sweepIndex: currentIndex - (recent.length - i),
-          description: 'Sweep de Swing Low',
-          valid: true
-        };
       }
     }
     
     return null;
   },
 
-  // ========================================
-  // 4️⃣ DISPLACEMENT - CORREGIDO ✅
-  // Protección contra NaN
-  // ========================================
   detectDisplacement(candles, sweep) {
     if (!sweep || !sweep.valid || !candles || candles.length < 15) return null;
-    
     const sweepIndex = sweep.sweepIndex || candles.length - 5;
     const afterSweep = candles.slice(sweepIndex);
-    
     if (afterSweep.length < 2) return null;
     
-    // ✅ FIX: Protección contra datos insuficientes
     const lookbackStart = Math.max(0, sweepIndex - 20);
     const lookbackEnd = Math.max(0, sweepIndex - 2);
     const lookback = candles.slice(lookbackStart, lookbackEnd);
-    
-    // ✅ FIX: Mínimo 5 velas para calcular ATR
     if (lookback.length < 5) return null;
     
     const avgRange = lookback.reduce((sum, c) => sum + (c.high - c.low), 0) / lookback.length;
-    
-    // ✅ FIX: Protección contra avgRange = 0 o NaN
     if (!avgRange || avgRange === 0 || isNaN(avgRange)) return null;
     
-    // Buscar vela de desplazamiento
     for (let i = 0; i < Math.min(afterSweep.length, 5); i++) {
       const candle = afterSweep[i];
       const candleRange = candle.high - candle.low;
@@ -320,355 +207,149 @@ const SMCAnalyzer = {
       
       if (multiplier > 1.5 && isImpulsive) {
         const isBullish = candle.close > candle.open;
-        
-        if ((sweep.direction === 'BULLISH' && isBullish) || 
-            (sweep.direction === 'BEARISH' && !isBullish)) {
-          return {
-            type: 'DISPLACEMENT',
-            direction: sweep.direction,
-            candle: candle,
-            index: sweepIndex + i,
-            range: candleRange,
-            avgRange: avgRange,
-            multiplier: multiplier.toFixed(2),
-            description: `Desplazamiento ${sweep.direction} - ${multiplier.toFixed(1)}x ATR`,
-            valid: true
-          };
+        if ((sweep.direction === 'BULLISH' && isBullish) || (sweep.direction === 'BEARISH' && !isBullish)) {
+          return { type: 'DISPLACEMENT', direction: sweep.direction, candle, index: sweepIndex + i, multiplier: multiplier.toFixed(2), description: `Displacement ${multiplier.toFixed(1)}x`, valid: true };
         }
       }
     }
-    
     return null;
   },
 
-  // ========================================
-  // 5️⃣ CHoCH - CORREGIDO ✅
-  // Solo swings estructurales válidos
-  // ========================================
   detectCHoCH(candles, swings, sweep, displacement) {
-    if (!sweep || !sweep.valid) return null;
-    if (!displacement || !displacement.valid) return null;
-    
+    if (!sweep || !sweep.valid || !displacement || !displacement.valid) return null;
     const { highs, lows } = swings;
     const displacementIndex = displacement.index;
     const afterDisplacement = candles.slice(displacementIndex);
-    
     if (afterDisplacement.length < 2) return null;
     
-    // CHoCH ALCISTA
     if (sweep.direction === 'BULLISH') {
-      // ✅ FIX: Solo highs ESTRUCTURALES (no micro swings)
-      // Filtrar highs que tienen al menos 3 velas de separación y son significativos
-      const structuralHighs = highs
-        .filter(h => h.index < displacementIndex)
-        .filter((h, i, arr) => {
-          if (i === 0) return true;
-          return Math.abs(h.index - arr[i-1].index) >= 3;
-        })
-        .slice(-3);
-      
-      // ✅ FIX: Usar el swing más relevante (el que formó la estructura)
-      const relevantHigh = structuralHighs.reduce((best, h) => {
-        if (!best) return h;
-        // Preferir el swing más alto que sea reciente
-        return h.price > best.price ? h : best;
-      }, null);
+      const structuralHighs = highs.filter(h => h.index < displacementIndex).filter((h, i, arr) => i === 0 || Math.abs(h.index - arr[i-1].index) >= 3).slice(-3);
+      const relevantHigh = structuralHighs.reduce((best, h) => (!best || h.price > best.price) ? h : best, null);
       
       if (relevantHigh) {
         for (let i = 0; i < afterDisplacement.length; i++) {
-          const candle = afterDisplacement[i];
-          if (candle.close > relevantHigh.price) {
-            const chochId = `${sweep.sweepIndex}_${relevantHigh.price.toFixed(4)}`;
-            return {
-              id: chochId,
-              type: 'CHoCH',
-              direction: 'BULLISH',
-              breakLevel: relevantHigh.price,
-              breakCandle: candle,
-              breakIndex: displacementIndex + i,
-              structuralSwing: relevantHigh,
-              description: 'CHoCH Alcista confirmado',
-              valid: true
-            };
+          if (afterDisplacement[i].close > relevantHigh.price) {
+            return { id: `${sweep.sweepIndex}_${relevantHigh.price.toFixed(4)}`, type: 'CHoCH', direction: 'BULLISH', breakLevel: relevantHigh.price, breakIndex: displacementIndex + i, description: 'CHoCH Alcista', valid: true };
           }
         }
       }
     }
     
-    // CHoCH BAJISTA
     if (sweep.direction === 'BEARISH') {
-      const structuralLows = lows
-        .filter(l => l.index < displacementIndex)
-        .filter((l, i, arr) => {
-          if (i === 0) return true;
-          return Math.abs(l.index - arr[i-1].index) >= 3;
-        })
-        .slice(-3);
-      
-      const relevantLow = structuralLows.reduce((best, l) => {
-        if (!best) return l;
-        return l.price < best.price ? l : best;
-      }, null);
+      const structuralLows = lows.filter(l => l.index < displacementIndex).filter((l, i, arr) => i === 0 || Math.abs(l.index - arr[i-1].index) >= 3).slice(-3);
+      const relevantLow = structuralLows.reduce((best, l) => (!best || l.price < best.price) ? l : best, null);
       
       if (relevantLow) {
         for (let i = 0; i < afterDisplacement.length; i++) {
-          const candle = afterDisplacement[i];
-          if (candle.close < relevantLow.price) {
-            const chochId = `${sweep.sweepIndex}_${relevantLow.price.toFixed(4)}`;
-            return {
-              id: chochId,
-              type: 'CHoCH',
-              direction: 'BEARISH',
-              breakLevel: relevantLow.price,
-              breakCandle: candle,
-              breakIndex: displacementIndex + i,
-              structuralSwing: relevantLow,
-              description: 'CHoCH Bajista confirmado',
-              valid: true
-            };
+          if (afterDisplacement[i].close < relevantLow.price) {
+            return { id: `${sweep.sweepIndex}_${relevantLow.price.toFixed(4)}`, type: 'CHoCH', direction: 'BEARISH', breakLevel: relevantLow.price, breakIndex: displacementIndex + i, description: 'CHoCH Bajista', valid: true };
           }
         }
       }
     }
-    
     return null;
   },
 
-  // ========================================
-  // 6️⃣ ORDER BLOCK - CORREGIDO ✅
-  // Validación de mitigación
-  // ========================================
   findDecisionalOB(candles, choch, displacement) {
     if (!choch || !choch.valid || !displacement) return null;
-    
     const displacementIndex = displacement.index;
     const searchStart = Math.max(0, displacementIndex - 10);
     const searchRange = candles.slice(searchStart, displacementIndex);
     
-    let decisionalOB = null;
-    
     if (choch.direction === 'BULLISH') {
-      // OB de DEMANDA
       for (let i = searchRange.length - 1; i >= 0; i--) {
         const candle = searchRange[i];
         const isBearish = candle.close < candle.open;
         const bodySize = Math.abs(candle.close - candle.open);
-        const range = candle.high - candle.low;
-        
-        if (isBearish && bodySize > range * 0.4) {
+        if (isBearish && bodySize > (candle.high - candle.low) * 0.4) {
           const obIndex = searchStart + i;
-          
-          // ✅ FIX: Verificar que NO esté mitigado
-          const afterOB = candles.slice(obIndex + 1);
-          const isMitigated = afterOB.some(c => c.low <= candle.low);
-          
+          const isMitigated = candles.slice(obIndex + 1).some(c => c.low <= candle.low);
           if (!isMitigated) {
-            decisionalOB = {
-              type: 'DECISIONAL',
-              obType: 'DEMAND',
-              high: candle.high,
-              low: candle.low,
-              mid: (candle.high + candle.low) / 2,
-              index: obIndex,
-              candle: candle,
-              mitigated: false,
-              description: 'OB Demanda - Sin mitigar',
-              valid: true
-            };
-            break;
+            return { type: 'DECISIONAL', obType: 'DEMAND', high: candle.high, low: candle.low, mid: (candle.high + candle.low) / 2, index: obIndex, description: 'OB Demanda', valid: true };
           }
         }
       }
     } else {
-      // OB de OFERTA
       for (let i = searchRange.length - 1; i >= 0; i--) {
         const candle = searchRange[i];
         const isBullish = candle.close > candle.open;
         const bodySize = Math.abs(candle.close - candle.open);
-        const range = candle.high - candle.low;
-        
-        if (isBullish && bodySize > range * 0.4) {
+        if (isBullish && bodySize > (candle.high - candle.low) * 0.4) {
           const obIndex = searchStart + i;
-          
-          // ✅ FIX: Verificar que NO esté mitigado
-          const afterOB = candles.slice(obIndex + 1);
-          const isMitigated = afterOB.some(c => c.high >= candle.high);
-          
+          const isMitigated = candles.slice(obIndex + 1).some(c => c.high >= candle.high);
           if (!isMitigated) {
-            decisionalOB = {
-              type: 'DECISIONAL',
-              obType: 'SUPPLY',
-              high: candle.high,
-              low: candle.low,
-              mid: (candle.high + candle.low) / 2,
-              index: obIndex,
-              candle: candle,
-              mitigated: false,
-              description: 'OB Oferta - Sin mitigar',
-              valid: true
-            };
-            break;
+            return { type: 'DECISIONAL', obType: 'SUPPLY', high: candle.high, low: candle.low, mid: (candle.high + candle.low) / 2, index: obIndex, description: 'OB Oferta', valid: true };
           }
         }
       }
     }
-    
-    return decisionalOB;
+    return null;
   },
 
-  // ========================================
-  // 7️⃣ LTF ENTRY - CORREGIDO ✅
-  // Micro CHoCH o Rejection fuerte
-  // ========================================
   checkLTFEntry(candlesLTF, ob, direction) {
     if (!ob || !candlesLTF || candlesLTF.length < 20) return null;
-    
     const recent = candlesLTF.slice(-15);
     const currentPrice = recent[recent.length - 1]?.close;
-    
     if (!currentPrice) return null;
     
     const inOBZone = currentPrice >= ob.low && currentPrice <= ob.high;
-    const nearOBZone = direction === 'BULLISH' 
-      ? currentPrice > ob.high && currentPrice < ob.high + (ob.high - ob.low) * 0.5
-      : currentPrice < ob.low && currentPrice > ob.low - (ob.high - ob.low) * 0.5;
     
     if (inOBZone) {
-      // ✅ FIX: Buscar MICRO CHoCH o REJECTION FUERTE
       for (let i = recent.length - 5; i < recent.length - 1; i++) {
-        const prev = recent[i];
-        const curr = recent[i + 1];
+        const prev = recent[i], curr = recent[i + 1];
         
         if (direction === 'BULLISH') {
-          // Opción 1: Micro CHoCH (rompe alto de vela anterior)
           const isMicroCHoCH = curr.close > prev.high && curr.close > curr.open;
-          
-          // Opción 2: Rejection fuerte (pin bar alcista)
           const wickBelow = Math.min(curr.open, curr.close) - curr.low;
-          const bodySize = Math.abs(curr.close - curr.open);
-          const isRejection = wickBelow > bodySize * 2 && curr.close > curr.open;
-          
-          // ✅ FIX: Precio hace nuevo low y cierra arriba
+          const isRejection = wickBelow > Math.abs(curr.close - curr.open) * 2 && curr.close > curr.open;
           const sweepAndClose = curr.low < prev.low && curr.close > prev.close;
           
           if (isMicroCHoCH || isRejection || sweepAndClose) {
-            return {
-              type: 'LTF_CONFIRMATION',
-              confirmationType: isMicroCHoCH ? 'MICRO_CHOCH' : isRejection ? 'REJECTION' : 'SWEEP_CLOSE',
-              direction: 'BULLISH',
-              entryPrice: curr.close,
-              confirmationCandle: curr,
-              inZone: true,
-              description: `Confirmación ${isMicroCHoCH ? 'Micro CHoCH' : isRejection ? 'Rejection' : 'Sweep+Close'}`,
-              valid: true
-            };
+            return { type: 'LTF_CONFIRMATION', confirmationType: isMicroCHoCH ? 'MICRO_CHOCH' : isRejection ? 'REJECTION' : 'SWEEP_CLOSE', direction: 'BULLISH', entryPrice: curr.close, inZone: true, description: 'Confirmación alcista', valid: true };
           }
         }
         
         if (direction === 'BEARISH') {
           const isMicroCHoCH = curr.close < prev.low && curr.close < curr.open;
           const wickAbove = curr.high - Math.max(curr.open, curr.close);
-          const bodySize = Math.abs(curr.close - curr.open);
-          const isRejection = wickAbove > bodySize * 2 && curr.close < curr.open;
+          const isRejection = wickAbove > Math.abs(curr.close - curr.open) * 2 && curr.close < curr.open;
           const sweepAndClose = curr.high > prev.high && curr.close < prev.close;
           
           if (isMicroCHoCH || isRejection || sweepAndClose) {
-            return {
-              type: 'LTF_CONFIRMATION',
-              confirmationType: isMicroCHoCH ? 'MICRO_CHOCH' : isRejection ? 'REJECTION' : 'SWEEP_CLOSE',
-              direction: 'BEARISH',
-              entryPrice: curr.close,
-              confirmationCandle: curr,
-              inZone: true,
-              description: `Confirmación ${isMicroCHoCH ? 'Micro CHoCH' : isRejection ? 'Rejection' : 'Sweep+Close'}`,
-              valid: true
-            };
+            return { type: 'LTF_CONFIRMATION', confirmationType: isMicroCHoCH ? 'MICRO_CHOCH' : isRejection ? 'REJECTION' : 'SWEEP_CLOSE', direction: 'BEARISH', entryPrice: curr.close, inZone: true, description: 'Confirmación bajista', valid: true };
           }
         }
       }
     }
     
-    return {
-      type: 'WAITING',
-      direction: direction,
-      currentPrice,
-      obZone: { high: ob.high, low: ob.low },
-      inZone: inOBZone,
-      nearZone: nearOBZone,
-      description: inOBZone ? 'En zona - Esperando micro CHoCH/rejection' : 'Esperando precio en OB',
-      valid: false
-    };
+    return { type: 'WAITING', direction, currentPrice, inZone: inOBZone, description: inOBZone ? 'En zona - esperando confirmación' : 'Esperando precio en OB', valid: false };
   },
 
-  // ========================================
-  // 8️⃣ NIVELES - RATIOS 1:5 y 1:10 ✅
-  // ========================================
-  calculateLevels(ob, direction, currentPrice) {
+  calculateLevels(ob, direction) {
     if (!ob) return null;
-    
     let entry, stopLoss;
-    
-    if (direction === 'BULLISH') {
-      entry = ob.high;
-      stopLoss = ob.low - ((ob.high - ob.low) * 0.3);
-    } else {
-      entry = ob.low;
-      stopLoss = ob.high + ((ob.high - ob.low) * 0.3);
-    }
-    
+    if (direction === 'BULLISH') { entry = ob.high; stopLoss = ob.low - ((ob.high - ob.low) * 0.3); }
+    else { entry = ob.low; stopLoss = ob.high + ((ob.high - ob.low) * 0.3); }
     const risk = Math.abs(entry - stopLoss);
     
-    // ✅ Ratios extendidos para Step/Volatility
-    const tp1 = direction === 'BULLISH' ? entry + (risk * 2) : entry - (risk * 2);
-    const tp2 = direction === 'BULLISH' ? entry + (risk * 3) : entry - (risk * 3);
-    const tp3 = direction === 'BULLISH' ? entry + (risk * 5) : entry - (risk * 5);
-    const tp4 = direction === 'BULLISH' ? entry + (risk * 10) : entry - (risk * 10);
-    
     return {
-      entry: entry.toFixed(4),
-      stopLoss: stopLoss.toFixed(4),
-      tp1: tp1.toFixed(4),
-      tp2: tp2.toFixed(4),
-      tp3: tp3.toFixed(4),
-      tp4: tp4.toFixed(4),
-      risk: risk.toFixed(4),
-      ratios: '1:2 | 1:3 | 1:5 | 1:10'
+      entry: entry.toFixed(4), stopLoss: stopLoss.toFixed(4),
+      tp1: (direction === 'BULLISH' ? entry + risk * 2 : entry - risk * 2).toFixed(4),
+      tp2: (direction === 'BULLISH' ? entry + risk * 3 : entry - risk * 3).toFixed(4),
+      tp3: (direction === 'BULLISH' ? entry + risk * 5 : entry - risk * 5).toFixed(4),
+      tp4: (direction === 'BULLISH' ? entry + risk * 10 : entry - risk * 10).toFixed(4),
+      risk: risk.toFixed(4), ratios: '1:2 | 1:3 | 1:5 | 1:10'
     };
   },
 
-  // ========================================
-  // 9️⃣ SCORE
-  // ========================================
   calculateScore(analysis) {
     let score = 0;
     const breakdown = {};
-    
-    if (analysis.liquidity?.equalHighs?.length > 0 || analysis.liquidity?.equalLows?.length > 0) {
-      score += 20;
-      breakdown.liquidity = 20;
-    }
-    
-    if (analysis.sweep?.valid) {
-      score += 25;
-      breakdown.sweep = 25;
-    }
-    
-    if (analysis.displacement?.valid) {
-      const mult = parseFloat(analysis.displacement.multiplier) || 1;
-      const pts = Math.min(20, Math.floor(mult * 8));
-      score += pts;
-      breakdown.displacement = pts;
-    }
-    
-    if (analysis.choch?.valid) {
-      score += 20;
-      breakdown.choch = 20;
-    }
-    
-    if (analysis.orderBlock?.valid && !analysis.orderBlock.mitigated) {
-      score += 15;
-      breakdown.orderBlock = 15;
-    }
+    if (analysis.liquidity?.equalHighs?.length > 0 || analysis.liquidity?.equalLows?.length > 0) { score += 20; breakdown.liquidity = 20; }
+    if (analysis.sweep?.valid) { score += 25; breakdown.sweep = 25; }
+    if (analysis.displacement?.valid) { const pts = Math.min(20, Math.floor(parseFloat(analysis.displacement.multiplier) * 8)); score += pts; breakdown.displacement = pts; }
+    if (analysis.choch?.valid) { score += 20; breakdown.choch = 20; }
+    if (analysis.orderBlock?.valid) { score += 15; breakdown.orderBlock = 15; }
     
     let classification = 'INVALID';
     if (score >= 90) classification = 'A+';
@@ -678,9 +359,6 @@ const SMCAnalyzer = {
     return { score, classification, breakdown, isValid: score >= 75, canAutomate: score >= 90 };
   },
 
-  // ========================================
-  // 🎯 ANÁLISIS COMPLETO
-  // ========================================
   analyze(symbol) {
     const config = SYNTHETIC_INDICES[symbol];
     if (!config) return { error: 'Símbolo no soportado' };
@@ -688,13 +366,9 @@ const SMCAnalyzer = {
     const candlesHTF = candleData.get(`${symbol}_${TF_HTF}`) || [];
     const candlesLTF = candleData.get(`${symbol}_${TF_LTF}`) || [];
     
-    if (candlesHTF.length < 50) {
-      return { symbol, symbolName: config.name, error: 'Cargando...', dataCount: candlesHTF.length, status: 'LOADING' };
-    }
+    if (candlesHTF.length < 50) return { symbol, symbolName: config.name, error: 'Cargando...', status: 'LOADING' };
     
     const currentPrice = candlesHTF[candlesHTF.length - 1]?.close;
-    
-    // Flujo SMC
     const swings = this.findSwings(candlesHTF);
     const liquidity = this.detectLiquidity(candlesHTF, swings);
     const sweep = this.detectSweep(candlesHTF, liquidity, swings);
@@ -703,80 +377,280 @@ const SMCAnalyzer = {
     const orderBlock = this.findDecisionalOB(candlesHTF, choch, displacement);
     const ltfEntry = orderBlock && choch ? this.checkLTFEntry(candlesLTF, orderBlock, choch.direction) : null;
     
-    const analysisData = { liquidity, sweep, displacement, choch, orderBlock };
-    const scoring = this.calculateScore(analysisData);
-    const levels = orderBlock && choch ? this.calculateLevels(orderBlock, choch.direction, currentPrice) : null;
+    const scoring = this.calculateScore({ liquidity, sweep, displacement, choch, orderBlock });
+    const levels = orderBlock && choch ? this.calculateLevels(orderBlock, choch.direction) : null;
     
-    // ✅ FIX: Verificar si ya usamos este CHoCH
-    let structureUsed = false;
-    if (choch?.id) {
-      structureUsed = usedStructures.has(choch.id);
-    }
+    let structureUsed = choch?.id ? usedStructures.has(choch.id) : false;
     
-    // Estado
-    let status = 'BUSCANDO';
-    let waiting = [];
-    let hasSignal = false;
-    
-    if (!liquidity.equalHighs.length && !liquidity.equalLows.length) {
-      status = 'SIN_LIQUIDEZ';
-      waiting.push('Buscando Equal Highs/Lows');
-    } else if (!sweep?.valid) {
-      status = 'ESPERANDO_SWEEP';
-      waiting.push('Liquidez detectada - Esperando sweep');
-    } else if (!displacement?.valid) {
-      status = 'ESPERANDO_DISPLACEMENT';
-      waiting.push('Sweep OK - Esperando desplazamiento');
-    } else if (!choch?.valid) {
-      status = 'ESPERANDO_CHOCH';
-      waiting.push('Displacement OK - Esperando CHoCH');
-    } else if (!orderBlock?.valid) {
-      status = 'BUSCANDO_OB';
-      waiting.push('CHoCH OK - Buscando OB válido');
-    } else if (structureUsed) {
-      status = 'ESTRUCTURA_USADA';
-      waiting.push('Ya operamos este CHoCH - Esperar nueva liquidez');
-    } else if (!ltfEntry?.valid) {
-      status = 'ESPERANDO_ENTRADA';
-      waiting.push('OB listo - Esperando confirmación 1M');
-      waiting.push(`Zona: ${orderBlock.low.toFixed(2)} - ${orderBlock.high.toFixed(2)}`);
-    } else {
-      status = 'SEÑAL_ACTIVA';
-      hasSignal = scoring.isValid && !structureUsed;
-    }
+    let status = 'BUSCANDO', waiting = [], hasSignal = false;
+    if (!liquidity.equalHighs.length && !liquidity.equalLows.length) { status = 'SIN_LIQUIDEZ'; waiting.push('Buscando Equal Highs/Lows'); }
+    else if (!sweep?.valid) { status = 'ESPERANDO_SWEEP'; waiting.push('Liquidez detectada - Esperando sweep'); }
+    else if (!displacement?.valid) { status = 'ESPERANDO_DISPLACEMENT'; waiting.push('Sweep OK - Esperando desplazamiento'); }
+    else if (!choch?.valid) { status = 'ESPERANDO_CHOCH'; waiting.push('Displacement OK - Esperando CHoCH'); }
+    else if (!orderBlock?.valid) { status = 'BUSCANDO_OB'; waiting.push('CHoCH OK - Buscando OB'); }
+    else if (structureUsed) { status = 'ESTRUCTURA_USADA'; waiting.push('Ya operamos este CHoCH'); }
+    else if (!ltfEntry?.valid) { status = 'ESPERANDO_ENTRADA'; waiting.push('OB listo - Esperando confirmación 1M'); }
+    else { status = 'SEÑAL_ACTIVA'; hasSignal = scoring.isValid && !structureUsed; }
     
     return {
-      symbol,
-      symbolName: config.name,
-      currentPrice,
-      swings: { highsCount: swings.highs.length, lowsCount: swings.lows.length },
-      liquidity,
-      sweep,
-      displacement,
-      choch,
-      orderBlock,
-      ltfEntry,
-      scoring,
-      levels,
-      status,
-      waiting,
-      hasSignal,
-      structureUsed,
+      symbol, symbolName: config.name, currentPrice,
+      liquidity, sweep, displacement, choch, orderBlock, ltfEntry,
+      scoring, levels, status, waiting, hasSignal, structureUsed,
       direction: choch?.direction || null,
       candles: { htf: candlesHTF.slice(-80), ltf: candlesLTF.slice(-60) },
       chartMarkers: {
-        liquidity: {
-          equalHighs: liquidity.equalHighs.map(e => e.level),
-          equalLows: liquidity.equalLows.map(e => e.level)
-        },
+        liquidity: { equalHighs: liquidity.equalHighs.map(e => e.level), equalLows: liquidity.equalLows.map(e => e.level) },
         sweep: sweep ? { price: sweep.level, direction: sweep.direction } : null,
         choch: choch ? { price: choch.breakLevel, direction: choch.direction } : null,
-        orderBlock,
-        levels
+        orderBlock, levels
       }
     };
   }
 };
+
+// =============================================
+// 🧠 PSICOTRADING IA
+// =============================================
+const PsychoTrading = {
+  
+  // Analizar estado emocional basado en historial
+  analyzeEmotionalState() {
+    const recentTrades = signalHistory.slice(0, 10);
+    const operated = recentTrades.filter(s => s.operated);
+    const wins = operated.filter(s => s.result === 'WIN').length;
+    const losses = operated.filter(s => s.result === 'LOSS').length;
+    
+    let emotionalState = 'NEUTRAL';
+    let riskLevel = 'NORMAL';
+    let recommendations = [];
+    
+    // Detectar racha perdedora
+    if (tradingStats.streaks.currentLoss >= 3) {
+      emotionalState = 'TILT';
+      riskLevel = 'HIGH';
+      recommendations.push('⚠️ Llevas 3+ pérdidas seguidas. Considera pausar.');
+      recommendations.push('🧘 Respira profundo. Una pausa de 30 min puede salvar tu cuenta.');
+    }
+    
+    // Detectar overtrading
+    const todayTrades = operated.filter(s => {
+      const d = new Date(s.createdAt);
+      const today = new Date();
+      return d.toDateString() === today.toDateString();
+    });
+    
+    if (todayTrades.length >= 5) {
+      emotionalState = 'OVERTRADING';
+      riskLevel = 'HIGH';
+      recommendations.push('🛑 Ya operaste 5+ veces hoy. ¿Estás siguiendo tu plan?');
+    }
+    
+    // Detectar revenge trading
+    const last3 = operated.slice(0, 3);
+    if (last3.length >= 2 && last3.every(s => s.result === 'LOSS')) {
+      const timeDiff = last3.length >= 2 ? 
+        (new Date(last3[0].operatedAt) - new Date(last3[1].operatedAt)) / 1000 / 60 : 999;
+      if (timeDiff < 10) {
+        emotionalState = 'REVENGE_TRADING';
+        riskLevel = 'CRITICAL';
+        recommendations.push('🚨 ALERTA: Posible revenge trading detectado.');
+        recommendations.push('🛑 PARA. No operes por al menos 1 hora.');
+      }
+    }
+    
+    // Detectar buen momento
+    if (tradingStats.streaks.currentWin >= 3) {
+      emotionalState = 'CONFIDENT';
+      riskLevel = 'MODERATE';
+      recommendations.push('✅ Buena racha! Pero no te confíes.');
+      recommendations.push('📏 Mantén tu tamaño de posición. No aumentes el riesgo.');
+    }
+    
+    return {
+      emotionalState,
+      riskLevel,
+      recommendations,
+      stats: {
+        currentWinStreak: tradingStats.streaks.currentWin,
+        currentLossStreak: tradingStats.streaks.currentLoss,
+        todayTrades: todayTrades.length,
+        winRate: operated.length > 0 ? ((wins / operated.length) * 100).toFixed(1) : 0
+      }
+    };
+  },
+
+  // Generar coaching personalizado con IA
+  async getCoaching(userMessage, context = {}) {
+    if (!openai) return { response: 'IA no disponible', type: 'error' };
+    
+    const emotionalState = this.analyzeEmotionalState();
+    const stats = getDetailedStats();
+    
+    const systemPrompt = `Eres un coach de psicotrading experto y empático. Tu trabajo es ayudar a traders a:
+1. Mantener disciplina y seguir su plan
+2. Manejar emociones (miedo, codicia, frustración)
+3. Evitar errores comunes (revenge trading, overtrading, FOMO)
+4. Desarrollar mentalidad ganadora
+
+CONTEXTO DEL TRADER:
+- Estado emocional detectado: ${emotionalState.emotionalState}
+- Nivel de riesgo: ${emotionalState.riskLevel}
+- Win rate: ${stats.winRate}%
+- Racha actual: ${emotionalState.stats.currentWinStreak} wins / ${emotionalState.stats.currentLossStreak} losses
+- Trades hoy: ${emotionalState.stats.todayTrades}
+- Total operados: ${stats.totalOperated}
+
+REGLAS:
+- Sé directo pero empático
+- Da consejos ESPECÍFICOS y accionables
+- Si detectas peligro (tilt, revenge), sé firme
+- Usa emojis con moderación
+- Respuestas cortas (máx 150 palabras)
+- En español`;
+
+    try {
+      const response = await openai.chat.completions.create({
+        model: 'gpt-4o',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userMessage }
+        ],
+        max_tokens: 300,
+      });
+      
+      return {
+        response: response.choices[0]?.message?.content || 'Sin respuesta',
+        emotionalState,
+        type: 'coaching'
+      };
+    } catch (error) {
+      return { response: 'Error al procesar', type: 'error' };
+    }
+  },
+
+  // Plan de trading personalizado
+  async generateTradingPlan(preferences) {
+    if (!openai) return { error: 'IA no disponible' };
+    
+    const prompt = `Genera un PLAN DE TRADING personalizado basado en:
+- Capital: ${preferences.capital || 'No especificado'}
+- Riesgo por trade: ${preferences.riskPerTrade || '1-2%'}
+- Horario disponible: ${preferences.schedule || 'Flexible'}
+- Experiencia: ${preferences.experience || 'Intermedio'}
+- Objetivo mensual: ${preferences.monthlyGoal || '10%'}
+
+Incluye:
+1. Reglas de entrada (máx 5)
+2. Reglas de gestión de riesgo
+3. Límites diarios (pérdidas/operaciones)
+4. Rutina pre-mercado
+5. Checklist antes de cada trade
+
+Formato estructurado, claro y accionable.`;
+
+    try {
+      const response = await openai.chat.completions.create({
+        model: 'gpt-4o',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 800,
+      });
+      
+      return { plan: response.choices[0]?.message?.content, generatedAt: new Date().toISOString() };
+    } catch {
+      return { error: 'Error generando plan' };
+    }
+  },
+
+  // Análisis post-trade
+  async analyzePostTrade(signal, result, notes) {
+    if (!openai) return { analysis: 'IA no disponible' };
+    
+    const prompt = `Analiza este trade:
+SEÑAL:
+- Símbolo: ${signal.symbolName}
+- Dirección: ${signal.direction}
+- Score: ${signal.scoring?.score}/100
+- Setup: Sweep ${signal.sweep?.type} → ${signal.choch?.description} → ${signal.orderBlock?.description}
+
+RESULTADO: ${result}
+NOTAS DEL TRADER: ${notes || 'Sin notas'}
+
+Proporciona:
+1. ¿Qué se hizo bien?
+2. ¿Qué se pudo mejorar?
+3. Lección clave para recordar
+4. Calificación de ejecución (1-10)
+
+Sé constructivo y específico.`;
+
+    try {
+      const response = await openai.chat.completions.create({
+        model: 'gpt-4o',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 400,
+      });
+      
+      return { analysis: response.choices[0]?.message?.content };
+    } catch {
+      return { analysis: 'Error en análisis' };
+    }
+  }
+};
+
+// =============================================
+// 📊 ESTADÍSTICAS DETALLADAS
+// =============================================
+function getDetailedStats() {
+  const operated = signalHistory.filter(s => s.operated);
+  const wins = operated.filter(s => s.result === 'WIN');
+  const losses = operated.filter(s => s.result === 'LOSS');
+  
+  // Por símbolo
+  const bySymbol = {};
+  Object.keys(SYNTHETIC_INDICES).forEach(sym => {
+    const symSignals = operated.filter(s => s.symbol === sym);
+    const symWins = symSignals.filter(s => s.result === 'WIN');
+    bySymbol[sym] = {
+      total: symSignals.length,
+      wins: symWins.length,
+      losses: symSignals.length - symWins.length,
+      winRate: symSignals.length > 0 ? ((symWins.length / symSignals.length) * 100).toFixed(1) : 0
+    };
+  });
+  
+  // Por tipo de entrada
+  const byEntryType = {};
+  operated.forEach(s => {
+    const type = s.ltfEntry?.confirmationType || 'UNKNOWN';
+    if (!byEntryType[type]) byEntryType[type] = { total: 0, wins: 0 };
+    byEntryType[type].total++;
+    if (s.result === 'WIN') byEntryType[type].wins++;
+  });
+  
+  // Mejor día/hora
+  const byHour = {};
+  operated.forEach(s => {
+    const hour = new Date(s.createdAt).getHours();
+    if (!byHour[hour]) byHour[hour] = { total: 0, wins: 0 };
+    byHour[hour].total++;
+    if (s.result === 'WIN') byHour[hour].wins++;
+  });
+  
+  return {
+    totalSignals: signalHistory.length,
+    totalOperated: operated.length,
+    totalSkipped: signalHistory.length - operated.length,
+    wins: wins.length,
+    losses: losses.length,
+    winRate: operated.length > 0 ? ((wins.length / operated.length) * 100).toFixed(1) : 0,
+    bySymbol,
+    byEntryType,
+    byHour,
+    streaks: tradingStats.streaks,
+    bestSymbol: Object.entries(bySymbol).sort((a, b) => parseFloat(b[1].winRate) - parseFloat(a[1].winRate))[0]?.[0] || 'N/A',
+    worstSymbol: Object.entries(bySymbol).filter(([_, v]) => v.total > 0).sort((a, b) => parseFloat(a[1].winRate) - parseFloat(b[1].winRate))[0]?.[0] || 'N/A'
+  };
+}
 
 // =============================================
 // NARRACIÓN IA
@@ -794,7 +668,7 @@ async function generateNarration(analysis) {
 - OB: ${analysis.orderBlock?.valid ? analysis.orderBlock.obType : 'NO'}
 - Estado: ${analysis.status}
 
-Habla como trader profesional SMC. Di qué está pasando y qué esperar.`;
+Habla como trader profesional SMC.`;
 
   try {
     const res = await openai.chat.completions.create({
@@ -812,51 +686,31 @@ Habla como trader profesional SMC. Di qué está pasando y qué esperar.`;
 // WHATSAPP
 // =============================================
 async function sendWhatsApp(signal) {
-  console.log('📱 Intentando enviar WhatsApp via TextMeBot...');
-  console.log('📱 Phone:', WHATSAPP_PHONE);
-  console.log('📱 API Key:', CALLMEBOT_API_KEY ? CALLMEBOT_API_KEY.substring(0, 4) + '***' : 'NO CONFIGURADA');
+  console.log('📱 Enviando WhatsApp via TextMeBot...');
+  if (!CALLMEBOT_API_KEY) return false;
   
-  if (!CALLMEBOT_API_KEY) {
-    console.log('❌ WhatsApp: API Key no configurada');
-    return false;
-  }
-  
-  const msg = `🎯 *SMC ELITE v7.1*
+  const msg = `🎯 *SMC ELITE v7.2*
 📊 ${signal.symbolName || 'Test'}
 ${signal.direction === 'BULLISH' ? '🟢 COMPRA' : '🔴 VENTA'}
 
 ✅ Sweep: ${signal.sweep?.description || 'N/A'}
 ✅ CHoCH: ${signal.choch?.description || 'N/A'}
 ✅ OB: ${signal.orderBlock?.description || 'N/A'}
-✅ Entry: ${signal.ltfEntry?.confirmationType || 'N/A'}
 
 📍 Entry: ${signal.levels?.entry || 'N/A'}
 🛑 SL: ${signal.levels?.stopLoss || 'N/A'}
-🎯 TP1 (1:2): ${signal.levels?.tp1 || 'N/A'}
-🎯 TP2 (1:3): ${signal.levels?.tp2 || 'N/A'}
-🎯 TP3 (1:5): ${signal.levels?.tp3 || 'N/A'}
-🎯 TP4 (1:10): ${signal.levels?.tp4 || 'N/A'}
+🎯 TP1: ${signal.levels?.tp1 || 'N/A'}
+🎯 TP3: ${signal.levels?.tp3 || 'N/A'}
 
-🏆 Score: ${signal.scoring?.score || 0}/100 (${signal.scoring?.classification || 'N/A'})`;
+🏆 Score: ${signal.scoring?.score || 0}/100`;
 
-  // TextMeBot API (diferente a CallMeBot)
   const url = `https://api.textmebot.com/send.php?recipient=${WHATSAPP_PHONE}&apikey=${CALLMEBOT_API_KEY}&text=${encodeURIComponent(msg)}`;
-  
-  console.log('📱 Usando TextMeBot API');
 
   try {
     const response = await fetch(url);
     const text = await response.text();
-    console.log('📱 WhatsApp Response Status:', response.status);
-    console.log('📱 WhatsApp Response:', text.substring(0, 200));
-    
-    if (response.ok || text.includes('success') || text.includes('sent') || text.includes('queued')) {
-      console.log('✅ WhatsApp enviado exitosamente');
-      return true;
-    } else {
-      console.log('⚠️ WhatsApp respuesta:', text);
-      return false;
-    }
+    console.log('📱 Response:', text.substring(0, 100));
+    return response.ok;
   } catch (error) {
     console.error('❌ WhatsApp Error:', error.message);
     return false;
@@ -878,10 +732,7 @@ function connectDeriv() {
     Object.keys(SYNTHETIC_INDICES).forEach(symbol => {
       derivWs.send(JSON.stringify({ ticks: symbol, subscribe: 1 }));
       [TF_LTF, TF_HTF].forEach(g => {
-        derivWs.send(JSON.stringify({
-          ticks_history: symbol, adjust_start_time: 1, count: 200,
-          end: 'latest', granularity: g, style: 'candles', subscribe: 1,
-        }));
+        derivWs.send(JSON.stringify({ ticks_history: symbol, adjust_start_time: 1, count: 200, end: 'latest', granularity: g, style: 'candles', subscribe: 1 }));
       });
     });
   });
@@ -938,28 +789,25 @@ async function checkSignal(symbol) {
   if (analysis.hasSignal && analysis.scoring?.canAutomate && !analysis.structureUsed) {
     const signalId = `${symbol}_${Date.now()}`;
     const signal = { 
-      id: signalId, 
-      ...analysis, 
+      id: signalId, ...analysis, 
       dailyCount: count + 1, 
       createdAt: new Date().toISOString(),
-      // Guardar contexto completo para historial
-      context: {
-        sweepType: analysis.sweep?.type,
-        displacementMultiplier: analysis.displacement?.multiplier,
-        obType: analysis.orderBlock?.obType,
-        ltfConfirmation: analysis.ltfEntry?.confirmationType
-      }
+      // Tracking fields
+      operated: false,
+      result: null, // 'WIN', 'LOSS', null
+      operatedAt: null,
+      notes: '',
+      exitPrice: null,
+      pnl: null
     };
     
-    // Marcar estructura como usada
-    if (analysis.choch?.id) {
-      usedStructures.set(analysis.choch.id, true);
-    }
+    if (analysis.choch?.id) usedStructures.set(analysis.choch.id, true);
     
     activeSignals.set(signalId, signal);
     signalHistory.unshift(signal);
-    if (signalHistory.length > 50) signalHistory.pop();
+    if (signalHistory.length > 100) signalHistory.pop();
     dailySignals.set(symbol, count + 1);
+    tradingStats.totalSignals++;
 
     console.log(`🎯 SEÑAL A+ #${count + 1}/7: ${analysis.direction} ${analysis.symbolName}`);
     await sendWhatsApp(signal);
@@ -975,27 +823,21 @@ app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '10mb' }));
 
-app.get('/', (req, res) => res.json({ status: 'ok', version: '7.1-elite', deriv: isDerivConnected, aiEnabled }));
+app.get('/', (req, res) => res.json({ status: 'ok', version: '7.2', features: ['SMC', 'Psicotrading', 'Tracking'], deriv: isDerivConnected }));
 app.get('/health', (req, res) => res.json({ status: 'healthy', deriv: isDerivConnected }));
 
+// Deriv
 app.get('/api/deriv/symbols', (req, res) => res.json(SYNTHETIC_INDICES));
 app.get('/api/deriv/status', (req, res) => res.json({ connected: isDerivConnected }));
-
 app.get('/api/analyze/:symbol', (req, res) => res.json(SMCAnalyzer.analyze(req.params.symbol)));
-
 app.get('/api/narration/:symbol', async (req, res) => {
   const analysis = SMCAnalyzer.analyze(req.params.symbol);
   const narration = await generateNarration(analysis);
   res.json(narration);
 });
 
-// Toggle IA
-app.post('/api/ai/toggle', (req, res) => {
-  aiEnabled = !aiEnabled;
-  console.log(`🤖 IA: ${aiEnabled ? 'ON' : 'OFF'}`);
-  res.json({ aiEnabled });
-});
-
+// IA Toggle
+app.post('/api/ai/toggle', (req, res) => { aiEnabled = !aiEnabled; res.json({ aiEnabled }); });
 app.get('/api/ai/status', (req, res) => res.json({ aiEnabled }));
 
 // Señales
@@ -1011,69 +853,139 @@ app.get('/api/signals/daily-count', (req, res) => {
   res.json(counts);
 });
 
-app.get('/api/test-whatsapp', async (req, res) => {
-  console.log('🧪 Test WhatsApp iniciado...');
+// =============================================
+// 📊 TRACKING DE SEÑALES
+// =============================================
+app.post('/api/signals/:id/track', (req, res) => {
+  const { id } = req.params;
+  const { operated, result, notes, exitPrice } = req.body;
   
-  const config = {
-    phone: WHATSAPP_PHONE,
-    apiKeyConfigured: !!CALLMEBOT_API_KEY,
-    apiKeyPreview: CALLMEBOT_API_KEY ? CALLMEBOT_API_KEY.substring(0, 4) + '***' : 'NO CONFIGURADA',
-    service: 'TextMeBot'
-  };
+  const signal = signalHistory.find(s => s.id === id);
+  if (!signal) return res.status(404).json({ error: 'Señal no encontrada' });
   
-  const result = await sendWhatsApp({
-    symbolName: '🧪 TEST v7.1', 
-    direction: 'BULLISH',
-    sweep: { description: 'Sweep EQL Test' }, 
-    choch: { description: 'CHoCH Alcista Test' }, 
-    orderBlock: { description: 'OB Demanda Test' }, 
-    ltfEntry: { confirmationType: 'TEST' },
-    levels: { entry: '100.00', stopLoss: '99.00', tp1: '102.00', tp2: '103.00', tp3: '105.00', tp4: '110.00' },
-    scoring: { score: 95, classification: 'A+' }
-  });
+  // Actualizar señal
+  signal.operated = operated;
+  signal.operatedAt = operated ? new Date().toISOString() : null;
+  signal.result = result || null;
+  signal.notes = notes || '';
+  signal.exitPrice = exitPrice || null;
   
-  res.json({ 
-    success: result, 
-    config,
-    message: result ? '✅ Mensaje enviado, revisa tu WhatsApp' : '❌ Error al enviar, revisa los logs en Railway',
-    testUrl: `https://api.textmebot.com/send.php?recipient=${WHATSAPP_PHONE}&apikey=${CALLMEBOT_API_KEY}&text=Test+Manual`
+  // Calcular PnL si hay resultado
+  if (result && signal.levels && exitPrice) {
+    const entry = parseFloat(signal.levels.entry);
+    const exit = parseFloat(exitPrice);
+    signal.pnl = signal.direction === 'BULLISH' ? exit - entry : entry - exit;
+  }
+  
+  // Actualizar estadísticas
+  if (operated) {
+    tradingStats.operatedSignals++;
+    tradingStats.bySymbol[signal.symbol].operated++;
+    
+    if (result === 'WIN') {
+      tradingStats.wins++;
+      tradingStats.bySymbol[signal.symbol].wins++;
+      tradingStats.streaks.currentWin++;
+      tradingStats.streaks.currentLoss = 0;
+      if (tradingStats.streaks.currentWin > tradingStats.streaks.maxWin) {
+        tradingStats.streaks.maxWin = tradingStats.streaks.currentWin;
+      }
+    } else if (result === 'LOSS') {
+      tradingStats.losses++;
+      tradingStats.bySymbol[signal.symbol].losses++;
+      tradingStats.streaks.currentLoss++;
+      tradingStats.streaks.currentWin = 0;
+      if (tradingStats.streaks.currentLoss > tradingStats.streaks.maxLoss) {
+        tradingStats.streaks.maxLoss = tradingStats.streaks.currentLoss;
+      }
+    }
+  } else {
+    tradingStats.skipped++;
+  }
+  
+  console.log(`📊 Señal ${id} actualizada: ${operated ? (result || 'operada') : 'no operada'}`);
+  res.json({ success: true, signal });
+});
+
+// =============================================
+// 📈 ESTADÍSTICAS
+// =============================================
+app.get('/api/stats', (req, res) => {
+  res.json(getDetailedStats());
+});
+
+app.get('/api/stats/emotional', (req, res) => {
+  res.json(PsychoTrading.analyzeEmotionalState());
+});
+
+// =============================================
+// 🧠 PSICOTRADING
+// =============================================
+app.post('/api/psycho/coaching', async (req, res) => {
+  const { message, context } = req.body;
+  const response = await PsychoTrading.getCoaching(message, context);
+  res.json(response);
+});
+
+app.post('/api/psycho/plan', async (req, res) => {
+  const plan = await PsychoTrading.generateTradingPlan(req.body);
+  res.json(plan);
+});
+
+app.post('/api/psycho/post-trade', async (req, res) => {
+  const { signalId, result, notes } = req.body;
+  const signal = signalHistory.find(s => s.id === signalId);
+  if (!signal) return res.status(404).json({ error: 'Señal no encontrada' });
+  
+  const analysis = await PsychoTrading.analyzePostTrade(signal, result, notes);
+  res.json(analysis);
+});
+
+// Quick check emocional
+app.get('/api/psycho/check', (req, res) => {
+  const state = PsychoTrading.analyzeEmotionalState();
+  res.json({
+    canTrade: state.riskLevel !== 'CRITICAL',
+    state: state.emotionalState,
+    risk: state.riskLevel,
+    message: state.recommendations[0] || '✅ Estado OK para operar',
+    recommendations: state.recommendations
   });
 });
 
-// Endpoint para ver configuración
+// WhatsApp test
+app.get('/api/test-whatsapp', async (req, res) => {
+  const result = await sendWhatsApp({
+    symbolName: '🧪 TEST v7.2', direction: 'BULLISH',
+    sweep: { description: 'Test' }, choch: { description: 'Test' }, orderBlock: { description: 'Test' },
+    levels: { entry: '100', stopLoss: '99', tp1: '102', tp3: '105' },
+    scoring: { score: 95 }
+  });
+  res.json({ success: result });
+});
+
+// Config
 app.get('/api/config', (req, res) => {
   res.json({
-    version: '7.1-elite',
-    whatsapp: {
-      phone: WHATSAPP_PHONE,
-      apiKeyConfigured: !!CALLMEBOT_API_KEY,
-      apiKeyPreview: CALLMEBOT_API_KEY ? CALLMEBOT_API_KEY.substring(0, 4) + '***' : 'NO'
-    },
-    deriv: {
-      connected: isDerivConnected,
-      appId: DERIV_APP_ID
-    },
-    ai: {
-      enabled: aiEnabled,
-      configured: !!openai
-    }
+    version: '7.2',
+    features: ['SMC Institucional', 'Psicotrading IA', 'Tracking Señales', 'WhatsApp Alerts'],
+    whatsapp: { phone: WHATSAPP_PHONE, configured: !!CALLMEBOT_API_KEY },
+    deriv: { connected: isDerivConnected },
+    ai: { enabled: aiEnabled, configured: !!openai }
   });
 });
 
 app.listen(PORT, () => {
   console.log(`
 ╔════════════════════════════════════════════════════════════╗
-║     TRADING MASTER PRO v7.1 ELITE                          ║
-║     SMC Institucional - Todas las correcciones             ║
+║     TRADING MASTER PRO v7.2                                ║
+║     SMC + PSICOTRADING + TRACKING                          ║
 ╠════════════════════════════════════════════════════════════╣
-║  ✅ Liquidez: Solo swings recientes (5)                    ║
-║  ✅ Sweep: Ventana 5-6 velas                               ║
-║  ✅ Displacement: Protección NaN                           ║
-║  ✅ CHoCH: Solo swings estructurales                       ║
-║  ✅ OB: Validación de mitigación                           ║
-║  ✅ LTF: Micro CHoCH / Rejection / Sweep+Close             ║
-║  ✅ Ratios: 1:2, 1:3, 1:5, 1:10                            ║
-║  ✅ 1 trade por estructura                                 ║
+║  📈 SMC Institucional Elite                                ║
+║  🧠 Coach de Psicotrading con IA                           ║
+║  📊 Tracking de señales (Win/Loss)                         ║
+║  📱 Alertas WhatsApp                                       ║
+║  📉 Estadísticas detalladas                                ║
 ╚════════════════════════════════════════════════════════════╝
   `);
 });

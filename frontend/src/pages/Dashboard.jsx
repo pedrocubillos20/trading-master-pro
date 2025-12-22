@@ -1,6 +1,6 @@
 // =============================================
-// TRADING MASTER PRO - DASHBOARD v7.1 ELITE
-// Toggle IA + Historial con gráfico + Ratios 1:10
+// TRADING MASTER PRO - DASHBOARD v7.2
+// SMC + PSICOTRADING + TRACKING
 // =============================================
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -10,177 +10,87 @@ const API_URL = import.meta.env.VITE_API_URL || 'https://trading-master-pro-prod
 // =============================================
 // GRÁFICO SMC
 // =============================================
-const SMCChart = ({ candles, markers, title, height = 350 }) => {
+const SMCChart = ({ candles, markers, title, height = 320 }) => {
   const canvasRef = useRef(null);
   
   useEffect(() => {
     if (!canvasRef.current || !candles || candles.length === 0) return;
-    
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
-    const w = canvas.width;
-    const h = canvas.height;
+    const w = canvas.width, h = canvas.height;
     
     ctx.fillStyle = '#08080a';
     ctx.fillRect(0, 0, w, h);
     
-    const visible = candles.slice(-55);
+    const visible = candles.slice(-50);
     const prices = visible.flatMap(c => [c.high, c.low]);
     markers?.liquidity?.equalHighs?.forEach(p => prices.push(p));
     markers?.liquidity?.equalLows?.forEach(p => prices.push(p));
     
-    const minP = Math.min(...prices);
-    const maxP = Math.max(...prices);
-    const range = maxP - minP;
-    const pad = range * 0.1;
-    
-    const scaleY = (p) => h - 22 - ((p - minP + pad) / (range + pad * 2)) * (h - 44);
-    const candleW = (w - 55) / visible.length;
-    const chartR = w - 50;
+    const minP = Math.min(...prices), maxP = Math.max(...prices);
+    const range = maxP - minP, pad = range * 0.1;
+    const scaleY = (p) => h - 20 - ((p - minP + pad) / (range + pad * 2)) * (h - 40);
+    const candleW = (w - 50) / visible.length;
+    const chartR = w - 45;
     
     // Grid
     ctx.strokeStyle = '#141418';
-    ctx.lineWidth = 0.5;
     for (let i = 0; i <= 4; i++) {
-      const y = 22 + ((h - 44) / 4) * i;
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(chartR, y);
-      ctx.stroke();
-      ctx.fillStyle = '#3f3f46';
-      ctx.font = '8px monospace';
+      const y = 20 + ((h - 40) / 4) * i;
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(chartR, y); ctx.stroke();
+      ctx.fillStyle = '#3f3f46'; ctx.font = '8px monospace';
       ctx.fillText((maxP + pad - ((range + pad * 2) / 4) * i).toFixed(2), chartR + 2, y + 3);
     }
 
-    // Liquidez EQH
+    // EQH/EQL
     markers?.liquidity?.equalHighs?.forEach(level => {
       const y = scaleY(level);
-      ctx.strokeStyle = '#ef4444';
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([2, 2]);
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(chartR, y);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.fillStyle = '#ef4444';
-      ctx.font = 'bold 7px sans-serif';
+      ctx.strokeStyle = '#ef4444'; ctx.setLineDash([2, 2]);
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(chartR, y); ctx.stroke();
+      ctx.setLineDash([]); ctx.fillStyle = '#ef4444'; ctx.font = 'bold 7px sans-serif';
       ctx.fillText('$$$ EQH', 2, y - 2);
     });
-    
-    // Liquidez EQL
     markers?.liquidity?.equalLows?.forEach(level => {
       const y = scaleY(level);
-      ctx.strokeStyle = '#22c55e';
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([2, 2]);
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(chartR, y);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.fillStyle = '#22c55e';
-      ctx.font = 'bold 7px sans-serif';
+      ctx.strokeStyle = '#22c55e'; ctx.setLineDash([2, 2]);
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(chartR, y); ctx.stroke();
+      ctx.setLineDash([]); ctx.fillStyle = '#22c55e'; ctx.font = 'bold 7px sans-serif';
       ctx.fillText('$$$ EQL', 2, y + 8);
     });
 
-    // Order Block
+    // OB
     if (markers?.orderBlock) {
       const ob = markers.orderBlock;
-      const y1 = scaleY(ob.high);
-      const y2 = scaleY(ob.low);
-      const isDemand = ob.obType === 'DEMAND';
-      
-      ctx.fillStyle = isDemand ? 'rgba(34, 197, 94, 0.12)' : 'rgba(239, 68, 68, 0.12)';
+      const y1 = scaleY(ob.high), y2 = scaleY(ob.low);
+      ctx.fillStyle = ob.obType === 'DEMAND' ? 'rgba(34, 197, 94, 0.12)' : 'rgba(239, 68, 68, 0.12)';
       ctx.fillRect(0, Math.min(y1, y2), chartR, Math.abs(y2 - y1));
-      ctx.strokeStyle = isDemand ? '#22c55e' : '#ef4444';
-      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = ob.obType === 'DEMAND' ? '#22c55e' : '#ef4444';
       ctx.strokeRect(0, Math.min(y1, y2), chartR, Math.abs(y2 - y1));
-      ctx.fillStyle = isDemand ? '#22c55e' : '#ef4444';
-      ctx.font = 'bold 8px sans-serif';
-      ctx.fillText(`OB ${ob.obType}`, 2, Math.min(y1, y2) - 2);
     }
 
-    // Velas
+    // Candles
     visible.forEach((c, i) => {
-      const x = 6 + i * candleW + candleW / 2;
-      const o = scaleY(c.open);
-      const cl = scaleY(c.close);
-      const hi = scaleY(c.high);
-      const lo = scaleY(c.low);
-      const bull = c.close > c.open;
-      const col = bull ? '#22c55e' : '#ef4444';
-      
-      ctx.strokeStyle = col;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(x, hi);
-      ctx.lineTo(x, lo);
-      ctx.stroke();
-      
-      ctx.fillStyle = col;
-      ctx.fillRect(x - candleW * 0.35, Math.min(o, cl), candleW * 0.7, Math.abs(cl - o) || 1);
+      const x = 5 + i * candleW + candleW / 2;
+      const o = scaleY(c.open), cl = scaleY(c.close), hi = scaleY(c.high), lo = scaleY(c.low);
+      const col = c.close > c.open ? '#22c55e' : '#ef4444';
+      ctx.strokeStyle = col; ctx.beginPath(); ctx.moveTo(x, hi); ctx.lineTo(x, lo); ctx.stroke();
+      ctx.fillStyle = col; ctx.fillRect(x - candleW * 0.35, Math.min(o, cl), candleW * 0.7, Math.abs(cl - o) || 1);
     });
-
-    // Sweep marker
-    if (markers?.sweep) {
-      const y = scaleY(markers.sweep.price);
-      ctx.fillStyle = '#f59e0b';
-      ctx.beginPath();
-      ctx.arc(chartR - 25, y, 5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#000';
-      ctx.font = 'bold 7px sans-serif';
-      ctx.fillText('S', chartR - 27, y + 2);
-    }
 
     // CHoCH
     if (markers?.choch) {
       const y = scaleY(markers.choch.price);
       ctx.strokeStyle = markers.choch.direction === 'BULLISH' ? '#22c55e' : '#ef4444';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(chartR - 80, y);
-      ctx.lineTo(chartR, y);
-      ctx.stroke();
-      
+      ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(chartR - 70, y); ctx.lineTo(chartR, y); ctx.stroke();
       ctx.fillStyle = markers.choch.direction === 'BULLISH' ? '#22c55e' : '#ef4444';
-      ctx.fillRect(chartR - 42, y - 8, 38, 14);
-      ctx.fillStyle = '#000';
-      ctx.font = 'bold 7px sans-serif';
-      ctx.fillText('CHoCH', chartR - 40, y + 2);
+      ctx.fillRect(chartR - 40, y - 7, 35, 12);
+      ctx.fillStyle = '#000'; ctx.font = 'bold 7px sans-serif'; ctx.fillText('CHoCH', chartR - 38, y + 2);
     }
 
-    // Entry/SL/TP
-    if (markers?.levels) {
-      const { entry, stopLoss, tp1, tp3 } = markers.levels;
-      
-      [[entry, 'ENTRY', '#3b82f6'], [stopLoss, 'SL', '#ef4444'], [tp1, 'TP1', '#22c55e'], [tp3, 'TP3', '#10b981']].forEach(([val, label, col]) => {
-        if (val) {
-          const y = scaleY(parseFloat(val));
-          ctx.strokeStyle = col;
-          ctx.lineWidth = 1;
-          ctx.setLineDash(label === 'ENTRY' ? [] : [3, 2]);
-          ctx.beginPath();
-          ctx.moveTo(chartR - 60, y);
-          ctx.lineTo(chartR, y);
-          ctx.stroke();
-          ctx.setLineDash([]);
-          ctx.fillStyle = col;
-          ctx.font = '7px sans-serif';
-          ctx.fillText(label, chartR - 55, y - 1);
-        }
-      });
-    }
-
-    // Título
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 10px sans-serif';
-    ctx.fillText(title || '', 6, 13);
-    
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 9px sans-serif'; ctx.fillText(title || '', 5, 12);
   }, [candles, markers, title]);
   
-  return <canvas ref={canvasRef} width={700} height={height} className="w-full rounded-lg border border-zinc-800/50" />;
+  return <canvas ref={canvasRef} width={650} height={height} className="w-full rounded-lg border border-zinc-800/50" />;
 };
 
 // =============================================
@@ -188,38 +98,30 @@ const SMCChart = ({ candles, markers, title, height = 350 }) => {
 // =============================================
 const SMCFlow = ({ analysis }) => {
   const steps = [
-    { id: 'liq', label: 'Liquidez', icon: '💰', active: (analysis?.liquidity?.equalHighs?.length > 0 || analysis?.liquidity?.equalLows?.length > 0), detail: `${analysis?.liquidity?.equalHighs?.length || 0} EQH, ${analysis?.liquidity?.equalLows?.length || 0} EQL` },
-    { id: 'sweep', label: 'Sweep', icon: '🧹', active: analysis?.sweep?.valid, detail: analysis?.sweep?.description || 'Esperando' },
-    { id: 'disp', label: 'Displacement', icon: '💨', active: analysis?.displacement?.valid, detail: analysis?.displacement?.valid ? `${analysis.displacement.multiplier}x ATR` : 'Esperando' },
-    { id: 'choch', label: 'CHoCH', icon: '🔄', active: analysis?.choch?.valid, detail: analysis?.choch?.description || 'Esperando' },
-    { id: 'ob', label: 'OB', icon: '📦', active: analysis?.orderBlock?.valid, detail: analysis?.orderBlock?.description || 'Buscando' },
-    { id: 'entry', label: 'Entrada 1M', icon: '🎯', active: analysis?.ltfEntry?.valid, detail: analysis?.ltfEntry?.confirmationType || 'Esperando' },
+    { id: 'liq', label: 'Liquidez', icon: '💰', active: (analysis?.liquidity?.equalHighs?.length > 0 || analysis?.liquidity?.equalLows?.length > 0) },
+    { id: 'sweep', label: 'Sweep', icon: '🧹', active: analysis?.sweep?.valid },
+    { id: 'disp', label: 'Displacement', icon: '💨', active: analysis?.displacement?.valid },
+    { id: 'choch', label: 'CHoCH', icon: '🔄', active: analysis?.choch?.valid },
+    { id: 'ob', label: 'OB', icon: '📦', active: analysis?.orderBlock?.valid },
+    { id: 'entry', label: 'Entrada', icon: '🎯', active: analysis?.ltfEntry?.valid },
   ];
-  
   const activeIdx = steps.findIndex(s => !s.active);
   const progress = activeIdx === -1 ? 100 : (activeIdx / steps.length) * 100;
   
   return (
     <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-3">
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex justify-between mb-2">
         <span className="text-xs font-bold text-white">Flujo SMC</span>
         <span className="text-[10px] text-zinc-500">{Math.round(progress)}%</span>
       </div>
-      <div className="h-1 bg-zinc-800 rounded-full mb-3 overflow-hidden">
+      <div className="h-1 bg-zinc-800 rounded-full mb-2">
         <div className="h-full bg-gradient-to-r from-amber-500 to-emerald-500 transition-all" style={{ width: `${progress}%` }} />
       </div>
-      <div className="space-y-1">
+      <div className="grid grid-cols-6 gap-1">
         {steps.map((s, i) => (
-          <div key={s.id} className={`flex items-center gap-2 p-1.5 rounded-lg text-xs ${
-            s.active ? 'bg-emerald-500/10' : i === activeIdx ? 'bg-amber-500/10 animate-pulse' : 'bg-zinc-800/30'
-          }`}>
-            <span>{s.icon}</span>
-            <div className="flex-1">
-              <div className={s.active ? 'text-emerald-400' : i === activeIdx ? 'text-amber-400' : 'text-zinc-500'}>{s.label}</div>
-            </div>
-            <div className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] ${
-              s.active ? 'bg-emerald-500 text-black' : 'bg-zinc-700 text-zinc-500'
-            }`}>{s.active ? '✓' : i + 1}</div>
+          <div key={s.id} className={`text-center p-1 rounded ${s.active ? 'bg-emerald-500/20' : i === activeIdx ? 'bg-amber-500/20 animate-pulse' : 'bg-zinc-800/30'}`}>
+            <div className="text-sm">{s.icon}</div>
+            <div className={`text-[8px] ${s.active ? 'text-emerald-400' : 'text-zinc-500'}`}>{s.label}</div>
           </div>
         ))}
       </div>
@@ -228,122 +130,118 @@ const SMCFlow = ({ analysis }) => {
 };
 
 // =============================================
-// NARRACIÓN + TOGGLE IA
+// NARRACIÓN
 // =============================================
-const NarrationPanel = ({ narration, waiting, status, aiEnabled, onToggleAI }) => {
+const NarrationPanel = ({ narration, status, aiEnabled, onToggleAI }) => {
   const statusCfg = {
-    'SEÑAL_ACTIVA': { bg: 'bg-emerald-500/10 border-emerald-500/40', label: '🎯 SEÑAL', color: 'text-emerald-400' },
-    'ESPERANDO_ENTRADA': { bg: 'bg-blue-500/10 border-blue-500/40', label: '⏳ Esperando 1M', color: 'text-blue-400' },
-    'BUSCANDO_OB': { bg: 'bg-purple-500/10 border-purple-500/40', label: '📦 Buscando OB', color: 'text-purple-400' },
-    'ESPERANDO_CHOCH': { bg: 'bg-amber-500/10 border-amber-500/40', label: '🔄 Esperando CHoCH', color: 'text-amber-400' },
-    'ESPERANDO_DISPLACEMENT': { bg: 'bg-orange-500/10 border-orange-500/40', label: '💨 Esperando Impulso', color: 'text-orange-400' },
-    'ESPERANDO_SWEEP': { bg: 'bg-yellow-500/10 border-yellow-500/40', label: '🧹 Esperando Sweep', color: 'text-yellow-400' },
-    'SIN_LIQUIDEZ': { bg: 'bg-zinc-500/10 border-zinc-500/40', label: '💰 Buscando Liquidez', color: 'text-zinc-400' },
-    'ESTRUCTURA_USADA': { bg: 'bg-zinc-500/10 border-zinc-500/40', label: '⏸️ Estructura usada', color: 'text-zinc-400' },
+    'SEÑAL_ACTIVA': { bg: 'bg-emerald-500/10 border-emerald-500/40', label: '🎯 SEÑAL' },
+    'ESPERANDO_ENTRADA': { bg: 'bg-blue-500/10 border-blue-500/40', label: '⏳ Esperando' },
+    'ESPERANDO_CHOCH': { bg: 'bg-amber-500/10 border-amber-500/40', label: '🔄 CHoCH' },
+    'ESPERANDO_SWEEP': { bg: 'bg-yellow-500/10 border-yellow-500/40', label: '🧹 Sweep' },
+    'SIN_LIQUIDEZ': { bg: 'bg-zinc-500/10 border-zinc-500/40', label: '💰 Liquidez' },
   };
-  
   const cfg = statusCfg[status] || statusCfg.SIN_LIQUIDEZ;
 
   return (
     <div className={`rounded-xl border p-3 ${cfg.bg}`}>
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex justify-between mb-2">
         <div className="flex items-center gap-2">
           <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
-          <span className="text-xs font-medium text-white">Narración</span>
-          <span className={`text-[10px] ${cfg.color}`}>{cfg.label}</span>
+          <span className="text-xs text-white">{cfg.label}</span>
         </div>
-        {/* Toggle IA */}
-        <button 
-          onClick={onToggleAI}
-          className={`px-2 py-0.5 rounded text-[10px] font-medium transition ${
-            aiEnabled ? 'bg-emerald-500/20 text-emerald-400' : 'bg-zinc-700 text-zinc-500'
-          }`}
-        >
-          🤖 IA {aiEnabled ? 'ON' : 'OFF'}
+        <button onClick={onToggleAI} className={`px-2 py-0.5 rounded text-[9px] ${aiEnabled ? 'bg-emerald-500/20 text-emerald-400' : 'bg-zinc-700 text-zinc-500'}`}>
+          🤖 {aiEnabled ? 'ON' : 'OFF'}
         </button>
       </div>
-      
-      <p className="text-zinc-300 text-xs leading-relaxed mb-2">{narration || 'Analizando...'}</p>
-      
-      {waiting?.length > 0 && (
-        <div className="border-t border-white/10 pt-2 space-y-0.5">
-          {waiting.map((w, i) => (
-            <div key={i} className="text-[10px] text-amber-400">• {w}</div>
-          ))}
-        </div>
-      )}
+      <p className="text-zinc-300 text-xs">{narration || 'Analizando...'}</p>
     </div>
   );
 };
 
 // =============================================
-// SIGNAL CARD (con ratios 1:10)
+// SIGNAL CARD CON TRACKING
 // =============================================
-const SignalCard = ({ signal, onViewDetails }) => {
-  if (!signal?.hasSignal && !signal?.scoring) return null;
+const SignalCard = ({ signal, onTrack, onViewDetails, showTracking = true }) => {
+  const [tracking, setTracking] = useState({ operated: signal.operated, result: signal.result });
   const isBuy = signal.direction === 'BULLISH';
   
+  const handleTrack = async (operated, result = null) => {
+    setTracking({ operated, result });
+    if (onTrack) await onTrack(signal.id, operated, result);
+  };
+  
   return (
-    <div className={`rounded-xl border p-3 ${
-      isBuy ? 'bg-emerald-500/10 border-emerald-500/40' : 'bg-red-500/10 border-red-500/40'
-    }`}>
-      <div className="flex items-center justify-between mb-2">
+    <div className={`rounded-xl border p-3 ${isBuy ? 'bg-emerald-500/10 border-emerald-500/40' : 'bg-red-500/10 border-red-500/40'}`}>
+      <div className="flex justify-between mb-2">
         <div className="flex items-center gap-2">
-          <span className="text-xl">{isBuy ? '🟢' : '🔴'}</span>
+          <span className="text-lg">{isBuy ? '🟢' : '🔴'}</span>
           <div>
             <div className="font-bold text-white text-sm">{signal.symbolName}</div>
-            <div className="text-[10px] text-zinc-400">{signal.scoring?.classification} • {signal.ltfEntry?.confirmationType || ''}</div>
+            <div className="text-[9px] text-zinc-400">{new Date(signal.createdAt).toLocaleString()}</div>
           </div>
         </div>
         <div className="text-right">
-          <div className={`font-bold ${isBuy ? 'text-emerald-400' : 'text-red-400'}`}>{isBuy ? 'COMPRA' : 'VENTA'}</div>
-          <div className="text-[10px] text-zinc-500">{signal.scoring?.score}/100</div>
+          <div className={`font-bold text-sm ${isBuy ? 'text-emerald-400' : 'text-red-400'}`}>{isBuy ? 'COMPRA' : 'VENTA'}</div>
+          <div className="text-[9px] text-zinc-500">{signal.scoring?.score}/100</div>
         </div>
       </div>
       
       {signal.levels && (
-        <>
-          <div className="grid grid-cols-6 gap-1 text-[10px] mb-2">
-            <div className="bg-black/20 rounded p-1.5 text-center">
-              <div className="text-zinc-500">Entry</div>
-              <div className="font-mono text-blue-400">{signal.levels.entry}</div>
-            </div>
-            <div className="bg-black/20 rounded p-1.5 text-center">
-              <div className="text-zinc-500">SL</div>
-              <div className="font-mono text-red-400">{signal.levels.stopLoss}</div>
-            </div>
-            <div className="bg-black/20 rounded p-1.5 text-center">
-              <div className="text-zinc-500">1:2</div>
-              <div className="font-mono text-emerald-400">{signal.levels.tp1}</div>
-            </div>
-            <div className="bg-black/20 rounded p-1.5 text-center">
-              <div className="text-zinc-500">1:3</div>
-              <div className="font-mono text-emerald-400">{signal.levels.tp2}</div>
-            </div>
-            <div className="bg-black/20 rounded p-1.5 text-center">
-              <div className="text-zinc-500">1:5</div>
-              <div className="font-mono text-emerald-500">{signal.levels.tp3}</div>
-            </div>
-            <div className="bg-black/20 rounded p-1.5 text-center">
-              <div className="text-zinc-500">1:10</div>
-              <div className="font-mono text-emerald-600">{signal.levels.tp4}</div>
-            </div>
+        <div className="grid grid-cols-4 gap-1 text-[9px] mb-2">
+          <div className="bg-black/20 rounded p-1 text-center">
+            <div className="text-zinc-500">Entry</div>
+            <div className="font-mono text-blue-400">{signal.levels.entry}</div>
           </div>
-          
-          <div className="text-[9px] text-zinc-500 space-y-0.5">
-            <div>✓ {signal.sweep?.description}</div>
-            <div>✓ {signal.choch?.description}</div>
-            <div>✓ {signal.orderBlock?.description}</div>
+          <div className="bg-black/20 rounded p-1 text-center">
+            <div className="text-zinc-500">SL</div>
+            <div className="font-mono text-red-400">{signal.levels.stopLoss}</div>
           </div>
-        </>
+          <div className="bg-black/20 rounded p-1 text-center">
+            <div className="text-zinc-500">TP1</div>
+            <div className="font-mono text-emerald-400">{signal.levels.tp1}</div>
+          </div>
+          <div className="bg-black/20 rounded p-1 text-center">
+            <div className="text-zinc-500">TP3</div>
+            <div className="font-mono text-emerald-400">{signal.levels.tp3}</div>
+          </div>
+        </div>
+      )}
+      
+      {/* Tracking Buttons */}
+      {showTracking && (
+        <div className="border-t border-white/10 pt-2 mt-2">
+          {!tracking.operated && !tracking.result ? (
+            <div className="flex gap-2">
+              <button onClick={() => handleTrack(false)} className="flex-1 py-1.5 rounded bg-zinc-700/50 text-zinc-400 text-xs hover:bg-zinc-600/50">
+                ⏭️ No operé
+              </button>
+              <button onClick={() => handleTrack(true)} className="flex-1 py-1.5 rounded bg-blue-500/20 text-blue-400 text-xs hover:bg-blue-500/30">
+                ✅ Sí operé
+              </button>
+            </div>
+          ) : tracking.operated && !tracking.result ? (
+            <div className="flex gap-2">
+              <button onClick={() => handleTrack(true, 'WIN')} className="flex-1 py-1.5 rounded bg-emerald-500/20 text-emerald-400 text-xs hover:bg-emerald-500/30">
+                🏆 Ganada
+              </button>
+              <button onClick={() => handleTrack(true, 'LOSS')} className="flex-1 py-1.5 rounded bg-red-500/20 text-red-400 text-xs hover:bg-red-500/30">
+                💔 Perdida
+              </button>
+            </div>
+          ) : (
+            <div className={`text-center py-1.5 rounded text-xs ${
+              !tracking.operated ? 'bg-zinc-700/30 text-zinc-500' :
+              tracking.result === 'WIN' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'
+            }`}>
+              {!tracking.operated ? '⏭️ No operada' : tracking.result === 'WIN' ? '🏆 GANADA' : '💔 PERDIDA'}
+            </div>
+          )}
+        </div>
       )}
       
       {onViewDetails && (
-        <button 
-          onClick={() => onViewDetails(signal)}
-          className="w-full mt-2 py-1.5 rounded bg-zinc-800/50 text-zinc-400 text-xs hover:bg-zinc-700/50 transition"
-        >
-          Ver gráfico y contexto →
+        <button onClick={() => onViewDetails(signal)} className="w-full mt-2 py-1 rounded bg-zinc-800/50 text-zinc-400 text-[10px] hover:bg-zinc-700/50">
+          Ver detalles →
         </button>
       )}
     </div>
@@ -351,85 +249,298 @@ const SignalCard = ({ signal, onViewDetails }) => {
 };
 
 // =============================================
-// MODAL DETALLE SEÑAL (Historial con gráfico)
+// ESTADÍSTICAS PANEL
 // =============================================
-const SignalDetailModal = ({ signal, onClose }) => {
-  if (!signal) return null;
-  const isBuy = signal.direction === 'BULLISH';
+const StatsPanel = ({ stats }) => {
+  if (!stats) return null;
   
   return (
-    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className="bg-zinc-900 rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        {/* Header */}
-        <div className={`p-4 border-b border-zinc-800 flex items-center justify-between ${isBuy ? 'bg-emerald-500/10' : 'bg-red-500/10'}`}>
-          <div className="flex items-center gap-3">
-            <span className="text-2xl">{isBuy ? '🟢' : '🔴'}</span>
-            <div>
-              <h2 className="text-lg font-bold text-white">{signal.symbolName}</h2>
-              <div className="text-xs text-zinc-400">{new Date(signal.createdAt).toLocaleString()}</div>
-            </div>
+    <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-4">
+      <h3 className="text-sm font-bold text-white mb-3">📊 Estadísticas</h3>
+      
+      <div className="grid grid-cols-4 gap-2 mb-4">
+        <div className="bg-black/20 rounded-lg p-2 text-center">
+          <div className="text-lg font-bold text-white">{stats.totalOperated}</div>
+          <div className="text-[9px] text-zinc-500">Operadas</div>
+        </div>
+        <div className="bg-black/20 rounded-lg p-2 text-center">
+          <div className="text-lg font-bold text-emerald-400">{stats.wins}</div>
+          <div className="text-[9px] text-zinc-500">Ganadas</div>
+        </div>
+        <div className="bg-black/20 rounded-lg p-2 text-center">
+          <div className="text-lg font-bold text-red-400">{stats.losses}</div>
+          <div className="text-[9px] text-zinc-500">Perdidas</div>
+        </div>
+        <div className="bg-black/20 rounded-lg p-2 text-center">
+          <div className={`text-lg font-bold ${parseFloat(stats.winRate) >= 50 ? 'text-emerald-400' : 'text-red-400'}`}>
+            {stats.winRate}%
           </div>
-          <button onClick={onClose} className="text-zinc-400 hover:text-white text-xl">×</button>
+          <div className="text-[9px] text-zinc-500">Win Rate</div>
+        </div>
+      </div>
+      
+      {/* Rachas */}
+      <div className="flex gap-2 mb-3">
+        <div className={`flex-1 rounded p-2 text-center ${stats.streaks?.currentWin > 0 ? 'bg-emerald-500/10' : 'bg-zinc-800/30'}`}>
+          <div className="text-xs text-emerald-400">🔥 {stats.streaks?.currentWin || 0}</div>
+          <div className="text-[8px] text-zinc-500">Racha Wins</div>
+        </div>
+        <div className={`flex-1 rounded p-2 text-center ${stats.streaks?.currentLoss > 0 ? 'bg-red-500/10' : 'bg-zinc-800/30'}`}>
+          <div className="text-xs text-red-400">❄️ {stats.streaks?.currentLoss || 0}</div>
+          <div className="text-[8px] text-zinc-500">Racha Loss</div>
+        </div>
+      </div>
+      
+      {/* Mejor/Peor símbolo */}
+      <div className="text-[10px] text-zinc-400 space-y-1">
+        <div>🏆 Mejor: <span className="text-emerald-400">{stats.bestSymbol}</span></div>
+        <div>⚠️ Peor: <span className="text-red-400">{stats.worstSymbol}</span></div>
+      </div>
+    </div>
+  );
+};
+
+// =============================================
+// 🧠 PSICOTRADING PANEL
+// =============================================
+const PsychoPanel = ({ emotionalState, onSendMessage }) => {
+  const [message, setMessage] = useState('');
+  const [chat, setChat] = useState([]);
+  const [loading, setLoading] = useState(false);
+  
+  const stateColors = {
+    'NEUTRAL': 'bg-zinc-500/20 text-zinc-400',
+    'CONFIDENT': 'bg-emerald-500/20 text-emerald-400',
+    'TILT': 'bg-red-500/20 text-red-400',
+    'OVERTRADING': 'bg-amber-500/20 text-amber-400',
+    'REVENGE_TRADING': 'bg-red-500/30 text-red-500',
+  };
+  
+  const stateLabels = {
+    'NEUTRAL': '😐 Neutral',
+    'CONFIDENT': '😊 Confiado',
+    'TILT': '😤 En Tilt',
+    'OVERTRADING': '⚡ Overtrading',
+    'REVENGE_TRADING': '🚨 Revenge Trading',
+  };
+  
+  const handleSend = async () => {
+    if (!message.trim() || loading) return;
+    
+    const userMsg = message;
+    setMessage('');
+    setChat(prev => [...prev, { role: 'user', content: userMsg }]);
+    setLoading(true);
+    
+    try {
+      const res = await fetch(`${API_URL}/api/psycho/coaching`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: userMsg })
+      });
+      const data = await res.json();
+      setChat(prev => [...prev, { role: 'assistant', content: data.response }]);
+    } catch {
+      setChat(prev => [...prev, { role: 'assistant', content: 'Error al conectar con el coach' }]);
+    }
+    setLoading(false);
+  };
+  
+  const quickMessages = [
+    '¿Debería operar ahora?',
+    'Estoy nervioso por mi último trade',
+    '¿Cómo manejo una racha perdedora?',
+    'Siento que estoy haciendo overtrading'
+  ];
+
+  return (
+    <div className="space-y-4">
+      {/* Estado Emocional */}
+      <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-4">
+        <h3 className="text-sm font-bold text-white mb-3">🧠 Estado Emocional</h3>
+        
+        <div className={`rounded-lg p-3 mb-3 ${stateColors[emotionalState?.emotionalState] || stateColors.NEUTRAL}`}>
+          <div className="text-lg font-bold">{stateLabels[emotionalState?.emotionalState] || '😐 Neutral'}</div>
+          <div className="text-xs opacity-75">Riesgo: {emotionalState?.riskLevel || 'NORMAL'}</div>
         </div>
         
-        {/* Gráfico */}
-        <div className="p-4">
-          <SMCChart 
-            candles={signal.candles?.htf || []}
-            markers={signal.chartMarkers}
-            title={`${signal.symbolName} - 5M (HTF)`}
-            height={300}
-          />
-        </div>
-        
-        {/* Contexto */}
-        <div className="px-4 pb-4 grid grid-cols-2 gap-4">
-          <div className="bg-zinc-800/50 rounded-xl p-3">
-            <h3 className="text-xs font-bold text-white mb-2">📊 Contexto SMC</h3>
-            <div className="space-y-1 text-xs">
-              <div className="flex justify-between"><span className="text-zinc-500">Sweep:</span><span className="text-amber-400">{signal.sweep?.type}</span></div>
-              <div className="flex justify-between"><span className="text-zinc-500">Displacement:</span><span className="text-orange-400">{signal.displacement?.multiplier}x ATR</span></div>
-              <div className="flex justify-between"><span className="text-zinc-500">CHoCH:</span><span className={isBuy ? 'text-emerald-400' : 'text-red-400'}>{signal.choch?.direction}</span></div>
-              <div className="flex justify-between"><span className="text-zinc-500">OB Type:</span><span className="text-purple-400">{signal.orderBlock?.obType}</span></div>
-              <div className="flex justify-between"><span className="text-zinc-500">LTF Entry:</span><span className="text-blue-400">{signal.ltfEntry?.confirmationType}</span></div>
-            </div>
+        {emotionalState?.recommendations?.length > 0 && (
+          <div className="space-y-1">
+            {emotionalState.recommendations.map((r, i) => (
+              <div key={i} className="text-xs text-zinc-300 bg-black/20 rounded p-2">{r}</div>
+            ))}
           </div>
-          
-          <div className="bg-zinc-800/50 rounded-xl p-3">
-            <h3 className="text-xs font-bold text-white mb-2">🎯 Niveles</h3>
-            <div className="space-y-1 text-xs">
-              <div className="flex justify-between"><span className="text-zinc-500">Entry:</span><span className="text-blue-400 font-mono">{signal.levels?.entry}</span></div>
-              <div className="flex justify-between"><span className="text-zinc-500">Stop Loss:</span><span className="text-red-400 font-mono">{signal.levels?.stopLoss}</span></div>
-              <div className="flex justify-between"><span className="text-zinc-500">TP1 (1:2):</span><span className="text-emerald-400 font-mono">{signal.levels?.tp1}</span></div>
-              <div className="flex justify-between"><span className="text-zinc-500">TP2 (1:3):</span><span className="text-emerald-400 font-mono">{signal.levels?.tp2}</span></div>
-              <div className="flex justify-between"><span className="text-zinc-500">TP3 (1:5):</span><span className="text-emerald-500 font-mono">{signal.levels?.tp3}</span></div>
-              <div className="flex justify-between"><span className="text-zinc-500">TP4 (1:10):</span><span className="text-emerald-600 font-mono">{signal.levels?.tp4}</span></div>
-            </div>
-          </div>
-        </div>
+        )}
         
-        {/* Score */}
-        <div className="px-4 pb-4">
-          <div className="bg-zinc-800/50 rounded-xl p-3">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs text-zinc-500">Score Total</span>
-              <span className={`text-sm font-bold ${signal.scoring?.score >= 90 ? 'text-emerald-400' : 'text-blue-400'}`}>
-                {signal.scoring?.score}/100 ({signal.scoring?.classification})
-              </span>
-            </div>
-            <div className="h-2 bg-zinc-800 rounded-full overflow-hidden">
-              <div className="h-full bg-emerald-500" style={{ width: `${signal.scoring?.score}%` }} />
-            </div>
-            <div className="mt-2 flex gap-2 text-[10px]">
-              {Object.entries(signal.scoring?.breakdown || {}).map(([k, v]) => (
-                <div key={k} className="bg-zinc-900 rounded px-2 py-1">
-                  <span className="text-zinc-500">{k}:</span> <span className="text-white">{v}</span>
-                </div>
-              ))}
-            </div>
+        <div className="grid grid-cols-3 gap-2 mt-3 text-center text-[10px]">
+          <div className="bg-black/20 rounded p-2">
+            <div className="text-white font-bold">{emotionalState?.stats?.todayTrades || 0}</div>
+            <div className="text-zinc-500">Trades hoy</div>
+          </div>
+          <div className="bg-black/20 rounded p-2">
+            <div className="text-emerald-400 font-bold">{emotionalState?.stats?.currentWinStreak || 0}</div>
+            <div className="text-zinc-500">Wins seguidos</div>
+          </div>
+          <div className="bg-black/20 rounded p-2">
+            <div className="text-red-400 font-bold">{emotionalState?.stats?.currentLossStreak || 0}</div>
+            <div className="text-zinc-500">Loss seguidos</div>
           </div>
         </div>
       </div>
+      
+      {/* Chat con Coach */}
+      <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-4">
+        <h3 className="text-sm font-bold text-white mb-3">💬 Coach de Trading</h3>
+        
+        {/* Quick messages */}
+        <div className="flex flex-wrap gap-1 mb-3">
+          {quickMessages.map((q, i) => (
+            <button
+              key={i}
+              onClick={() => setMessage(q)}
+              className="text-[9px] px-2 py-1 rounded bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
+            >
+              {q}
+            </button>
+          ))}
+        </div>
+        
+        {/* Chat history */}
+        <div className="h-48 overflow-y-auto mb-3 space-y-2">
+          {chat.length === 0 ? (
+            <div className="text-center text-zinc-500 text-xs py-8">
+              Hola! Soy tu coach de trading. ¿En qué puedo ayudarte hoy?
+            </div>
+          ) : (
+            chat.map((msg, i) => (
+              <div key={i} className={`text-xs p-2 rounded ${
+                msg.role === 'user' ? 'bg-blue-500/20 text-blue-300 ml-8' : 'bg-zinc-800 text-zinc-300 mr-8'
+              }`}>
+                {msg.content}
+              </div>
+            ))
+          )}
+          {loading && (
+            <div className="text-xs text-zinc-500 animate-pulse">Pensando...</div>
+          )}
+        </div>
+        
+        {/* Input */}
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+            placeholder="Escribe tu pregunta..."
+            className="flex-1 bg-zinc-800 rounded-lg px-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+          <button
+            onClick={handleSend}
+            disabled={loading}
+            className="px-4 py-2 rounded-lg bg-blue-600 text-white text-xs hover:bg-blue-500 disabled:opacity-50"
+          >
+            Enviar
+          </button>
+        </div>
+      </div>
+      
+      {/* Generar Plan */}
+      <PlanGenerator />
+    </div>
+  );
+};
+
+// =============================================
+// GENERADOR DE PLAN
+// =============================================
+const PlanGenerator = () => {
+  const [loading, setLoading] = useState(false);
+  const [plan, setPlan] = useState(null);
+  const [prefs, setPrefs] = useState({
+    capital: '',
+    riskPerTrade: '1-2%',
+    schedule: '',
+    experience: 'Intermedio',
+    monthlyGoal: '10%'
+  });
+  
+  const generatePlan = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/psycho/plan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(prefs)
+      });
+      const data = await res.json();
+      setPlan(data.plan);
+    } catch {
+      setPlan('Error generando plan');
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-4">
+      <h3 className="text-sm font-bold text-white mb-3">📋 Mi Plan de Trading</h3>
+      
+      {!plan ? (
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-2">
+            <input
+              placeholder="Capital ($)"
+              value={prefs.capital}
+              onChange={(e) => setPrefs({...prefs, capital: e.target.value})}
+              className="bg-zinc-800 rounded px-2 py-1.5 text-xs text-white"
+            />
+            <select
+              value={prefs.riskPerTrade}
+              onChange={(e) => setPrefs({...prefs, riskPerTrade: e.target.value})}
+              className="bg-zinc-800 rounded px-2 py-1.5 text-xs text-white"
+            >
+              <option value="0.5%">0.5% por trade</option>
+              <option value="1%">1% por trade</option>
+              <option value="1-2%">1-2% por trade</option>
+              <option value="2%">2% por trade</option>
+            </select>
+            <input
+              placeholder="Horario (ej: 9am-12pm)"
+              value={prefs.schedule}
+              onChange={(e) => setPrefs({...prefs, schedule: e.target.value})}
+              className="bg-zinc-800 rounded px-2 py-1.5 text-xs text-white"
+            />
+            <select
+              value={prefs.experience}
+              onChange={(e) => setPrefs({...prefs, experience: e.target.value})}
+              className="bg-zinc-800 rounded px-2 py-1.5 text-xs text-white"
+            >
+              <option>Principiante</option>
+              <option>Intermedio</option>
+              <option>Avanzado</option>
+            </select>
+          </div>
+          <button
+            onClick={generatePlan}
+            disabled={loading}
+            className="w-full py-2 rounded-lg bg-purple-600 text-white text-xs hover:bg-purple-500 disabled:opacity-50"
+          >
+            {loading ? 'Generando...' : '🚀 Generar Mi Plan'}
+          </button>
+        </div>
+      ) : (
+        <div>
+          <div className="bg-black/20 rounded-lg p-3 text-xs text-zinc-300 whitespace-pre-wrap max-h-64 overflow-y-auto">
+            {plan}
+          </div>
+          <button
+            onClick={() => setPlan(null)}
+            className="w-full mt-2 py-1.5 rounded bg-zinc-800 text-zinc-400 text-xs hover:bg-zinc-700"
+          >
+            Generar nuevo plan
+          </button>
+        </div>
+      )}
     </div>
   );
 };
@@ -440,13 +551,8 @@ const SignalDetailModal = ({ signal, onClose }) => {
 const SymbolSelector = ({ symbols, selected, onSelect, counts }) => (
   <div className="flex gap-2">
     {Object.entries(symbols).map(([key, info]) => (
-      <button
-        key={key}
-        onClick={() => onSelect(key)}
-        className={`flex-1 py-2.5 px-3 rounded-xl transition ${
-          selected === key ? 'bg-blue-600 text-white' : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-700/50'
-        }`}
-      >
+      <button key={key} onClick={() => onSelect(key)}
+        className={`flex-1 py-2 px-3 rounded-xl transition ${selected === key ? 'bg-blue-600 text-white' : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-700/50'}`}>
         <div className="font-medium text-sm">{info.name}</div>
         <div className={`text-xs ${(counts?.[key] || 0) >= 7 ? 'text-red-400' : 'text-zinc-500'}`}>{counts?.[key] || 0}/7</div>
       </button>
@@ -467,24 +573,27 @@ export default function Dashboard() {
   const [dailyCounts, setDailyCounts] = useState({});
   const [tab, setTab] = useState('live');
   const [aiEnabled, setAiEnabled] = useState(true);
-  const [selectedSignal, setSelectedSignal] = useState(null);
+  const [stats, setStats] = useState(null);
+  const [emotionalState, setEmotionalState] = useState(null);
 
   // Init
   useEffect(() => {
     const init = async () => {
       try {
-        const [health, syms, sigs, counts, aiStatus] = await Promise.all([
+        const [health, syms, sigs, counts, st, emo] = await Promise.all([
           fetch(`${API_URL}/health`).then(r => r.json()),
           fetch(`${API_URL}/api/deriv/symbols`).then(r => r.json()),
           fetch(`${API_URL}/api/signals/history`).then(r => r.json()),
           fetch(`${API_URL}/api/signals/daily-count`).then(r => r.json()),
-          fetch(`${API_URL}/api/ai/status`).then(r => r.json()).catch(() => ({ aiEnabled: true })),
+          fetch(`${API_URL}/api/stats`).then(r => r.json()).catch(() => null),
+          fetch(`${API_URL}/api/stats/emotional`).then(r => r.json()).catch(() => null),
         ]);
         setConnected(health.deriv);
         setSymbols(syms);
         setSignals(sigs);
         setDailyCounts(counts);
-        setAiEnabled(aiStatus.aiEnabled);
+        setStats(st);
+        setEmotionalState(emo);
       } catch { setConnected(false); }
     };
     init();
@@ -509,23 +618,26 @@ export default function Dashboard() {
     return () => clearInterval(i);
   }, [fetchData]);
 
-  // Fetch signals
+  // Fetch signals & stats
   useEffect(() => {
     const f = async () => {
       try {
-        const [s, c] = await Promise.all([
+        const [s, c, st, emo] = await Promise.all([
           fetch(`${API_URL}/api/signals/history`).then(r => r.json()),
           fetch(`${API_URL}/api/signals/daily-count`).then(r => r.json()),
+          fetch(`${API_URL}/api/stats`).then(r => r.json()).catch(() => null),
+          fetch(`${API_URL}/api/stats/emotional`).then(r => r.json()).catch(() => null),
         ]);
         setSignals(s);
         setDailyCounts(c);
+        setStats(st);
+        setEmotionalState(emo);
       } catch {}
     };
     const i = setInterval(f, 15000);
     return () => clearInterval(i);
   }, []);
 
-  // Toggle IA
   const handleToggleAI = async () => {
     try {
       const res = await fetch(`${API_URL}/api/ai/toggle`, { method: 'POST' });
@@ -534,20 +646,44 @@ export default function Dashboard() {
     } catch {}
   };
 
+  const handleTrackSignal = async (id, operated, result) => {
+    try {
+      await fetch(`${API_URL}/api/signals/${id}/track`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ operated, result })
+      });
+      // Refresh signals & stats
+      const [s, st] = await Promise.all([
+        fetch(`${API_URL}/api/signals/history`).then(r => r.json()),
+        fetch(`${API_URL}/api/stats`).then(r => r.json()),
+      ]);
+      setSignals(s);
+      setStats(st);
+    } catch {}
+  };
+
   return (
     <div className="min-h-screen bg-[#08080a] text-white">
       {/* Header */}
-      <header className="border-b border-zinc-800/50 px-4 py-2.5">
+      <header className="border-b border-zinc-800/50 px-4 py-2">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <h1 className="text-base font-bold">Trading<span className="text-blue-500">Pro</span></h1>
-            <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400">v7.1 ELITE</span>
-            <div className="flex items-center gap-1">
-              <div className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
-              <span className="text-[10px] text-zinc-500">{connected ? 'Online' : 'Offline'}</span>
-            </div>
+            <span className="text-[8px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400">v7.2</span>
+            <div className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
           </div>
-          <div className="text-[9px] text-zinc-600">Liquidez → Sweep → Displacement → CHoCH → OB → 1M</div>
+          
+          {/* Emotional indicator */}
+          {emotionalState && (
+            <div className={`px-2 py-0.5 rounded text-[9px] ${
+              emotionalState.riskLevel === 'CRITICAL' ? 'bg-red-500/30 text-red-400' :
+              emotionalState.riskLevel === 'HIGH' ? 'bg-amber-500/20 text-amber-400' :
+              'bg-emerald-500/20 text-emerald-400'
+            }`}>
+              {emotionalState.emotionalState}
+            </div>
+          )}
         </div>
       </header>
 
@@ -555,16 +691,12 @@ export default function Dashboard() {
       <nav className="border-b border-zinc-800/50 px-4">
         <div className="max-w-6xl mx-auto flex">
           {[
-            { id: 'live', label: '📊 Análisis' },
+            { id: 'live', label: '📊 Trading' },
             { id: 'history', label: '📜 Historial' },
+            { id: 'psycho', label: '🧠 Psicotrading' },
           ].map(t => (
-            <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
-              className={`px-4 py-2 text-xs border-b-2 transition ${
-                tab === t.id ? 'border-blue-500 text-white' : 'border-transparent text-zinc-500'
-              }`}
-            >
+            <button key={t.id} onClick={() => setTab(t.id)}
+              className={`px-4 py-2 text-xs border-b-2 transition ${tab === t.id ? 'border-blue-500 text-white' : 'border-transparent text-zinc-500'}`}>
               {t.label}
             </button>
           ))}
@@ -573,76 +705,54 @@ export default function Dashboard() {
 
       {/* Main */}
       <main className="max-w-6xl mx-auto p-4">
+        {/* LIVE TAB */}
         {tab === 'live' && (
           <div className="space-y-4">
             <SymbolSelector symbols={symbols} selected={selectedSymbol} onSelect={setSelectedSymbol} counts={dailyCounts} />
-
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               <div className="lg:col-span-2 space-y-3">
-                <SMCChart 
-                  candles={analysis?.candles?.htf || []}
-                  markers={analysis?.chartMarkers}
-                  title={`${symbols[selectedSymbol]?.name} - 5M`}
-                />
-                
-                <NarrationPanel 
-                  narration={narration?.text}
-                  waiting={narration?.waiting}
-                  status={analysis?.status}
-                  aiEnabled={aiEnabled}
-                  onToggleAI={handleToggleAI}
-                />
-                
-                {analysis?.hasSignal && <SignalCard signal={analysis} />}
+                <SMCChart candles={analysis?.candles?.htf || []} markers={analysis?.chartMarkers} title={`${symbols[selectedSymbol]?.name} - 5M`} />
+                <NarrationPanel narration={narration?.text} status={analysis?.status} aiEnabled={aiEnabled} onToggleAI={handleToggleAI} />
+                {analysis?.hasSignal && <SignalCard signal={analysis} onTrack={handleTrackSignal} />}
               </div>
-              
               <div className="space-y-3">
                 <SMCFlow analysis={analysis} />
-                
-                {analysis?.scoring && (
-                  <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-3">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs text-zinc-500">Score</span>
-                      <span className={`text-sm font-bold ${analysis.scoring.score >= 90 ? 'text-emerald-400' : analysis.scoring.score >= 75 ? 'text-blue-400' : 'text-zinc-400'}`}>
-                        {analysis.scoring.score}/100 ({analysis.scoring.classification})
-                      </span>
-                    </div>
-                    <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
-                      <div className={`h-full transition-all ${analysis.scoring.score >= 90 ? 'bg-emerald-500' : analysis.scoring.score >= 75 ? 'bg-blue-500' : 'bg-zinc-600'}`} style={{ width: `${analysis.scoring.score}%` }} />
-                    </div>
-                    <div className="mt-1 text-[9px] text-zinc-500">
-                      {analysis.scoring.canAutomate ? '✅ Auto-ejecutable' : '⏳ Manual'}
-                      {analysis.structureUsed && ' • ⚠️ Estructura ya usada'}
-                    </div>
-                  </div>
-                )}
+                <StatsPanel stats={stats} />
               </div>
             </div>
           </div>
         )}
 
+        {/* HISTORY TAB */}
         {tab === 'history' && (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-bold">📜 Historial de Señales A+</h2>
-              <span className="text-[10px] text-zinc-500">Click para ver gráfico</span>
+          <div className="space-y-4">
+            <div className="flex justify-between items-center">
+              <h2 className="text-sm font-bold">📜 Historial de Señales</h2>
+              <div className="text-[10px] text-zinc-500">
+                {stats?.totalOperated || 0} operadas | {stats?.winRate || 0}% win rate
+              </div>
             </div>
             
             {signals.length === 0 ? (
-              <div className="text-center text-zinc-500 py-8 text-sm">Sin señales A+ aún</div>
+              <div className="text-center text-zinc-500 py-8 text-sm">Sin señales aún</div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {signals.map(s => (
-                  <SignalCard key={s.id} signal={s} onViewDetails={setSelectedSignal} />
+                  <SignalCard key={s.id} signal={s} onTrack={handleTrackSignal} showTracking={true} />
                 ))}
               </div>
             )}
           </div>
         )}
-      </main>
 
-      {/* Modal */}
-      {selectedSignal && <SignalDetailModal signal={selectedSignal} onClose={() => setSelectedSignal(null)} />}
+        {/* PSICOTRADING TAB */}
+        {tab === 'psycho' && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <PsychoPanel emotionalState={emotionalState} />
+            <StatsPanel stats={stats} />
+          </div>
+        )}
+      </main>
     </div>
   );
 }
