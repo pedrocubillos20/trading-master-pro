@@ -1,6 +1,6 @@
 // =============================================
-// TRADING MASTER PRO - BACKEND v7.2
-// SMC INSTITUCIONAL + PSICOTRADING + TRACKING
+// TRADING MASTER PRO - BACKEND v7.3
+// PERSISTENCIA + KEEP-ALIVE + RECUPERACIÓN
 // =============================================
 
 import express from 'express';
@@ -8,7 +8,6 @@ import cors from 'cors';
 import helmet from 'helmet';
 import { createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
-import { v4 as uuidv4 } from 'uuid';
 import WebSocket from 'ws';
 import dotenv from 'dotenv';
 
@@ -17,14 +16,23 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-console.log('\n🔧 TRADING MASTER PRO v7.2');
+console.log('\n🔧 TRADING MASTER PRO v7.3');
 console.log('═══════════════════════════════════════');
-console.log('SMC + PSICOTRADING + TRACKING');
+console.log('PERSISTENCIA + KEEP-ALIVE + RECUPERACIÓN');
 console.log('═══════════════════════════════════════');
 
+// =============================================
+// CONFIGURACIÓN
+// =============================================
 let supabase = null;
-if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
-  supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+if (SUPABASE_URL && SUPABASE_KEY) {
+  supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+  console.log('✅ Supabase conectado');
+} else {
+  console.log('⚠️ Supabase NO configurado - SIN PERSISTENCIA');
 }
 
 let openai = null;
@@ -37,9 +45,9 @@ const DERIV_API_TOKEN = process.env.DERIV_API_TOKEN || '';
 const DERIV_WS_URL = 'wss://ws.derivws.com/websockets/v3';
 const WHATSAPP_PHONE = (process.env.WHATSAPP_PHONE || '573203921881').replace('+', '');
 const CALLMEBOT_API_KEY = process.env.CALLMEBOT_API_KEY || 'w2VJk5AzEsg3';
-
-console.log('📱 WhatsApp Phone:', WHATSAPP_PHONE);
-console.log('📱 WhatsApp API Key:', CALLMEBOT_API_KEY ? '✅ Configurada' : '❌ Falta');
+const BACKEND_URL = process.env.RAILWAY_PUBLIC_DOMAIN 
+  ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` 
+  : process.env.BACKEND_URL || 'https://trading-master-pro-production.up.railway.app';
 
 // =============================================
 // ÍNDICES
@@ -50,57 +58,314 @@ const SYNTHETIC_INDICES = {
   'R_100': { name: 'Volatility 100', pip: 0.01 },
 };
 
-const TF_HTF = 300;
-const TF_LTF = 60;
+const TF_HTF = 300;  // 5M
+const TF_LTF = 60;   // 1M
 
 // =============================================
-// ESTADO GLOBAL
+// ESTADO EN MEMORIA (con respaldo en Supabase)
 // =============================================
 let derivWs = null;
 let isDerivConnected = false;
 let aiEnabled = true;
+let lastActivity = Date.now();
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 10;
+
 const candleData = new Map();
 const tickData = new Map();
 const dailySignals = new Map();
 const activeSignals = new Map();
-const signalHistory = [];
+let signalHistory = [];
 const usedStructures = new Map();
+const analysisCache = new Map();
 
-// =============================================
-// 📊 TRACKING DE SEÑALES Y ESTADÍSTICAS
-// =============================================
+// Estadísticas
 const tradingStats = {
   totalSignals: 0,
   operatedSignals: 0,
   wins: 0,
   losses: 0,
   skipped: 0,
-  bySymbol: {},
-  bySetup: {},
   streaks: { currentWin: 0, currentLoss: 0, maxWin: 0, maxLoss: 0 },
-  tradingDiary: [], // Diario de trading
-  emotionalLog: [], // Log emocional
 };
 
-// Inicializar stats por símbolo
-Object.keys(SYNTHETIC_INDICES).forEach(s => {
-  tradingStats.bySymbol[s] = { signals: 0, operated: 0, wins: 0, losses: 0 };
-});
+// =============================================
+// 💾 PERSISTENCIA EN SUPABASE
+// =============================================
+const Persistence = {
+  
+  // Guardar velas
+  async saveCandles(symbol, timeframe, candles) {
+    if (!supabase || !candles || candles.length === 0) return;
+    
+    try {
+      const key = `${symbol}_${timeframe}`;
+      const data = {
+        key,
+        symbol,
+        timeframe,
+        candles: JSON.stringify(candles.slice(-200)), // Solo últimas 200
+        updated_at: new Date().toISOString()
+      };
+      
+      await supabase
+        .from('candle_data')
+        .upsert(data, { onConflict: 'key' });
+        
+    } catch (error) {
+      console.error('Error guardando velas:', error.message);
+    }
+  },
 
-// Reset diario
-setInterval(() => {
-  const now = new Date();
-  if (now.getHours() === 0 && now.getMinutes() === 0) {
-    dailySignals.clear();
-    usedStructures.clear();
-    console.log('🔄 Reset diario');
+  // Cargar velas
+  async loadCandles(symbol, timeframe) {
+    if (!supabase) return null;
+    
+    try {
+      const key = `${symbol}_${timeframe}`;
+      const { data, error } = await supabase
+        .from('candle_data')
+        .select('candles, updated_at')
+        .eq('key', key)
+        .single();
+      
+      if (error || !data) return null;
+      
+      // Verificar que no sean muy viejas (máx 30 min)
+      const updatedAt = new Date(data.updated_at);
+      const age = (Date.now() - updatedAt.getTime()) / 1000 / 60;
+      
+      if (age > 30) {
+        console.log(`⚠️ Velas ${key} muy antiguas (${age.toFixed(0)} min), descartando`);
+        return null;
+      }
+      
+      console.log(`✅ Cargadas ${key} desde Supabase (${age.toFixed(1)} min antigüedad)`);
+      return JSON.parse(data.candles);
+      
+    } catch (error) {
+      console.error('Error cargando velas:', error.message);
+      return null;
+    }
+  },
+
+  // Guardar señales
+  async saveSignal(signal) {
+    if (!supabase) return;
+    
+    try {
+      await supabase.from('signals').upsert({
+        id: signal.id,
+        symbol: signal.symbol,
+        symbol_name: signal.symbolName,
+        direction: signal.direction,
+        score: signal.scoring?.score,
+        classification: signal.scoring?.classification,
+        levels: signal.levels,
+        sweep_desc: signal.sweep?.description,
+        choch_desc: signal.choch?.description,
+        ob_desc: signal.orderBlock?.description,
+        operated: signal.operated || false,
+        result: signal.result,
+        notes: signal.notes,
+        created_at: signal.createdAt,
+        candles_snapshot: JSON.stringify(signal.candles?.htf?.slice(-30) || [])
+      }, { onConflict: 'id' });
+      
+    } catch (error) {
+      console.error('Error guardando señal:', error.message);
+    }
+  },
+
+  // Cargar historial de señales
+  async loadSignalHistory() {
+    if (!supabase) return [];
+    
+    try {
+      const { data, error } = await supabase
+        .from('signals')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(100);
+      
+      if (error) return [];
+      
+      return data.map(s => ({
+        id: s.id,
+        symbol: s.symbol,
+        symbolName: s.symbol_name,
+        direction: s.direction,
+        scoring: { score: s.score, classification: s.classification },
+        levels: s.levels,
+        sweep: { description: s.sweep_desc },
+        choch: { description: s.choch_desc },
+        orderBlock: { description: s.ob_desc },
+        operated: s.operated,
+        result: s.result,
+        notes: s.notes,
+        createdAt: s.created_at,
+        candles: { htf: JSON.parse(s.candles_snapshot || '[]') }
+      }));
+      
+    } catch (error) {
+      console.error('Error cargando señales:', error.message);
+      return [];
+    }
+  },
+
+  // Actualizar tracking de señal
+  async updateSignalTracking(id, operated, result, notes) {
+    if (!supabase) return;
+    
+    try {
+      await supabase
+        .from('signals')
+        .update({ operated, result, notes, updated_at: new Date().toISOString() })
+        .eq('id', id);
+    } catch (error) {
+      console.error('Error actualizando tracking:', error.message);
+    }
+  },
+
+  // Guardar estado
+  async saveState() {
+    if (!supabase) return;
+    
+    try {
+      const state = {
+        id: 'main_state',
+        daily_signals: JSON.stringify(Object.fromEntries(dailySignals)),
+        used_structures: JSON.stringify(Object.fromEntries(usedStructures)),
+        trading_stats: JSON.stringify(tradingStats),
+        ai_enabled: aiEnabled,
+        updated_at: new Date().toISOString()
+      };
+      
+      await supabase.from('app_state').upsert(state, { onConflict: 'id' });
+      
+    } catch (error) {
+      console.error('Error guardando estado:', error.message);
+    }
+  },
+
+  // Cargar estado
+  async loadState() {
+    if (!supabase) return;
+    
+    try {
+      const { data, error } = await supabase
+        .from('app_state')
+        .select('*')
+        .eq('id', 'main_state')
+        .single();
+      
+      if (error || !data) return;
+      
+      // Verificar si es del mismo día
+      const stateDate = new Date(data.updated_at).toDateString();
+      const today = new Date().toDateString();
+      
+      if (stateDate === today) {
+        // Restaurar contadores diarios
+        const ds = JSON.parse(data.daily_signals || '{}');
+        Object.entries(ds).forEach(([k, v]) => dailySignals.set(k, v));
+        
+        const us = JSON.parse(data.used_structures || '{}');
+        Object.entries(us).forEach(([k, v]) => usedStructures.set(k, v));
+        
+        aiEnabled = data.ai_enabled;
+        
+        console.log('✅ Estado restaurado desde Supabase');
+      } else {
+        console.log('📅 Nuevo día, estado reiniciado');
+      }
+      
+      // Restaurar stats generales
+      const stats = JSON.parse(data.trading_stats || '{}');
+      Object.assign(tradingStats, stats);
+      
+    } catch (error) {
+      console.error('Error cargando estado:', error.message);
+    }
+  },
+
+  // Inicializar tablas si no existen
+  async initTables() {
+    if (!supabase) return;
+    
+    console.log('📦 Verificando tablas en Supabase...');
+    
+    // Las tablas se crean manualmente o con migrations
+    // Aquí solo verificamos que existan
+    try {
+      await supabase.from('candle_data').select('key').limit(1);
+      console.log('✅ Tabla candle_data OK');
+    } catch {
+      console.log('⚠️ Tabla candle_data no existe - crear manualmente');
+    }
+    
+    try {
+      await supabase.from('signals').select('id').limit(1);
+      console.log('✅ Tabla signals OK');
+    } catch {
+      console.log('⚠️ Tabla signals no existe - crear manualmente');
+    }
+    
+    try {
+      await supabase.from('app_state').select('id').limit(1);
+      console.log('✅ Tabla app_state OK');
+    } catch {
+      console.log('⚠️ Tabla app_state no existe - crear manualmente');
+    }
   }
-}, 60000);
+};
 
 // =============================================
-// 🧠 ANALIZADOR SMC v7.1 (sin cambios)
+// 🔄 KEEP-ALIVE SYSTEM
+// =============================================
+const KeepAlive = {
+  interval: null,
+  
+  start() {
+    // Ping cada 4 minutos para evitar que Railway duerma el servicio
+    this.interval = setInterval(async () => {
+      try {
+        // Self-ping
+        await fetch(`${BACKEND_URL}/health`);
+        console.log(`💓 Keep-alive ping OK - ${new Date().toLocaleTimeString()}`);
+        
+        // Guardar estado periódicamente
+        await Persistence.saveState();
+        
+        // Guardar velas periódicamente
+        for (const [key, candles] of candleData.entries()) {
+          const [symbol, tf] = key.split('_');
+          await Persistence.saveCandles(symbol, tf, candles);
+        }
+        
+        lastActivity = Date.now();
+        
+      } catch (error) {
+        console.error('⚠️ Keep-alive error:', error.message);
+      }
+    }, 4 * 60 * 1000); // 4 minutos
+    
+    console.log('✅ Keep-alive iniciado (cada 4 min)');
+  },
+  
+  stop() {
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = null;
+    }
+  }
+};
+
+// =============================================
+// 🧠 ANALIZADOR SMC (Optimizado)
 // =============================================
 const SMCAnalyzer = {
+  
   findSwings(candles, length = 3) {
     const highs = [], lows = [];
     for (let i = length; i < candles.length - length; i++) {
@@ -109,14 +374,14 @@ const SMCAnalyzer = {
         if (candles[i].high <= candles[i - j].high || candles[i].high <= candles[i + j].high) isHigh = false;
         if (candles[i].low >= candles[i - j].low || candles[i].low >= candles[i + j].low) isLow = false;
       }
-      if (isHigh) highs.push({ index: i, price: candles[i].high, time: candles[i].time, candle: candles[i] });
-      if (isLow) lows.push({ index: i, price: candles[i].low, time: candles[i].time, candle: candles[i] });
+      if (isHigh) highs.push({ index: i, price: candles[i].high, time: candles[i].time });
+      if (isLow) lows.push({ index: i, price: candles[i].low, time: candles[i].time });
     }
     return { highs, lows };
   },
 
   detectLiquidity(candles, swings) {
-    const liquidity = { equalHighs: [], equalLows: [], inducements: [] };
+    const liquidity = { equalHighs: [], equalLows: [] };
     const recentHighs = swings.highs.slice(-5);
     const recentLows = swings.lows.slice(-5);
     const tolerance = 0.0003;
@@ -126,9 +391,7 @@ const SMCAnalyzer = {
         const diff = Math.abs(recentHighs[i].price - recentHighs[j].price) / recentHighs[i].price;
         if (diff <= tolerance && Math.abs(recentHighs[i].index - recentHighs[j].index) >= 3) {
           liquidity.equalHighs.push({
-            type: 'EQUAL_HIGHS', price: Math.max(recentHighs[i].price, recentHighs[j].price),
             level: (recentHighs[i].price + recentHighs[j].price) / 2,
-            points: [recentHighs[i], recentHighs[j]],
             age: candles.length - Math.max(recentHighs[i].index, recentHighs[j].index),
           });
         }
@@ -140,9 +403,7 @@ const SMCAnalyzer = {
         const diff = Math.abs(recentLows[i].price - recentLows[j].price) / recentLows[i].price;
         if (diff <= tolerance && Math.abs(recentLows[i].index - recentLows[j].index) >= 3) {
           liquidity.equalLows.push({
-            type: 'EQUAL_LOWS', price: Math.min(recentLows[i].price, recentLows[j].price),
             level: (recentLows[i].price + recentLows[j].price) / 2,
-            points: [recentLows[i], recentLows[j]],
             age: candles.length - Math.max(recentLows[i].index, recentLows[j].index),
           });
         }
@@ -152,7 +413,7 @@ const SMCAnalyzer = {
     return liquidity;
   },
 
-  detectSweep(candles, liquidity, swings) {
+  detectSweep(candles, liquidity) {
     if (!candles || candles.length < 10) return null;
     const recent = candles.slice(-6);
     const currentIndex = candles.length;
@@ -160,11 +421,11 @@ const SMCAnalyzer = {
     for (const eqHigh of liquidity.equalHighs) {
       if (eqHigh.age > 20) continue;
       for (let i = 0; i < recent.length; i++) {
-        const candle = recent[i];
-        const wickAbove = candle.high - Math.max(candle.open, candle.close);
-        const bodySize = Math.abs(candle.close - candle.open);
-        if (candle.high > eqHigh.level && candle.close < eqHigh.level && candle.open < eqHigh.level && wickAbove > bodySize * 0.3) {
-          return { type: 'SWEEP_HIGH', direction: 'BEARISH', level: eqHigh.level, sweepCandle: candle, sweepIndex: currentIndex - (recent.length - i), description: 'Sweep de EQH', valid: true };
+        const c = recent[i];
+        const wickAbove = c.high - Math.max(c.open, c.close);
+        const bodySize = Math.abs(c.close - c.open);
+        if (c.high > eqHigh.level && c.close < eqHigh.level && c.open < eqHigh.level && wickAbove > bodySize * 0.3) {
+          return { type: 'SWEEP_HIGH', direction: 'BEARISH', level: eqHigh.level, sweepIndex: currentIndex - (recent.length - i), description: 'Sweep EQH', valid: true };
         }
       }
     }
@@ -172,11 +433,11 @@ const SMCAnalyzer = {
     for (const eqLow of liquidity.equalLows) {
       if (eqLow.age > 20) continue;
       for (let i = 0; i < recent.length; i++) {
-        const candle = recent[i];
-        const wickBelow = Math.min(candle.open, candle.close) - candle.low;
-        const bodySize = Math.abs(candle.close - candle.open);
-        if (candle.low < eqLow.level && candle.close > eqLow.level && candle.open > eqLow.level && wickBelow > bodySize * 0.3) {
-          return { type: 'SWEEP_LOW', direction: 'BULLISH', level: eqLow.level, sweepCandle: candle, sweepIndex: currentIndex - (recent.length - i), description: 'Sweep de EQL', valid: true };
+        const c = recent[i];
+        const wickBelow = Math.min(c.open, c.close) - c.low;
+        const bodySize = Math.abs(c.close - c.open);
+        if (c.low < eqLow.level && c.close > eqLow.level && c.open > eqLow.level && wickBelow > bodySize * 0.3) {
+          return { type: 'SWEEP_LOW', direction: 'BULLISH', level: eqLow.level, sweepIndex: currentIndex - (recent.length - i), description: 'Sweep EQL', valid: true };
         }
       }
     }
@@ -185,30 +446,27 @@ const SMCAnalyzer = {
   },
 
   detectDisplacement(candles, sweep) {
-    if (!sweep || !sweep.valid || !candles || candles.length < 15) return null;
+    if (!sweep?.valid || !candles || candles.length < 15) return null;
     const sweepIndex = sweep.sweepIndex || candles.length - 5;
     const afterSweep = candles.slice(sweepIndex);
     if (afterSweep.length < 2) return null;
     
-    const lookbackStart = Math.max(0, sweepIndex - 20);
-    const lookbackEnd = Math.max(0, sweepIndex - 2);
-    const lookback = candles.slice(lookbackStart, lookbackEnd);
+    const lookback = candles.slice(Math.max(0, sweepIndex - 20), Math.max(0, sweepIndex - 2));
     if (lookback.length < 5) return null;
     
     const avgRange = lookback.reduce((sum, c) => sum + (c.high - c.low), 0) / lookback.length;
-    if (!avgRange || avgRange === 0 || isNaN(avgRange)) return null;
+    if (!avgRange || isNaN(avgRange)) return null;
     
     for (let i = 0; i < Math.min(afterSweep.length, 5); i++) {
-      const candle = afterSweep[i];
-      const candleRange = candle.high - candle.low;
-      const bodySize = Math.abs(candle.close - candle.open);
-      const isImpulsive = bodySize > candleRange * 0.6;
+      const c = afterSweep[i];
+      const candleRange = c.high - c.low;
+      const bodySize = Math.abs(c.close - c.open);
       const multiplier = candleRange / avgRange;
       
-      if (multiplier > 1.5 && isImpulsive) {
-        const isBullish = candle.close > candle.open;
+      if (multiplier > 1.5 && bodySize > candleRange * 0.6) {
+        const isBullish = c.close > c.open;
         if ((sweep.direction === 'BULLISH' && isBullish) || (sweep.direction === 'BEARISH' && !isBullish)) {
-          return { type: 'DISPLACEMENT', direction: sweep.direction, candle, index: sweepIndex + i, multiplier: multiplier.toFixed(2), description: `Displacement ${multiplier.toFixed(1)}x`, valid: true };
+          return { direction: sweep.direction, index: sweepIndex + i, multiplier: multiplier.toFixed(2), description: `Displacement ${multiplier.toFixed(1)}x`, valid: true };
         }
       }
     }
@@ -216,33 +474,31 @@ const SMCAnalyzer = {
   },
 
   detectCHoCH(candles, swings, sweep, displacement) {
-    if (!sweep || !sweep.valid || !displacement || !displacement.valid) return null;
+    if (!sweep?.valid || !displacement?.valid) return null;
     const { highs, lows } = swings;
     const displacementIndex = displacement.index;
     const afterDisplacement = candles.slice(displacementIndex);
     if (afterDisplacement.length < 2) return null;
     
     if (sweep.direction === 'BULLISH') {
-      const structuralHighs = highs.filter(h => h.index < displacementIndex).filter((h, i, arr) => i === 0 || Math.abs(h.index - arr[i-1].index) >= 3).slice(-3);
+      const structuralHighs = highs.filter(h => h.index < displacementIndex).slice(-3);
       const relevantHigh = structuralHighs.reduce((best, h) => (!best || h.price > best.price) ? h : best, null);
-      
       if (relevantHigh) {
         for (let i = 0; i < afterDisplacement.length; i++) {
           if (afterDisplacement[i].close > relevantHigh.price) {
-            return { id: `${sweep.sweepIndex}_${relevantHigh.price.toFixed(4)}`, type: 'CHoCH', direction: 'BULLISH', breakLevel: relevantHigh.price, breakIndex: displacementIndex + i, description: 'CHoCH Alcista', valid: true };
+            return { id: `${sweep.sweepIndex}_${relevantHigh.price}`, direction: 'BULLISH', breakLevel: relevantHigh.price, description: 'CHoCH Alcista', valid: true };
           }
         }
       }
     }
     
     if (sweep.direction === 'BEARISH') {
-      const structuralLows = lows.filter(l => l.index < displacementIndex).filter((l, i, arr) => i === 0 || Math.abs(l.index - arr[i-1].index) >= 3).slice(-3);
+      const structuralLows = lows.filter(l => l.index < displacementIndex).slice(-3);
       const relevantLow = structuralLows.reduce((best, l) => (!best || l.price < best.price) ? l : best, null);
-      
       if (relevantLow) {
         for (let i = 0; i < afterDisplacement.length; i++) {
           if (afterDisplacement[i].close < relevantLow.price) {
-            return { id: `${sweep.sweepIndex}_${relevantLow.price.toFixed(4)}`, type: 'CHoCH', direction: 'BEARISH', breakLevel: relevantLow.price, breakIndex: displacementIndex + i, description: 'CHoCH Bajista', valid: true };
+            return { id: `${sweep.sweepIndex}_${relevantLow.price}`, direction: 'BEARISH', breakLevel: relevantLow.price, description: 'CHoCH Bajista', valid: true };
           }
         }
       }
@@ -250,36 +506,26 @@ const SMCAnalyzer = {
     return null;
   },
 
-  findDecisionalOB(candles, choch, displacement) {
-    if (!choch || !choch.valid || !displacement) return null;
-    const displacementIndex = displacement.index;
-    const searchStart = Math.max(0, displacementIndex - 10);
-    const searchRange = candles.slice(searchStart, displacementIndex);
+  findOB(candles, choch, displacement) {
+    if (!choch?.valid || !displacement) return null;
+    const searchStart = Math.max(0, displacement.index - 10);
+    const searchRange = candles.slice(searchStart, displacement.index);
     
-    if (choch.direction === 'BULLISH') {
-      for (let i = searchRange.length - 1; i >= 0; i--) {
-        const candle = searchRange[i];
-        const isBearish = candle.close < candle.open;
-        const bodySize = Math.abs(candle.close - candle.open);
-        if (isBearish && bodySize > (candle.high - candle.low) * 0.4) {
-          const obIndex = searchStart + i;
-          const isMitigated = candles.slice(obIndex + 1).some(c => c.low <= candle.low);
-          if (!isMitigated) {
-            return { type: 'DECISIONAL', obType: 'DEMAND', high: candle.high, low: candle.low, mid: (candle.high + candle.low) / 2, index: obIndex, description: 'OB Demanda', valid: true };
-          }
+    for (let i = searchRange.length - 1; i >= 0; i--) {
+      const c = searchRange[i];
+      const bodySize = Math.abs(c.close - c.open);
+      
+      if (choch.direction === 'BULLISH' && c.close < c.open && bodySize > (c.high - c.low) * 0.4) {
+        const obIndex = searchStart + i;
+        if (!candles.slice(obIndex + 1).some(x => x.low <= c.low)) {
+          return { obType: 'DEMAND', high: c.high, low: c.low, description: 'OB Demanda', valid: true };
         }
       }
-    } else {
-      for (let i = searchRange.length - 1; i >= 0; i--) {
-        const candle = searchRange[i];
-        const isBullish = candle.close > candle.open;
-        const bodySize = Math.abs(candle.close - candle.open);
-        if (isBullish && bodySize > (candle.high - candle.low) * 0.4) {
-          const obIndex = searchStart + i;
-          const isMitigated = candles.slice(obIndex + 1).some(c => c.high >= candle.high);
-          if (!isMitigated) {
-            return { type: 'DECISIONAL', obType: 'SUPPLY', high: candle.high, low: candle.low, mid: (candle.high + candle.low) / 2, index: obIndex, description: 'OB Oferta', valid: true };
-          }
+      
+      if (choch.direction === 'BEARISH' && c.close > c.open && bodySize > (c.high - c.low) * 0.4) {
+        const obIndex = searchStart + i;
+        if (!candles.slice(obIndex + 1).some(x => x.high >= c.high)) {
+          return { obType: 'SUPPLY', high: c.high, low: c.low, description: 'OB Oferta', valid: true };
         }
       }
     }
@@ -302,10 +548,8 @@ const SMCAnalyzer = {
           const isMicroCHoCH = curr.close > prev.high && curr.close > curr.open;
           const wickBelow = Math.min(curr.open, curr.close) - curr.low;
           const isRejection = wickBelow > Math.abs(curr.close - curr.open) * 2 && curr.close > curr.open;
-          const sweepAndClose = curr.low < prev.low && curr.close > prev.close;
-          
-          if (isMicroCHoCH || isRejection || sweepAndClose) {
-            return { type: 'LTF_CONFIRMATION', confirmationType: isMicroCHoCH ? 'MICRO_CHOCH' : isRejection ? 'REJECTION' : 'SWEEP_CLOSE', direction: 'BULLISH', entryPrice: curr.close, inZone: true, description: 'Confirmación alcista', valid: true };
+          if (isMicroCHoCH || isRejection) {
+            return { confirmationType: isMicroCHoCH ? 'MICRO_CHOCH' : 'REJECTION', direction: 'BULLISH', entryPrice: curr.close, valid: true };
           }
         }
         
@@ -313,23 +557,20 @@ const SMCAnalyzer = {
           const isMicroCHoCH = curr.close < prev.low && curr.close < curr.open;
           const wickAbove = curr.high - Math.max(curr.open, curr.close);
           const isRejection = wickAbove > Math.abs(curr.close - curr.open) * 2 && curr.close < curr.open;
-          const sweepAndClose = curr.high > prev.high && curr.close < prev.close;
-          
-          if (isMicroCHoCH || isRejection || sweepAndClose) {
-            return { type: 'LTF_CONFIRMATION', confirmationType: isMicroCHoCH ? 'MICRO_CHOCH' : isRejection ? 'REJECTION' : 'SWEEP_CLOSE', direction: 'BEARISH', entryPrice: curr.close, inZone: true, description: 'Confirmación bajista', valid: true };
+          if (isMicroCHoCH || isRejection) {
+            return { confirmationType: isMicroCHoCH ? 'MICRO_CHOCH' : 'REJECTION', direction: 'BEARISH', entryPrice: curr.close, valid: true };
           }
         }
       }
     }
     
-    return { type: 'WAITING', direction, currentPrice, inZone: inOBZone, description: inOBZone ? 'En zona - esperando confirmación' : 'Esperando precio en OB', valid: false };
+    return { inZone: inOBZone, valid: false };
   },
 
   calculateLevels(ob, direction) {
     if (!ob) return null;
-    let entry, stopLoss;
-    if (direction === 'BULLISH') { entry = ob.high; stopLoss = ob.low - ((ob.high - ob.low) * 0.3); }
-    else { entry = ob.low; stopLoss = ob.high + ((ob.high - ob.low) * 0.3); }
+    const entry = direction === 'BULLISH' ? ob.high : ob.low;
+    const stopLoss = direction === 'BULLISH' ? ob.low - (ob.high - ob.low) * 0.3 : ob.high + (ob.high - ob.low) * 0.3;
     const risk = Math.abs(entry - stopLoss);
     
     return {
@@ -338,25 +579,23 @@ const SMCAnalyzer = {
       tp2: (direction === 'BULLISH' ? entry + risk * 3 : entry - risk * 3).toFixed(4),
       tp3: (direction === 'BULLISH' ? entry + risk * 5 : entry - risk * 5).toFixed(4),
       tp4: (direction === 'BULLISH' ? entry + risk * 10 : entry - risk * 10).toFixed(4),
-      risk: risk.toFixed(4), ratios: '1:2 | 1:3 | 1:5 | 1:10'
     };
   },
 
-  calculateScore(analysis) {
+  calculateScore(a) {
     let score = 0;
-    const breakdown = {};
-    if (analysis.liquidity?.equalHighs?.length > 0 || analysis.liquidity?.equalLows?.length > 0) { score += 20; breakdown.liquidity = 20; }
-    if (analysis.sweep?.valid) { score += 25; breakdown.sweep = 25; }
-    if (analysis.displacement?.valid) { const pts = Math.min(20, Math.floor(parseFloat(analysis.displacement.multiplier) * 8)); score += pts; breakdown.displacement = pts; }
-    if (analysis.choch?.valid) { score += 20; breakdown.choch = 20; }
-    if (analysis.orderBlock?.valid) { score += 15; breakdown.orderBlock = 15; }
+    if (a.liquidity?.equalHighs?.length > 0 || a.liquidity?.equalLows?.length > 0) score += 20;
+    if (a.sweep?.valid) score += 25;
+    if (a.displacement?.valid) score += Math.min(20, Math.floor(parseFloat(a.displacement.multiplier) * 8));
+    if (a.choch?.valid) score += 20;
+    if (a.orderBlock?.valid) score += 15;
     
-    let classification = 'INVALID';
-    if (score >= 90) classification = 'A+';
-    else if (score >= 75) classification = 'A';
-    else if (score >= 60) classification = 'B';
-    
-    return { score, classification, breakdown, isValid: score >= 75, canAutomate: score >= 90 };
+    return {
+      score,
+      classification: score >= 90 ? 'A+' : score >= 75 ? 'A' : score >= 60 ? 'B' : 'INVALID',
+      isValid: score >= 75,
+      canAutomate: score >= 90
+    };
   },
 
   analyze(symbol) {
@@ -366,31 +605,36 @@ const SMCAnalyzer = {
     const candlesHTF = candleData.get(`${symbol}_${TF_HTF}`) || [];
     const candlesLTF = candleData.get(`${symbol}_${TF_LTF}`) || [];
     
-    if (candlesHTF.length < 50) return { symbol, symbolName: config.name, error: 'Cargando...', status: 'LOADING' };
+    if (candlesHTF.length < 50) {
+      return { symbol, symbolName: config.name, status: 'LOADING', dataCount: candlesHTF.length };
+    }
     
     const currentPrice = candlesHTF[candlesHTF.length - 1]?.close;
     const swings = this.findSwings(candlesHTF);
     const liquidity = this.detectLiquidity(candlesHTF, swings);
-    const sweep = this.detectSweep(candlesHTF, liquidity, swings);
+    const sweep = this.detectSweep(candlesHTF, liquidity);
     const displacement = this.detectDisplacement(candlesHTF, sweep);
     const choch = this.detectCHoCH(candlesHTF, swings, sweep, displacement);
-    const orderBlock = this.findDecisionalOB(candlesHTF, choch, displacement);
+    const orderBlock = this.findOB(candlesHTF, choch, displacement);
     const ltfEntry = orderBlock && choch ? this.checkLTFEntry(candlesLTF, orderBlock, choch.direction) : null;
     
     const scoring = this.calculateScore({ liquidity, sweep, displacement, choch, orderBlock });
     const levels = orderBlock && choch ? this.calculateLevels(orderBlock, choch.direction) : null;
     
-    let structureUsed = choch?.id ? usedStructures.has(choch.id) : false;
+    const structureUsed = choch?.id ? usedStructures.has(choch.id) : false;
     
     let status = 'BUSCANDO', waiting = [], hasSignal = false;
-    if (!liquidity.equalHighs.length && !liquidity.equalLows.length) { status = 'SIN_LIQUIDEZ'; waiting.push('Buscando Equal Highs/Lows'); }
-    else if (!sweep?.valid) { status = 'ESPERANDO_SWEEP'; waiting.push('Liquidez detectada - Esperando sweep'); }
-    else if (!displacement?.valid) { status = 'ESPERANDO_DISPLACEMENT'; waiting.push('Sweep OK - Esperando desplazamiento'); }
-    else if (!choch?.valid) { status = 'ESPERANDO_CHOCH'; waiting.push('Displacement OK - Esperando CHoCH'); }
-    else if (!orderBlock?.valid) { status = 'BUSCANDO_OB'; waiting.push('CHoCH OK - Buscando OB'); }
-    else if (structureUsed) { status = 'ESTRUCTURA_USADA'; waiting.push('Ya operamos este CHoCH'); }
-    else if (!ltfEntry?.valid) { status = 'ESPERANDO_ENTRADA'; waiting.push('OB listo - Esperando confirmación 1M'); }
+    if (!liquidity.equalHighs.length && !liquidity.equalLows.length) { status = 'SIN_LIQUIDEZ'; waiting.push('Buscando liquidez'); }
+    else if (!sweep?.valid) { status = 'ESPERANDO_SWEEP'; waiting.push('Esperando sweep'); }
+    else if (!displacement?.valid) { status = 'ESPERANDO_DISPLACEMENT'; waiting.push('Esperando displacement'); }
+    else if (!choch?.valid) { status = 'ESPERANDO_CHOCH'; waiting.push('Esperando CHoCH'); }
+    else if (!orderBlock?.valid) { status = 'BUSCANDO_OB'; waiting.push('Buscando OB'); }
+    else if (structureUsed) { status = 'ESTRUCTURA_USADA'; waiting.push('Estructura ya usada'); }
+    else if (!ltfEntry?.valid) { status = 'ESPERANDO_ENTRADA'; waiting.push('Esperando entrada 1M'); }
     else { status = 'SEÑAL_ACTIVA'; hasSignal = scoring.isValid && !structureUsed; }
+    
+    // Guardar en cache
+    analysisCache.set(symbol, { timestamp: Date.now(), status, hasSignal });
     
     return {
       symbol, symbolName: config.name, currentPrice,
@@ -409,276 +653,22 @@ const SMCAnalyzer = {
 };
 
 // =============================================
-// 🧠 PSICOTRADING IA
-// =============================================
-const PsychoTrading = {
-  
-  // Analizar estado emocional basado en historial
-  analyzeEmotionalState() {
-    const recentTrades = signalHistory.slice(0, 10);
-    const operated = recentTrades.filter(s => s.operated);
-    const wins = operated.filter(s => s.result === 'WIN').length;
-    const losses = operated.filter(s => s.result === 'LOSS').length;
-    
-    let emotionalState = 'NEUTRAL';
-    let riskLevel = 'NORMAL';
-    let recommendations = [];
-    
-    // Detectar racha perdedora
-    if (tradingStats.streaks.currentLoss >= 3) {
-      emotionalState = 'TILT';
-      riskLevel = 'HIGH';
-      recommendations.push('⚠️ Llevas 3+ pérdidas seguidas. Considera pausar.');
-      recommendations.push('🧘 Respira profundo. Una pausa de 30 min puede salvar tu cuenta.');
-    }
-    
-    // Detectar overtrading
-    const todayTrades = operated.filter(s => {
-      const d = new Date(s.createdAt);
-      const today = new Date();
-      return d.toDateString() === today.toDateString();
-    });
-    
-    if (todayTrades.length >= 5) {
-      emotionalState = 'OVERTRADING';
-      riskLevel = 'HIGH';
-      recommendations.push('🛑 Ya operaste 5+ veces hoy. ¿Estás siguiendo tu plan?');
-    }
-    
-    // Detectar revenge trading
-    const last3 = operated.slice(0, 3);
-    if (last3.length >= 2 && last3.every(s => s.result === 'LOSS')) {
-      const timeDiff = last3.length >= 2 ? 
-        (new Date(last3[0].operatedAt) - new Date(last3[1].operatedAt)) / 1000 / 60 : 999;
-      if (timeDiff < 10) {
-        emotionalState = 'REVENGE_TRADING';
-        riskLevel = 'CRITICAL';
-        recommendations.push('🚨 ALERTA: Posible revenge trading detectado.');
-        recommendations.push('🛑 PARA. No operes por al menos 1 hora.');
-      }
-    }
-    
-    // Detectar buen momento
-    if (tradingStats.streaks.currentWin >= 3) {
-      emotionalState = 'CONFIDENT';
-      riskLevel = 'MODERATE';
-      recommendations.push('✅ Buena racha! Pero no te confíes.');
-      recommendations.push('📏 Mantén tu tamaño de posición. No aumentes el riesgo.');
-    }
-    
-    return {
-      emotionalState,
-      riskLevel,
-      recommendations,
-      stats: {
-        currentWinStreak: tradingStats.streaks.currentWin,
-        currentLossStreak: tradingStats.streaks.currentLoss,
-        todayTrades: todayTrades.length,
-        winRate: operated.length > 0 ? ((wins / operated.length) * 100).toFixed(1) : 0
-      }
-    };
-  },
-
-  // Generar coaching personalizado con IA
-  async getCoaching(userMessage, context = {}) {
-    if (!openai) return { response: 'IA no disponible', type: 'error' };
-    
-    const emotionalState = this.analyzeEmotionalState();
-    const stats = getDetailedStats();
-    
-    const systemPrompt = `Eres un coach de psicotrading experto y empático. Tu trabajo es ayudar a traders a:
-1. Mantener disciplina y seguir su plan
-2. Manejar emociones (miedo, codicia, frustración)
-3. Evitar errores comunes (revenge trading, overtrading, FOMO)
-4. Desarrollar mentalidad ganadora
-
-CONTEXTO DEL TRADER:
-- Estado emocional detectado: ${emotionalState.emotionalState}
-- Nivel de riesgo: ${emotionalState.riskLevel}
-- Win rate: ${stats.winRate}%
-- Racha actual: ${emotionalState.stats.currentWinStreak} wins / ${emotionalState.stats.currentLossStreak} losses
-- Trades hoy: ${emotionalState.stats.todayTrades}
-- Total operados: ${stats.totalOperated}
-
-REGLAS:
-- Sé directo pero empático
-- Da consejos ESPECÍFICOS y accionables
-- Si detectas peligro (tilt, revenge), sé firme
-- Usa emojis con moderación
-- Respuestas cortas (máx 150 palabras)
-- En español`;
-
-    try {
-      const response = await openai.chat.completions.create({
-        model: 'gpt-4o',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userMessage }
-        ],
-        max_tokens: 300,
-      });
-      
-      return {
-        response: response.choices[0]?.message?.content || 'Sin respuesta',
-        emotionalState,
-        type: 'coaching'
-      };
-    } catch (error) {
-      return { response: 'Error al procesar', type: 'error' };
-    }
-  },
-
-  // Plan de trading personalizado
-  async generateTradingPlan(preferences) {
-    if (!openai) return { error: 'IA no disponible' };
-    
-    const prompt = `Genera un PLAN DE TRADING personalizado basado en:
-- Capital: ${preferences.capital || 'No especificado'}
-- Riesgo por trade: ${preferences.riskPerTrade || '1-2%'}
-- Horario disponible: ${preferences.schedule || 'Flexible'}
-- Experiencia: ${preferences.experience || 'Intermedio'}
-- Objetivo mensual: ${preferences.monthlyGoal || '10%'}
-
-Incluye:
-1. Reglas de entrada (máx 5)
-2. Reglas de gestión de riesgo
-3. Límites diarios (pérdidas/operaciones)
-4. Rutina pre-mercado
-5. Checklist antes de cada trade
-
-Formato estructurado, claro y accionable.`;
-
-    try {
-      const response = await openai.chat.completions.create({
-        model: 'gpt-4o',
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 800,
-      });
-      
-      return { plan: response.choices[0]?.message?.content, generatedAt: new Date().toISOString() };
-    } catch {
-      return { error: 'Error generando plan' };
-    }
-  },
-
-  // Análisis post-trade
-  async analyzePostTrade(signal, result, notes) {
-    if (!openai) return { analysis: 'IA no disponible' };
-    
-    const prompt = `Analiza este trade:
-SEÑAL:
-- Símbolo: ${signal.symbolName}
-- Dirección: ${signal.direction}
-- Score: ${signal.scoring?.score}/100
-- Setup: Sweep ${signal.sweep?.type} → ${signal.choch?.description} → ${signal.orderBlock?.description}
-
-RESULTADO: ${result}
-NOTAS DEL TRADER: ${notes || 'Sin notas'}
-
-Proporciona:
-1. ¿Qué se hizo bien?
-2. ¿Qué se pudo mejorar?
-3. Lección clave para recordar
-4. Calificación de ejecución (1-10)
-
-Sé constructivo y específico.`;
-
-    try {
-      const response = await openai.chat.completions.create({
-        model: 'gpt-4o',
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 400,
-      });
-      
-      return { analysis: response.choices[0]?.message?.content };
-    } catch {
-      return { analysis: 'Error en análisis' };
-    }
-  }
-};
-
-// =============================================
-// 📊 ESTADÍSTICAS DETALLADAS
-// =============================================
-function getDetailedStats() {
-  const operated = signalHistory.filter(s => s.operated);
-  const wins = operated.filter(s => s.result === 'WIN');
-  const losses = operated.filter(s => s.result === 'LOSS');
-  
-  // Por símbolo
-  const bySymbol = {};
-  Object.keys(SYNTHETIC_INDICES).forEach(sym => {
-    const symSignals = operated.filter(s => s.symbol === sym);
-    const symWins = symSignals.filter(s => s.result === 'WIN');
-    bySymbol[sym] = {
-      total: symSignals.length,
-      wins: symWins.length,
-      losses: symSignals.length - symWins.length,
-      winRate: symSignals.length > 0 ? ((symWins.length / symSignals.length) * 100).toFixed(1) : 0
-    };
-  });
-  
-  // Por tipo de entrada
-  const byEntryType = {};
-  operated.forEach(s => {
-    const type = s.ltfEntry?.confirmationType || 'UNKNOWN';
-    if (!byEntryType[type]) byEntryType[type] = { total: 0, wins: 0 };
-    byEntryType[type].total++;
-    if (s.result === 'WIN') byEntryType[type].wins++;
-  });
-  
-  // Mejor día/hora
-  const byHour = {};
-  operated.forEach(s => {
-    const hour = new Date(s.createdAt).getHours();
-    if (!byHour[hour]) byHour[hour] = { total: 0, wins: 0 };
-    byHour[hour].total++;
-    if (s.result === 'WIN') byHour[hour].wins++;
-  });
-  
-  return {
-    totalSignals: signalHistory.length,
-    totalOperated: operated.length,
-    totalSkipped: signalHistory.length - operated.length,
-    wins: wins.length,
-    losses: losses.length,
-    winRate: operated.length > 0 ? ((wins.length / operated.length) * 100).toFixed(1) : 0,
-    bySymbol,
-    byEntryType,
-    byHour,
-    streaks: tradingStats.streaks,
-    bestSymbol: Object.entries(bySymbol).sort((a, b) => parseFloat(b[1].winRate) - parseFloat(a[1].winRate))[0]?.[0] || 'N/A',
-    worstSymbol: Object.entries(bySymbol).filter(([_, v]) => v.total > 0).sort((a, b) => parseFloat(a[1].winRate) - parseFloat(b[1].winRate))[0]?.[0] || 'N/A'
-  };
-}
-
-// =============================================
 // NARRACIÓN IA
 // =============================================
 async function generateNarration(analysis) {
   if (!aiEnabled || !openai || !analysis || analysis.error) {
-    return { text: analysis?.error || 'IA desactivada', waiting: analysis?.waiting || [], aiEnabled };
+    return { text: analysis?.error || 'Analizando...', waiting: analysis?.waiting || [] };
   }
-
-  const prompt = `Narra brevemente (2-3 oraciones) el estado SMC de ${analysis.symbolName}:
-- Liquidez: ${analysis.liquidity?.equalHighs?.length || 0} EQH, ${analysis.liquidity?.equalLows?.length || 0} EQL
-- Sweep: ${analysis.sweep?.valid ? 'SÍ' : 'NO'}
-- Displacement: ${analysis.displacement?.valid ? `${analysis.displacement.multiplier}x` : 'NO'}
-- CHoCH: ${analysis.choch?.valid ? analysis.choch.direction : 'NO'}
-- OB: ${analysis.orderBlock?.valid ? analysis.orderBlock.obType : 'NO'}
-- Estado: ${analysis.status}
-
-Habla como trader profesional SMC.`;
 
   try {
     const res = await openai.chat.completions.create({
       model: 'gpt-4o',
-      messages: [{ role: 'user', content: prompt }],
-      max_tokens: 120,
+      messages: [{ role: 'user', content: `Narra en 2 oraciones el estado SMC de ${analysis.symbolName}: Liquidez ${analysis.liquidity?.equalHighs?.length || 0} EQH/${analysis.liquidity?.equalLows?.length || 0} EQL, Sweep ${analysis.sweep?.valid ? 'SÍ' : 'NO'}, CHoCH ${analysis.choch?.valid ? analysis.choch.direction : 'NO'}, Estado ${analysis.status}. Habla como trader SMC.` }],
+      max_tokens: 100,
     });
-    return { text: res.choices[0]?.message?.content || 'Analizando...', waiting: analysis.waiting, aiEnabled };
+    return { text: res.choices[0]?.message?.content || 'Analizando...', waiting: analysis.waiting };
   } catch {
-    return { text: 'Error IA', waiting: analysis.waiting, aiEnabled };
+    return { text: 'Analizando mercado...', waiting: analysis.waiting };
   }
 }
 
@@ -686,16 +676,11 @@ Habla como trader profesional SMC.`;
 // WHATSAPP
 // =============================================
 async function sendWhatsApp(signal) {
-  console.log('📱 Enviando WhatsApp via TextMeBot...');
   if (!CALLMEBOT_API_KEY) return false;
   
-  const msg = `🎯 *SMC ELITE v7.2*
+  const msg = `🎯 *SMC v7.3*
 📊 ${signal.symbolName || 'Test'}
 ${signal.direction === 'BULLISH' ? '🟢 COMPRA' : '🔴 VENTA'}
-
-✅ Sweep: ${signal.sweep?.description || 'N/A'}
-✅ CHoCH: ${signal.choch?.description || 'N/A'}
-✅ OB: ${signal.orderBlock?.description || 'N/A'}
 
 📍 Entry: ${signal.levels?.entry || 'N/A'}
 🛑 SL: ${signal.levels?.stopLoss || 'N/A'}
@@ -704,80 +689,164 @@ ${signal.direction === 'BULLISH' ? '🟢 COMPRA' : '🔴 VENTA'}
 
 🏆 Score: ${signal.scoring?.score || 0}/100`;
 
-  const url = `https://api.textmebot.com/send.php?recipient=${WHATSAPP_PHONE}&apikey=${CALLMEBOT_API_KEY}&text=${encodeURIComponent(msg)}`;
-
   try {
-    const response = await fetch(url);
-    const text = await response.text();
-    console.log('📱 Response:', text.substring(0, 100));
-    return response.ok;
-  } catch (error) {
-    console.error('❌ WhatsApp Error:', error.message);
+    await fetch(`https://api.textmebot.com/send.php?recipient=${WHATSAPP_PHONE}&apikey=${CALLMEBOT_API_KEY}&text=${encodeURIComponent(msg)}`);
+    console.log('📱 WhatsApp enviado');
+    return true;
+  } catch (e) {
+    console.error('❌ WhatsApp error:', e.message);
     return false;
   }
 }
 
 // =============================================
-// DERIV WEBSOCKET
+// DERIV WEBSOCKET (Robusto)
 // =============================================
 function connectDeriv() {
-  console.log('🔌 Conectando a Deriv...');
-  derivWs = new WebSocket(`${DERIV_WS_URL}?app_id=${DERIV_APP_ID}`);
+  if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+    console.error('❌ Máximo de reconexiones alcanzado');
+    setTimeout(() => {
+      reconnectAttempts = 0;
+      connectDeriv();
+    }, 60000); // Esperar 1 minuto antes de reintentar
+    return;
+  }
+  
+  console.log(`🔌 Conectando a Deriv... (intento ${reconnectAttempts + 1})`);
+  
+  try {
+    derivWs = new WebSocket(`${DERIV_WS_URL}?app_id=${DERIV_APP_ID}`);
+  } catch (e) {
+    console.error('Error creando WebSocket:', e.message);
+    reconnectAttempts++;
+    setTimeout(connectDeriv, 5000);
+    return;
+  }
 
-  derivWs.on('open', () => {
-    console.log('✅ Conectado');
+  derivWs.on('open', async () => {
+    console.log('✅ Conectado a Deriv');
     isDerivConnected = true;
-    if (DERIV_API_TOKEN) derivWs.send(JSON.stringify({ authorize: DERIV_API_TOKEN }));
+    reconnectAttempts = 0;
+    lastActivity = Date.now();
+    
+    if (DERIV_API_TOKEN) {
+      derivWs.send(JSON.stringify({ authorize: DERIV_API_TOKEN }));
+    }
 
-    Object.keys(SYNTHETIC_INDICES).forEach(symbol => {
+    // Suscribir a símbolos
+    for (const symbol of Object.keys(SYNTHETIC_INDICES)) {
       derivWs.send(JSON.stringify({ ticks: symbol, subscribe: 1 }));
-      [TF_LTF, TF_HTF].forEach(g => {
-        derivWs.send(JSON.stringify({ ticks_history: symbol, adjust_start_time: 1, count: 200, end: 'latest', granularity: g, style: 'candles', subscribe: 1 }));
-      });
-    });
+      
+      for (const tf of [TF_LTF, TF_HTF]) {
+        // Intentar cargar velas desde Supabase primero
+        const savedCandles = await Persistence.loadCandles(symbol, tf);
+        if (savedCandles && savedCandles.length > 100) {
+          candleData.set(`${symbol}_${tf}`, savedCandles);
+          console.log(`📦 ${symbol}_${tf}: ${savedCandles.length} velas desde Supabase`);
+        }
+        
+        // Suscribir a nuevas velas
+        derivWs.send(JSON.stringify({
+          ticks_history: symbol,
+          adjust_start_time: 1,
+          count: 200,
+          end: 'latest',
+          granularity: tf,
+          style: 'candles',
+          subscribe: 1,
+        }));
+      }
+    }
   });
 
   derivWs.on('message', async (data) => {
     try {
       const msg = JSON.parse(data.toString());
-      if (msg.error) return;
-
-      if (msg.tick) {
-        const { symbol, quote, epoch } = msg.tick;
-        if (!tickData.has(symbol)) tickData.set(symbol, []);
-        tickData.get(symbol).push({ time: epoch, price: parseFloat(quote) });
-        if (tickData.get(symbol).length > 200) tickData.get(symbol).shift();
+      lastActivity = Date.now();
+      
+      if (msg.error) {
+        console.error('Deriv error:', msg.error.message);
+        return;
       }
 
       if (msg.ohlc) {
         const { symbol, granularity, open_time, open, high, low, close } = msg.ohlc;
         const key = `${symbol}_${granularity}`;
+        
         if (!candleData.has(key)) candleData.set(key, []);
         const candles = candleData.get(key);
-        const newCandle = { time: open_time, open: parseFloat(open), high: parseFloat(high), low: parseFloat(low), close: parseFloat(close) };
+        const newCandle = {
+          time: open_time,
+          open: parseFloat(open),
+          high: parseFloat(high),
+          low: parseFloat(low),
+          close: parseFloat(close)
+        };
 
         if (candles.length > 0 && candles[candles.length - 1].time === newCandle.time) {
           candles[candles.length - 1] = newCandle;
         } else {
           candles.push(newCandle);
-          if (granularity === TF_HTF) await checkSignal(symbol);
+          
+          // Nueva vela HTF = analizar
+          if (granularity === TF_HTF) {
+            await checkSignal(symbol);
+            // Guardar velas periódicamente
+            if (candles.length % 10 === 0) {
+              await Persistence.saveCandles(symbol, granularity, candles);
+            }
+          }
         }
+        
         if (candles.length > 300) candles.shift();
       }
 
       if (msg.candles) {
         const symbol = msg.echo_req?.ticks_history;
         const granularity = msg.echo_req?.granularity;
-        candleData.set(`${symbol}_${granularity}`, msg.candles.map(c => ({
-          time: c.epoch, open: parseFloat(c.open), high: parseFloat(c.high), low: parseFloat(c.low), close: parseFloat(c.close)
-        })));
-        console.log(`✅ ${SYNTHETIC_INDICES[symbol]?.name} ${granularity === TF_HTF ? '5M' : '1M'}: ${msg.candles.length} velas`);
+        const key = `${symbol}_${granularity}`;
+        
+        const existingCandles = candleData.get(key) || [];
+        const newCandles = msg.candles.map(c => ({
+          time: c.epoch,
+          open: parseFloat(c.open),
+          high: parseFloat(c.high),
+          low: parseFloat(c.low),
+          close: parseFloat(c.close)
+        }));
+        
+        // Merge: usar existentes si son más recientes
+        if (existingCandles.length > 0 && existingCandles[existingCandles.length - 1].time > newCandles[newCandles.length - 1].time) {
+          // Existentes son más recientes, mantener
+          console.log(`✅ ${SYNTHETIC_INDICES[symbol]?.name} ${granularity === TF_HTF ? '5M' : '1M'}: ${existingCandles.length} velas (preservadas)`);
+        } else {
+          candleData.set(key, newCandles);
+          console.log(`✅ ${SYNTHETIC_INDICES[symbol]?.name} ${granularity === TF_HTF ? '5M' : '1M'}: ${newCandles.length} velas (nuevas)`);
+          await Persistence.saveCandles(symbol, granularity, newCandles);
+        }
       }
-    } catch {}
+    } catch (e) {
+      console.error('Error procesando mensaje:', e.message);
+    }
   });
 
-  derivWs.on('close', () => { isDerivConnected = false; setTimeout(connectDeriv, 5000); });
-  derivWs.on('error', () => {});
+  derivWs.on('close', () => {
+    console.log('⚠️ Desconectado de Deriv');
+    isDerivConnected = false;
+    reconnectAttempts++;
+    setTimeout(connectDeriv, 3000 + reconnectAttempts * 1000);
+  });
+
+  derivWs.on('error', (e) => {
+    console.error('WebSocket error:', e.message);
+  });
+  
+  // Ping periódico para mantener conexión
+  setInterval(() => {
+    if (derivWs && derivWs.readyState === WebSocket.OPEN) {
+      derivWs.send(JSON.stringify({ ping: 1 }));
+    }
+  }, 30000);
 }
 
 async function checkSignal(symbol) {
@@ -788,17 +857,14 @@ async function checkSignal(symbol) {
   
   if (analysis.hasSignal && analysis.scoring?.canAutomate && !analysis.structureUsed) {
     const signalId = `${symbol}_${Date.now()}`;
-    const signal = { 
-      id: signalId, ...analysis, 
-      dailyCount: count + 1, 
+    const signal = {
+      id: signalId,
+      ...analysis,
+      dailyCount: count + 1,
       createdAt: new Date().toISOString(),
-      // Tracking fields
       operated: false,
-      result: null, // 'WIN', 'LOSS', null
-      operatedAt: null,
-      notes: '',
-      exitPrice: null,
-      pnl: null
+      result: null,
+      notes: ''
     };
     
     if (analysis.choch?.id) usedStructures.set(analysis.choch.id, true);
@@ -810,11 +876,15 @@ async function checkSignal(symbol) {
     tradingStats.totalSignals++;
 
     console.log(`🎯 SEÑAL A+ #${count + 1}/7: ${analysis.direction} ${analysis.symbolName}`);
+    
+    // Guardar señal en Supabase
+    await Persistence.saveSignal(signal);
+    await Persistence.saveState();
+    
+    // Enviar WhatsApp
     await sendWhatsApp(signal);
   }
 }
-
-connectDeriv();
 
 // =============================================
 // MIDDLEWARE & RUTAS
@@ -823,21 +893,45 @@ app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '10mb' }));
 
-app.get('/', (req, res) => res.json({ status: 'ok', version: '7.2', features: ['SMC', 'Psicotrading', 'Tracking'], deriv: isDerivConnected }));
-app.get('/health', (req, res) => res.json({ status: 'healthy', deriv: isDerivConnected }));
+// Health check
+app.get('/', (req, res) => {
+  res.json({
+    status: 'ok',
+    version: '7.3',
+    deriv: isDerivConnected,
+    uptime: Math.floor((Date.now() - lastActivity) / 1000 / 60) + ' min since last activity',
+    candleCount: Object.fromEntries([...candleData.entries()].map(([k, v]) => [k, v.length])),
+    supabase: !!supabase
+  });
+});
+
+app.get('/health', (req, res) => {
+  lastActivity = Date.now();
+  res.json({ status: 'healthy', deriv: isDerivConnected, timestamp: new Date().toISOString() });
+});
 
 // Deriv
 app.get('/api/deriv/symbols', (req, res) => res.json(SYNTHETIC_INDICES));
-app.get('/api/deriv/status', (req, res) => res.json({ connected: isDerivConnected }));
-app.get('/api/analyze/:symbol', (req, res) => res.json(SMCAnalyzer.analyze(req.params.symbol)));
+app.get('/api/deriv/status', (req, res) => res.json({ connected: isDerivConnected, reconnectAttempts }));
+
+// Análisis
+app.get('/api/analyze/:symbol', (req, res) => {
+  res.json(SMCAnalyzer.analyze(req.params.symbol));
+});
+
 app.get('/api/narration/:symbol', async (req, res) => {
   const analysis = SMCAnalyzer.analyze(req.params.symbol);
   const narration = await generateNarration(analysis);
-  res.json(narration);
+  res.json({ ...narration, aiEnabled });
 });
 
 // IA Toggle
-app.post('/api/ai/toggle', (req, res) => { aiEnabled = !aiEnabled; res.json({ aiEnabled }); });
+app.post('/api/ai/toggle', (req, res) => {
+  aiEnabled = !aiEnabled;
+  Persistence.saveState();
+  res.json({ aiEnabled });
+});
+
 app.get('/api/ai/status', (req, res) => res.json({ aiEnabled }));
 
 // Señales
@@ -847,147 +941,158 @@ app.get('/api/signals/:id', (req, res) => {
   const signal = signalHistory.find(s => s.id === req.params.id);
   res.json(signal || { error: 'No encontrada' });
 });
+
 app.get('/api/signals/daily-count', (req, res) => {
   const counts = {};
   Object.keys(SYNTHETIC_INDICES).forEach(s => counts[s] = dailySignals.get(s) || 0);
   res.json(counts);
 });
 
-// =============================================
-// 📊 TRACKING DE SEÑALES
-// =============================================
-app.post('/api/signals/:id/track', (req, res) => {
+// Tracking
+app.post('/api/signals/:id/track', async (req, res) => {
   const { id } = req.params;
-  const { operated, result, notes, exitPrice } = req.body;
+  const { operated, result, notes } = req.body;
   
   const signal = signalHistory.find(s => s.id === id);
-  if (!signal) return res.status(404).json({ error: 'Señal no encontrada' });
+  if (!signal) return res.status(404).json({ error: 'No encontrada' });
   
-  // Actualizar señal
   signal.operated = operated;
-  signal.operatedAt = operated ? new Date().toISOString() : null;
-  signal.result = result || null;
-  signal.notes = notes || '';
-  signal.exitPrice = exitPrice || null;
+  signal.result = result;
+  signal.notes = notes;
   
-  // Calcular PnL si hay resultado
-  if (result && signal.levels && exitPrice) {
-    const entry = parseFloat(signal.levels.entry);
-    const exit = parseFloat(exitPrice);
-    signal.pnl = signal.direction === 'BULLISH' ? exit - entry : entry - exit;
+  if (operated && result === 'WIN') {
+    tradingStats.wins++;
+    tradingStats.streaks.currentWin++;
+    tradingStats.streaks.currentLoss = 0;
+  } else if (operated && result === 'LOSS') {
+    tradingStats.losses++;
+    tradingStats.streaks.currentLoss++;
+    tradingStats.streaks.currentWin = 0;
   }
   
-  // Actualizar estadísticas
-  if (operated) {
-    tradingStats.operatedSignals++;
-    tradingStats.bySymbol[signal.symbol].operated++;
-    
-    if (result === 'WIN') {
-      tradingStats.wins++;
-      tradingStats.bySymbol[signal.symbol].wins++;
-      tradingStats.streaks.currentWin++;
-      tradingStats.streaks.currentLoss = 0;
-      if (tradingStats.streaks.currentWin > tradingStats.streaks.maxWin) {
-        tradingStats.streaks.maxWin = tradingStats.streaks.currentWin;
-      }
-    } else if (result === 'LOSS') {
-      tradingStats.losses++;
-      tradingStats.bySymbol[signal.symbol].losses++;
-      tradingStats.streaks.currentLoss++;
-      tradingStats.streaks.currentWin = 0;
-      if (tradingStats.streaks.currentLoss > tradingStats.streaks.maxLoss) {
-        tradingStats.streaks.maxLoss = tradingStats.streaks.currentLoss;
-      }
-    }
-  } else {
-    tradingStats.skipped++;
-  }
+  await Persistence.updateSignalTracking(id, operated, result, notes);
+  await Persistence.saveState();
   
-  console.log(`📊 Señal ${id} actualizada: ${operated ? (result || 'operada') : 'no operada'}`);
   res.json({ success: true, signal });
 });
 
-// =============================================
-// 📈 ESTADÍSTICAS
-// =============================================
+// Stats
 app.get('/api/stats', (req, res) => {
-  res.json(getDetailedStats());
+  const operated = signalHistory.filter(s => s.operated);
+  const wins = operated.filter(s => s.result === 'WIN').length;
+  const losses = operated.filter(s => s.result === 'LOSS').length;
+  
+  res.json({
+    totalSignals: signalHistory.length,
+    totalOperated: operated.length,
+    wins,
+    losses,
+    winRate: operated.length > 0 ? ((wins / operated.length) * 100).toFixed(1) : 0,
+    streaks: tradingStats.streaks
+  });
 });
 
 app.get('/api/stats/emotional', (req, res) => {
-  res.json(PsychoTrading.analyzeEmotionalState());
-});
-
-// =============================================
-// 🧠 PSICOTRADING
-// =============================================
-app.post('/api/psycho/coaching', async (req, res) => {
-  const { message, context } = req.body;
-  const response = await PsychoTrading.getCoaching(message, context);
-  res.json(response);
-});
-
-app.post('/api/psycho/plan', async (req, res) => {
-  const plan = await PsychoTrading.generateTradingPlan(req.body);
-  res.json(plan);
-});
-
-app.post('/api/psycho/post-trade', async (req, res) => {
-  const { signalId, result, notes } = req.body;
-  const signal = signalHistory.find(s => s.id === signalId);
-  if (!signal) return res.status(404).json({ error: 'Señal no encontrada' });
+  let emotionalState = 'NEUTRAL';
+  let riskLevel = 'NORMAL';
+  const recommendations = [];
   
-  const analysis = await PsychoTrading.analyzePostTrade(signal, result, notes);
-  res.json(analysis);
-});
-
-// Quick check emocional
-app.get('/api/psycho/check', (req, res) => {
-  const state = PsychoTrading.analyzeEmotionalState();
+  if (tradingStats.streaks.currentLoss >= 3) {
+    emotionalState = 'TILT';
+    riskLevel = 'HIGH';
+    recommendations.push('⚠️ 3+ pérdidas seguidas. Pausa recomendada.');
+  }
+  
+  if (tradingStats.streaks.currentWin >= 3) {
+    emotionalState = 'CONFIDENT';
+    recommendations.push('✅ Buena racha, mantén la disciplina.');
+  }
+  
   res.json({
-    canTrade: state.riskLevel !== 'CRITICAL',
-    state: state.emotionalState,
-    risk: state.riskLevel,
-    message: state.recommendations[0] || '✅ Estado OK para operar',
-    recommendations: state.recommendations
+    emotionalState,
+    riskLevel,
+    recommendations,
+    stats: {
+      currentWinStreak: tradingStats.streaks.currentWin,
+      currentLossStreak: tradingStats.streaks.currentLoss
+    }
   });
 });
 
 // WhatsApp test
 app.get('/api/test-whatsapp', async (req, res) => {
   const result = await sendWhatsApp({
-    symbolName: '🧪 TEST v7.2', direction: 'BULLISH',
-    sweep: { description: 'Test' }, choch: { description: 'Test' }, orderBlock: { description: 'Test' },
+    symbolName: '🧪 TEST v7.3',
+    direction: 'BULLISH',
     levels: { entry: '100', stopLoss: '99', tp1: '102', tp3: '105' },
     scoring: { score: 95 }
   });
   res.json({ success: result });
 });
 
-// Config
-app.get('/api/config', (req, res) => {
+// Debug
+app.get('/api/debug', (req, res) => {
   res.json({
-    version: '7.2',
-    features: ['SMC Institucional', 'Psicotrading IA', 'Tracking Señales', 'WhatsApp Alerts'],
-    whatsapp: { phone: WHATSAPP_PHONE, configured: !!CALLMEBOT_API_KEY },
-    deriv: { connected: isDerivConnected },
-    ai: { enabled: aiEnabled, configured: !!openai }
+    candleData: Object.fromEntries([...candleData.entries()].map(([k, v]) => [k, { count: v.length, lastTime: v[v.length-1]?.time }])),
+    analysisCache: Object.fromEntries(analysisCache),
+    dailySignals: Object.fromEntries(dailySignals),
+    usedStructures: usedStructures.size,
+    reconnectAttempts,
+    lastActivity: new Date(lastActivity).toISOString(),
+    uptime: process.uptime()
   });
 });
+
+// =============================================
+// INICIALIZACIÓN
+// =============================================
+async function init() {
+  console.log('🚀 Iniciando Trading Master Pro v7.3...');
+  
+  // Inicializar persistencia
+  await Persistence.initTables();
+  await Persistence.loadState();
+  
+  // Cargar historial de señales
+  const savedSignals = await Persistence.loadSignalHistory();
+  if (savedSignals.length > 0) {
+    signalHistory = savedSignals;
+    console.log(`📜 ${savedSignals.length} señales cargadas desde Supabase`);
+  }
+  
+  // Conectar a Deriv
+  connectDeriv();
+  
+  // Iniciar keep-alive
+  KeepAlive.start();
+  
+  // Reset diario
+  setInterval(() => {
+    const now = new Date();
+    if (now.getHours() === 0 && now.getMinutes() === 0) {
+      dailySignals.clear();
+      usedStructures.clear();
+      console.log('🔄 Reset diario');
+      Persistence.saveState();
+    }
+  }, 60000);
+}
 
 app.listen(PORT, () => {
   console.log(`
 ╔════════════════════════════════════════════════════════════╗
-║     TRADING MASTER PRO v7.2                                ║
-║     SMC + PSICOTRADING + TRACKING                          ║
+║     TRADING MASTER PRO v7.3                                ║
+║     PERSISTENCIA + KEEP-ALIVE + RECUPERACIÓN               ║
 ╠════════════════════════════════════════════════════════════╣
-║  📈 SMC Institucional Elite                                ║
-║  🧠 Coach de Psicotrading con IA                           ║
-║  📊 Tracking de señales (Win/Loss)                         ║
-║  📱 Alertas WhatsApp                                       ║
-║  📉 Estadísticas detalladas                                ║
+║  💾 Persistencia en Supabase                               ║
+║  💓 Keep-alive cada 4 minutos                              ║
+║  🔄 Recuperación automática de estado                      ║
+║  📱 WhatsApp via TextMeBot                                 ║
+║  🎯 Puerto: ${PORT}                                            ║
 ╚════════════════════════════════════════════════════════════╝
   `);
+  
+  init();
 });
 
 export default app;
