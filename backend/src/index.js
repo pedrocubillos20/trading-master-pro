@@ -1,6 +1,6 @@
 // =============================================
-// TRADING MASTER PRO - BACKEND v7.3
-// PERSISTENCIA + KEEP-ALIVE + RECUPERACIÓN
+// TRADING MASTER PRO - BACKEND v7.3.1
+// SMC + PERSISTENCIA + ORO (GOLD)
 // =============================================
 
 import express from 'express';
@@ -16,9 +16,9 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-console.log('\n🔧 TRADING MASTER PRO v7.3');
+console.log('\n🔧 TRADING MASTER PRO v7.3.1');
 console.log('═══════════════════════════════════════');
-console.log('PERSISTENCIA + KEEP-ALIVE + RECUPERACIÓN');
+console.log('SMC + PERSISTENCIA + ORO (GOLD)');
 console.log('═══════════════════════════════════════');
 
 // =============================================
@@ -31,8 +31,6 @@ const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 if (SUPABASE_URL && SUPABASE_KEY) {
   supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
   console.log('✅ Supabase conectado');
-} else {
-  console.log('⚠️ Supabase NO configurado - SIN PERSISTENCIA');
 }
 
 let openai = null;
@@ -50,19 +48,39 @@ const BACKEND_URL = process.env.RAILWAY_PUBLIC_DOMAIN
   : process.env.BACKEND_URL || 'https://trading-master-pro-production.up.railway.app';
 
 // =============================================
-// ÍNDICES
+// 🎯 ÍNDICES - AHORA CON ORO
 // =============================================
 const SYNTHETIC_INDICES = {
-  'stpRNG': { name: 'Step Index', pip: 0.01 },
-  'R_75': { name: 'Volatility 75', pip: 0.0001 },
-  'R_100': { name: 'Volatility 100', pip: 0.01 },
+  // Índices sintéticos
+  'stpRNG': { name: 'Step Index', pip: 0.01, type: 'synthetic' },
+  'R_75': { name: 'Volatility 75', pip: 0.0001, type: 'synthetic' },
+  'R_100': { name: 'Volatility 100', pip: 0.01, type: 'synthetic' },
+  
+  // 🥇 ORO - Gold/USD
+  'frxXAUUSD': { name: 'Gold/USD', pip: 0.01, type: 'forex', emoji: '🥇' },
+};
+
+// Configuración específica por tipo de activo
+const ASSET_CONFIG = {
+  synthetic: {
+    tolerance: 0.0003,      // Tolerancia para EQH/EQL
+    sweepWindow: 6,         // Velas para detectar sweep
+    maxAge: 20,             // Máxima antigüedad de liquidez
+    displacementMultiplier: 1.5,
+  },
+  forex: {
+    tolerance: 0.0005,      // Oro es más volátil
+    sweepWindow: 8,         // Más velas para sweep
+    maxAge: 25,             // Más tiempo para liquidez
+    displacementMultiplier: 1.3, // Menos estricto
+  }
 };
 
 const TF_HTF = 300;  // 5M
 const TF_LTF = 60;   // 1M
 
 // =============================================
-// ESTADO EN MEMORIA (con respaldo en Supabase)
+// ESTADO EN MEMORIA
 // =============================================
 let derivWs = null;
 let isDerivConnected = false;
@@ -79,7 +97,6 @@ let signalHistory = [];
 const usedStructures = new Map();
 const analysisCache = new Map();
 
-// Estadísticas
 const tradingStats = {
   totalSignals: 0,
   operatedSignals: 0,
@@ -93,34 +110,22 @@ const tradingStats = {
 // 💾 PERSISTENCIA EN SUPABASE
 // =============================================
 const Persistence = {
-  
-  // Guardar velas
   async saveCandles(symbol, timeframe, candles) {
     if (!supabase || !candles || candles.length === 0) return;
-    
     try {
       const key = `${symbol}_${timeframe}`;
-      const data = {
-        key,
-        symbol,
-        timeframe,
-        candles: JSON.stringify(candles.slice(-200)), // Solo últimas 200
+      await supabase.from('candle_data').upsert({
+        key, symbol, timeframe,
+        candles: JSON.stringify(candles.slice(-200)),
         updated_at: new Date().toISOString()
-      };
-      
-      await supabase
-        .from('candle_data')
-        .upsert(data, { onConflict: 'key' });
-        
+      }, { onConflict: 'key' });
     } catch (error) {
       console.error('Error guardando velas:', error.message);
     }
   },
 
-  // Cargar velas
   async loadCandles(symbol, timeframe) {
     if (!supabase) return null;
-    
     try {
       const key = `${symbol}_${timeframe}`;
       const { data, error } = await supabase
@@ -131,28 +136,18 @@ const Persistence = {
       
       if (error || !data) return null;
       
-      // Verificar que no sean muy viejas (máx 30 min)
-      const updatedAt = new Date(data.updated_at);
-      const age = (Date.now() - updatedAt.getTime()) / 1000 / 60;
-      
-      if (age > 30) {
-        console.log(`⚠️ Velas ${key} muy antiguas (${age.toFixed(0)} min), descartando`);
-        return null;
-      }
+      const age = (Date.now() - new Date(data.updated_at).getTime()) / 1000 / 60;
+      if (age > 30) return null;
       
       console.log(`✅ Cargadas ${key} desde Supabase (${age.toFixed(1)} min antigüedad)`);
       return JSON.parse(data.candles);
-      
-    } catch (error) {
-      console.error('Error cargando velas:', error.message);
+    } catch {
       return null;
     }
   },
 
-  // Guardar señales
   async saveSignal(signal) {
     if (!supabase) return;
-    
     try {
       await supabase.from('signals').upsert({
         id: signal.id,
@@ -171,16 +166,13 @@ const Persistence = {
         created_at: signal.createdAt,
         candles_snapshot: JSON.stringify(signal.candles?.htf?.slice(-30) || [])
       }, { onConflict: 'id' });
-      
     } catch (error) {
       console.error('Error guardando señal:', error.message);
     }
   },
 
-  // Cargar historial de señales
   async loadSignalHistory() {
     if (!supabase) return [];
-    
     try {
       const { data, error } = await supabase
         .from('signals')
@@ -191,132 +183,71 @@ const Persistence = {
       if (error) return [];
       
       return data.map(s => ({
-        id: s.id,
-        symbol: s.symbol,
-        symbolName: s.symbol_name,
+        id: s.id, symbol: s.symbol, symbolName: s.symbol_name,
         direction: s.direction,
         scoring: { score: s.score, classification: s.classification },
         levels: s.levels,
         sweep: { description: s.sweep_desc },
         choch: { description: s.choch_desc },
         orderBlock: { description: s.ob_desc },
-        operated: s.operated,
-        result: s.result,
-        notes: s.notes,
+        operated: s.operated, result: s.result, notes: s.notes,
         createdAt: s.created_at,
         candles: { htf: JSON.parse(s.candles_snapshot || '[]') }
       }));
-      
-    } catch (error) {
-      console.error('Error cargando señales:', error.message);
+    } catch {
       return [];
     }
   },
 
-  // Actualizar tracking de señal
   async updateSignalTracking(id, operated, result, notes) {
     if (!supabase) return;
-    
     try {
-      await supabase
-        .from('signals')
+      await supabase.from('signals')
         .update({ operated, result, notes, updated_at: new Date().toISOString() })
         .eq('id', id);
-    } catch (error) {
-      console.error('Error actualizando tracking:', error.message);
-    }
+    } catch {}
   },
 
-  // Guardar estado
   async saveState() {
     if (!supabase) return;
-    
     try {
-      const state = {
+      await supabase.from('app_state').upsert({
         id: 'main_state',
         daily_signals: JSON.stringify(Object.fromEntries(dailySignals)),
         used_structures: JSON.stringify(Object.fromEntries(usedStructures)),
         trading_stats: JSON.stringify(tradingStats),
         ai_enabled: aiEnabled,
         updated_at: new Date().toISOString()
-      };
-      
-      await supabase.from('app_state').upsert(state, { onConflict: 'id' });
-      
-    } catch (error) {
-      console.error('Error guardando estado:', error.message);
-    }
+      }, { onConflict: 'id' });
+    } catch {}
   },
 
-  // Cargar estado
   async loadState() {
     if (!supabase) return;
-    
     try {
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from('app_state')
         .select('*')
         .eq('id', 'main_state')
         .single();
       
-      if (error || !data) return;
+      if (!data) return;
       
-      // Verificar si es del mismo día
       const stateDate = new Date(data.updated_at).toDateString();
       const today = new Date().toDateString();
       
       if (stateDate === today) {
-        // Restaurar contadores diarios
         const ds = JSON.parse(data.daily_signals || '{}');
         Object.entries(ds).forEach(([k, v]) => dailySignals.set(k, v));
-        
         const us = JSON.parse(data.used_structures || '{}');
         Object.entries(us).forEach(([k, v]) => usedStructures.set(k, v));
-        
         aiEnabled = data.ai_enabled;
-        
         console.log('✅ Estado restaurado desde Supabase');
-      } else {
-        console.log('📅 Nuevo día, estado reiniciado');
       }
       
-      // Restaurar stats generales
       const stats = JSON.parse(data.trading_stats || '{}');
       Object.assign(tradingStats, stats);
-      
-    } catch (error) {
-      console.error('Error cargando estado:', error.message);
-    }
-  },
-
-  // Inicializar tablas si no existen
-  async initTables() {
-    if (!supabase) return;
-    
-    console.log('📦 Verificando tablas en Supabase...');
-    
-    // Las tablas se crean manualmente o con migrations
-    // Aquí solo verificamos que existan
-    try {
-      await supabase.from('candle_data').select('key').limit(1);
-      console.log('✅ Tabla candle_data OK');
-    } catch {
-      console.log('⚠️ Tabla candle_data no existe - crear manualmente');
-    }
-    
-    try {
-      await supabase.from('signals').select('id').limit(1);
-      console.log('✅ Tabla signals OK');
-    } catch {
-      console.log('⚠️ Tabla signals no existe - crear manualmente');
-    }
-    
-    try {
-      await supabase.from('app_state').select('id').limit(1);
-      console.log('✅ Tabla app_state OK');
-    } catch {
-      console.log('⚠️ Tabla app_state no existe - crear manualmente');
-    }
+    } catch {}
   }
 };
 
@@ -327,44 +258,40 @@ const KeepAlive = {
   interval: null,
   
   start() {
-    // Ping cada 4 minutos para evitar que Railway duerma el servicio
     this.interval = setInterval(async () => {
       try {
-        // Self-ping
         await fetch(`${BACKEND_URL}/health`);
         console.log(`💓 Keep-alive ping OK - ${new Date().toLocaleTimeString()}`);
-        
-        // Guardar estado periódicamente
         await Persistence.saveState();
         
-        // Guardar velas periódicamente
         for (const [key, candles] of candleData.entries()) {
           const [symbol, tf] = key.split('_');
           await Persistence.saveCandles(symbol, tf, candles);
         }
         
         lastActivity = Date.now();
-        
       } catch (error) {
         console.error('⚠️ Keep-alive error:', error.message);
       }
-    }, 4 * 60 * 1000); // 4 minutos
+    }, 4 * 60 * 1000);
     
     console.log('✅ Keep-alive iniciado (cada 4 min)');
   },
   
   stop() {
-    if (this.interval) {
-      clearInterval(this.interval);
-      this.interval = null;
-    }
+    if (this.interval) clearInterval(this.interval);
   }
 };
 
 // =============================================
-// 🧠 ANALIZADOR SMC (Optimizado)
+// 🧠 ANALIZADOR SMC (Adaptativo por activo)
 // =============================================
 const SMCAnalyzer = {
+  
+  getConfig(symbol) {
+    const asset = SYNTHETIC_INDICES[symbol];
+    return ASSET_CONFIG[asset?.type] || ASSET_CONFIG.synthetic;
+  },
   
   findSwings(candles, length = 3) {
     const highs = [], lows = [];
@@ -380,11 +307,11 @@ const SMCAnalyzer = {
     return { highs, lows };
   },
 
-  detectLiquidity(candles, swings) {
+  detectLiquidity(candles, swings, config) {
     const liquidity = { equalHighs: [], equalLows: [] };
     const recentHighs = swings.highs.slice(-5);
     const recentLows = swings.lows.slice(-5);
-    const tolerance = 0.0003;
+    const tolerance = config.tolerance;
     
     for (let i = 0; i < recentHighs.length - 1; i++) {
       for (let j = i + 1; j < recentHighs.length; j++) {
@@ -413,13 +340,13 @@ const SMCAnalyzer = {
     return liquidity;
   },
 
-  detectSweep(candles, liquidity) {
+  detectSweep(candles, liquidity, config) {
     if (!candles || candles.length < 10) return null;
-    const recent = candles.slice(-6);
+    const recent = candles.slice(-config.sweepWindow);
     const currentIndex = candles.length;
     
     for (const eqHigh of liquidity.equalHighs) {
-      if (eqHigh.age > 20) continue;
+      if (eqHigh.age > config.maxAge) continue;
       for (let i = 0; i < recent.length; i++) {
         const c = recent[i];
         const wickAbove = c.high - Math.max(c.open, c.close);
@@ -431,7 +358,7 @@ const SMCAnalyzer = {
     }
     
     for (const eqLow of liquidity.equalLows) {
-      if (eqLow.age > 20) continue;
+      if (eqLow.age > config.maxAge) continue;
       for (let i = 0; i < recent.length; i++) {
         const c = recent[i];
         const wickBelow = Math.min(c.open, c.close) - c.low;
@@ -445,7 +372,7 @@ const SMCAnalyzer = {
     return null;
   },
 
-  detectDisplacement(candles, sweep) {
+  detectDisplacement(candles, sweep, config) {
     if (!sweep?.valid || !candles || candles.length < 15) return null;
     const sweepIndex = sweep.sweepIndex || candles.length - 5;
     const afterSweep = candles.slice(sweepIndex);
@@ -463,7 +390,7 @@ const SMCAnalyzer = {
       const bodySize = Math.abs(c.close - c.open);
       const multiplier = candleRange / avgRange;
       
-      if (multiplier > 1.5 && bodySize > candleRange * 0.6) {
+      if (multiplier > config.displacementMultiplier && bodySize > candleRange * 0.6) {
         const isBullish = c.close > c.open;
         if ((sweep.direction === 'BULLISH' && isBullish) || (sweep.direction === 'BEARISH' && !isBullish)) {
           return { direction: sweep.direction, index: sweepIndex + i, multiplier: multiplier.toFixed(2), description: `Displacement ${multiplier.toFixed(1)}x`, valid: true };
@@ -567,18 +494,22 @@ const SMCAnalyzer = {
     return { inZone: inOBZone, valid: false };
   },
 
-  calculateLevels(ob, direction) {
+  calculateLevels(ob, direction, symbol) {
     if (!ob) return null;
     const entry = direction === 'BULLISH' ? ob.high : ob.low;
     const stopLoss = direction === 'BULLISH' ? ob.low - (ob.high - ob.low) * 0.3 : ob.high + (ob.high - ob.low) * 0.3;
     const risk = Math.abs(entry - stopLoss);
     
+    // Para Oro, usamos más decimales
+    const decimals = symbol === 'frxXAUUSD' ? 2 : 4;
+    
     return {
-      entry: entry.toFixed(4), stopLoss: stopLoss.toFixed(4),
-      tp1: (direction === 'BULLISH' ? entry + risk * 2 : entry - risk * 2).toFixed(4),
-      tp2: (direction === 'BULLISH' ? entry + risk * 3 : entry - risk * 3).toFixed(4),
-      tp3: (direction === 'BULLISH' ? entry + risk * 5 : entry - risk * 5).toFixed(4),
-      tp4: (direction === 'BULLISH' ? entry + risk * 10 : entry - risk * 10).toFixed(4),
+      entry: entry.toFixed(decimals), 
+      stopLoss: stopLoss.toFixed(decimals),
+      tp1: (direction === 'BULLISH' ? entry + risk * 2 : entry - risk * 2).toFixed(decimals),
+      tp2: (direction === 'BULLISH' ? entry + risk * 3 : entry - risk * 3).toFixed(decimals),
+      tp3: (direction === 'BULLISH' ? entry + risk * 5 : entry - risk * 5).toFixed(decimals),
+      tp4: (direction === 'BULLISH' ? entry + risk * 10 : entry - risk * 10).toFixed(decimals),
     };
   },
 
@@ -599,27 +530,28 @@ const SMCAnalyzer = {
   },
 
   analyze(symbol) {
-    const config = SYNTHETIC_INDICES[symbol];
-    if (!config) return { error: 'Símbolo no soportado' };
+    const assetInfo = SYNTHETIC_INDICES[symbol];
+    if (!assetInfo) return { error: 'Símbolo no soportado' };
     
+    const config = this.getConfig(symbol);
     const candlesHTF = candleData.get(`${symbol}_${TF_HTF}`) || [];
     const candlesLTF = candleData.get(`${symbol}_${TF_LTF}`) || [];
     
     if (candlesHTF.length < 50) {
-      return { symbol, symbolName: config.name, status: 'LOADING', dataCount: candlesHTF.length };
+      return { symbol, symbolName: assetInfo.name, status: 'LOADING', dataCount: candlesHTF.length };
     }
     
     const currentPrice = candlesHTF[candlesHTF.length - 1]?.close;
     const swings = this.findSwings(candlesHTF);
-    const liquidity = this.detectLiquidity(candlesHTF, swings);
-    const sweep = this.detectSweep(candlesHTF, liquidity);
-    const displacement = this.detectDisplacement(candlesHTF, sweep);
+    const liquidity = this.detectLiquidity(candlesHTF, swings, config);
+    const sweep = this.detectSweep(candlesHTF, liquidity, config);
+    const displacement = this.detectDisplacement(candlesHTF, sweep, config);
     const choch = this.detectCHoCH(candlesHTF, swings, sweep, displacement);
     const orderBlock = this.findOB(candlesHTF, choch, displacement);
     const ltfEntry = orderBlock && choch ? this.checkLTFEntry(candlesLTF, orderBlock, choch.direction) : null;
     
     const scoring = this.calculateScore({ liquidity, sweep, displacement, choch, orderBlock });
-    const levels = orderBlock && choch ? this.calculateLevels(orderBlock, choch.direction) : null;
+    const levels = orderBlock && choch ? this.calculateLevels(orderBlock, choch.direction, symbol) : null;
     
     const structureUsed = choch?.id ? usedStructures.has(choch.id) : false;
     
@@ -633,11 +565,14 @@ const SMCAnalyzer = {
     else if (!ltfEntry?.valid) { status = 'ESPERANDO_ENTRADA'; waiting.push('Esperando entrada 1M'); }
     else { status = 'SEÑAL_ACTIVA'; hasSignal = scoring.isValid && !structureUsed; }
     
-    // Guardar en cache
     analysisCache.set(symbol, { timestamp: Date.now(), status, hasSignal });
     
     return {
-      symbol, symbolName: config.name, currentPrice,
+      symbol, 
+      symbolName: assetInfo.name,
+      assetType: assetInfo.type,
+      emoji: assetInfo.emoji || '📊',
+      currentPrice,
       liquidity, sweep, displacement, choch, orderBlock, ltfEntry,
       scoring, levels, status, waiting, hasSignal, structureUsed,
       direction: choch?.direction || null,
@@ -661,9 +596,13 @@ async function generateNarration(analysis) {
   }
 
   try {
+    const assetContext = analysis.assetType === 'forex' 
+      ? 'Este es un par de Forex (Oro), considera su mayor volatilidad.'
+      : 'Este es un índice sintético.';
+      
     const res = await openai.chat.completions.create({
       model: 'gpt-4o',
-      messages: [{ role: 'user', content: `Narra en 2 oraciones el estado SMC de ${analysis.symbolName}: Liquidez ${analysis.liquidity?.equalHighs?.length || 0} EQH/${analysis.liquidity?.equalLows?.length || 0} EQL, Sweep ${analysis.sweep?.valid ? 'SÍ' : 'NO'}, CHoCH ${analysis.choch?.valid ? analysis.choch.direction : 'NO'}, Estado ${analysis.status}. Habla como trader SMC.` }],
+      messages: [{ role: 'user', content: `Narra en 2 oraciones el estado SMC de ${analysis.symbolName}: Liquidez ${analysis.liquidity?.equalHighs?.length || 0} EQH/${analysis.liquidity?.equalLows?.length || 0} EQL, Sweep ${analysis.sweep?.valid ? 'SÍ' : 'NO'}, CHoCH ${analysis.choch?.valid ? analysis.choch.direction : 'NO'}, Estado ${analysis.status}. ${assetContext} Habla como trader SMC.` }],
       max_tokens: 100,
     });
     return { text: res.choices[0]?.message?.content || 'Analizando...', waiting: analysis.waiting };
@@ -678,8 +617,10 @@ async function generateNarration(analysis) {
 async function sendWhatsApp(signal) {
   if (!CALLMEBOT_API_KEY) return false;
   
-  const msg = `🎯 *SMC v7.3*
-📊 ${signal.symbolName || 'Test'}
+  const emoji = SYNTHETIC_INDICES[signal.symbol]?.emoji || '📊';
+  
+  const msg = `🎯 *SMC v7.3.1*
+${emoji} ${signal.symbolName || 'Test'}
 ${signal.direction === 'BULLISH' ? '🟢 COMPRA' : '🔴 VENTA'}
 
 📍 Entry: ${signal.levels?.entry || 'N/A'}
@@ -700,7 +641,7 @@ ${signal.direction === 'BULLISH' ? '🟢 COMPRA' : '🔴 VENTA'}
 }
 
 // =============================================
-// DERIV WEBSOCKET (Robusto)
+// DERIV WEBSOCKET
 // =============================================
 function connectDeriv() {
   if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
@@ -708,7 +649,7 @@ function connectDeriv() {
     setTimeout(() => {
       reconnectAttempts = 0;
       connectDeriv();
-    }, 60000); // Esperar 1 minuto antes de reintentar
+    }, 60000);
     return;
   }
   
@@ -733,19 +674,20 @@ function connectDeriv() {
       derivWs.send(JSON.stringify({ authorize: DERIV_API_TOKEN }));
     }
 
-    // Suscribir a símbolos
+    // Suscribir a TODOS los símbolos (incluyendo Oro)
     for (const symbol of Object.keys(SYNTHETIC_INDICES)) {
+      const assetInfo = SYNTHETIC_INDICES[symbol];
+      console.log(`📡 Suscribiendo a ${assetInfo.name} (${symbol})...`);
+      
       derivWs.send(JSON.stringify({ ticks: symbol, subscribe: 1 }));
       
       for (const tf of [TF_LTF, TF_HTF]) {
-        // Intentar cargar velas desde Supabase primero
         const savedCandles = await Persistence.loadCandles(symbol, tf);
         if (savedCandles && savedCandles.length > 100) {
           candleData.set(`${symbol}_${tf}`, savedCandles);
           console.log(`📦 ${symbol}_${tf}: ${savedCandles.length} velas desde Supabase`);
         }
         
-        // Suscribir a nuevas velas
         derivWs.send(JSON.stringify({
           ticks_history: symbol,
           adjust_start_time: 1,
@@ -765,7 +707,12 @@ function connectDeriv() {
       lastActivity = Date.now();
       
       if (msg.error) {
-        console.error('Deriv error:', msg.error.message);
+        // Ignorar errores de símbolos no disponibles
+        if (msg.error.code === 'MarketIsClosed') {
+          console.log(`⚠️ Mercado cerrado para: ${msg.echo_req?.ticks_history || msg.echo_req?.ticks}`);
+        } else if (msg.error.code !== 'InvalidSymbol') {
+          console.error('Deriv error:', msg.error.message);
+        }
         return;
       }
 
@@ -787,11 +734,8 @@ function connectDeriv() {
           candles[candles.length - 1] = newCandle;
         } else {
           candles.push(newCandle);
-          
-          // Nueva vela HTF = analizar
           if (granularity === TF_HTF) {
             await checkSignal(symbol);
-            // Guardar velas periódicamente
             if (candles.length % 10 === 0) {
               await Persistence.saveCandles(symbol, granularity, candles);
             }
@@ -805,6 +749,7 @@ function connectDeriv() {
         const symbol = msg.echo_req?.ticks_history;
         const granularity = msg.echo_req?.granularity;
         const key = `${symbol}_${granularity}`;
+        const assetInfo = SYNTHETIC_INDICES[symbol];
         
         const existingCandles = candleData.get(key) || [];
         const newCandles = msg.candles.map(c => ({
@@ -815,13 +760,11 @@ function connectDeriv() {
           close: parseFloat(c.close)
         }));
         
-        // Merge: usar existentes si son más recientes
         if (existingCandles.length > 0 && existingCandles[existingCandles.length - 1].time > newCandles[newCandles.length - 1].time) {
-          // Existentes son más recientes, mantener
-          console.log(`✅ ${SYNTHETIC_INDICES[symbol]?.name} ${granularity === TF_HTF ? '5M' : '1M'}: ${existingCandles.length} velas (preservadas)`);
+          console.log(`✅ ${assetInfo?.name || symbol} ${granularity === TF_HTF ? '5M' : '1M'}: ${existingCandles.length} velas (preservadas)`);
         } else {
           candleData.set(key, newCandles);
-          console.log(`✅ ${SYNTHETIC_INDICES[symbol]?.name} ${granularity === TF_HTF ? '5M' : '1M'}: ${newCandles.length} velas (nuevas)`);
+          console.log(`✅ ${assetInfo?.name || symbol} ${granularity === TF_HTF ? '5M' : '1M'}: ${newCandles.length} velas (nuevas)`);
           await Persistence.saveCandles(symbol, granularity, newCandles);
         }
       }
@@ -841,7 +784,6 @@ function connectDeriv() {
     console.error('WebSocket error:', e.message);
   });
   
-  // Ping periódico para mantener conexión
   setInterval(() => {
     if (derivWs && derivWs.readyState === WebSocket.OPEN) {
       derivWs.send(JSON.stringify({ ping: 1 }));
@@ -875,13 +817,11 @@ async function checkSignal(symbol) {
     dailySignals.set(symbol, count + 1);
     tradingStats.totalSignals++;
 
-    console.log(`🎯 SEÑAL A+ #${count + 1}/7: ${analysis.direction} ${analysis.symbolName}`);
+    const emoji = SYNTHETIC_INDICES[symbol]?.emoji || '📊';
+    console.log(`🎯 SEÑAL A+ #${count + 1}/7: ${emoji} ${analysis.direction} ${analysis.symbolName}`);
     
-    // Guardar señal en Supabase
     await Persistence.saveSignal(signal);
     await Persistence.saveState();
-    
-    // Enviar WhatsApp
     await sendWhatsApp(signal);
   }
 }
@@ -893,14 +833,17 @@ app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '10mb' }));
 
-// Health check
 app.get('/', (req, res) => {
   res.json({
     status: 'ok',
-    version: '7.3',
+    version: '7.3.1',
+    assets: Object.keys(SYNTHETIC_INDICES).map(k => ({
+      symbol: k,
+      name: SYNTHETIC_INDICES[k].name,
+      type: SYNTHETIC_INDICES[k].type,
+      emoji: SYNTHETIC_INDICES[k].emoji
+    })),
     deriv: isDerivConnected,
-    uptime: Math.floor((Date.now() - lastActivity) / 1000 / 60) + ' min since last activity',
-    candleCount: Object.fromEntries([...candleData.entries()].map(([k, v]) => [k, v.length])),
     supabase: !!supabase
   });
 });
@@ -985,8 +928,7 @@ app.get('/api/stats', (req, res) => {
   res.json({
     totalSignals: signalHistory.length,
     totalOperated: operated.length,
-    wins,
-    losses,
+    wins, losses,
     winRate: operated.length > 0 ? ((wins / operated.length) * 100).toFixed(1) : 0,
     streaks: tradingStats.streaks
   });
@@ -1009,9 +951,7 @@ app.get('/api/stats/emotional', (req, res) => {
   }
   
   res.json({
-    emotionalState,
-    riskLevel,
-    recommendations,
+    emotionalState, riskLevel, recommendations,
     stats: {
       currentWinStreak: tradingStats.streaks.currentWin,
       currentLossStreak: tradingStats.streaks.currentLoss
@@ -1022,9 +962,10 @@ app.get('/api/stats/emotional', (req, res) => {
 // WhatsApp test
 app.get('/api/test-whatsapp', async (req, res) => {
   const result = await sendWhatsApp({
-    symbolName: '🧪 TEST v7.3',
+    symbol: 'frxXAUUSD',
+    symbolName: '🥇 Gold/USD TEST',
     direction: 'BULLISH',
-    levels: { entry: '100', stopLoss: '99', tp1: '102', tp3: '105' },
+    levels: { entry: '2650.50', stopLoss: '2645.00', tp1: '2661.50', tp3: '2678.00' },
     scoring: { score: 95 }
   });
   res.json({ success: result });
@@ -1047,26 +988,23 @@ app.get('/api/debug', (req, res) => {
 // INICIALIZACIÓN
 // =============================================
 async function init() {
-  console.log('🚀 Iniciando Trading Master Pro v7.3...');
+  console.log('🚀 Iniciando Trading Master Pro v7.3.1...');
+  console.log('📊 Activos configurados:');
+  Object.entries(SYNTHETIC_INDICES).forEach(([sym, info]) => {
+    console.log(`   ${info.emoji || '📈'} ${info.name} (${sym}) - ${info.type}`);
+  });
   
-  // Inicializar persistencia
-  await Persistence.initTables();
   await Persistence.loadState();
   
-  // Cargar historial de señales
   const savedSignals = await Persistence.loadSignalHistory();
   if (savedSignals.length > 0) {
     signalHistory = savedSignals;
     console.log(`📜 ${savedSignals.length} señales cargadas desde Supabase`);
   }
   
-  // Conectar a Deriv
   connectDeriv();
-  
-  // Iniciar keep-alive
   KeepAlive.start();
   
-  // Reset diario
   setInterval(() => {
     const now = new Date();
     if (now.getHours() === 0 && now.getMinutes() === 0) {
@@ -1081,13 +1019,17 @@ async function init() {
 app.listen(PORT, () => {
   console.log(`
 ╔════════════════════════════════════════════════════════════╗
-║     TRADING MASTER PRO v7.3                                ║
-║     PERSISTENCIA + KEEP-ALIVE + RECUPERACIÓN               ║
+║     TRADING MASTER PRO v7.3.1                              ║
+║     SMC + PERSISTENCIA + ORO (GOLD)                        ║
 ╠════════════════════════════════════════════════════════════╣
-║  💾 Persistencia en Supabase                               ║
-║  💓 Keep-alive cada 4 minutos                              ║
-║  🔄 Recuperación automática de estado                      ║
-║  📱 WhatsApp via TextMeBot                                 ║
+║  📊 Step Index                                             ║
+║  📊 Volatility 75                                          ║
+║  📊 Volatility 100                                         ║
+║  🥇 Gold/USD (NUEVO)                                       ║
+╠════════════════════════════════════════════════════════════╣
+║  💾 Persistencia Supabase                                  ║
+║  💓 Keep-alive cada 4 min                                  ║
+║  📱 WhatsApp TextMeBot                                     ║
 ║  🎯 Puerto: ${PORT}                                            ║
 ╚════════════════════════════════════════════════════════════╝
   `);

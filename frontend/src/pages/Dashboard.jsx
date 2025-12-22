@@ -1,6 +1,6 @@
 // =============================================
-// TRADING MASTER PRO - DASHBOARD v7.2
-// SMC + PSICOTRADING + TRACKING
+// TRADING MASTER PRO - DASHBOARD v7.3.1
+// SMC + PSICOTRADING + ORO (GOLD)
 // =============================================
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -161,9 +161,15 @@ const NarrationPanel = ({ narration, status, aiEnabled, onToggleAI }) => {
 // =============================================
 // SIGNAL CARD CON TRACKING
 // =============================================
-const SignalCard = ({ signal, onTrack, onViewDetails, showTracking = true }) => {
+const SignalCard = ({ signal, onTrack, showTracking = true }) => {
   const [tracking, setTracking] = useState({ operated: signal.operated, result: signal.result });
   const isBuy = signal.direction === 'BULLISH';
+  
+  // Emoji según el activo
+  const getEmoji = (symbol) => {
+    if (symbol === 'frxXAUUSD') return '🥇';
+    return isBuy ? '🟢' : '🔴';
+  };
   
   const handleTrack = async (operated, result = null) => {
     setTracking({ operated, result });
@@ -174,7 +180,7 @@ const SignalCard = ({ signal, onTrack, onViewDetails, showTracking = true }) => 
     <div className={`rounded-xl border p-3 ${isBuy ? 'bg-emerald-500/10 border-emerald-500/40' : 'bg-red-500/10 border-red-500/40'}`}>
       <div className="flex justify-between mb-2">
         <div className="flex items-center gap-2">
-          <span className="text-lg">{isBuy ? '🟢' : '🔴'}</span>
+          <span className="text-lg">{getEmoji(signal.symbol)}</span>
           <div>
             <div className="font-bold text-white text-sm">{signal.symbolName}</div>
             <div className="text-[9px] text-zinc-400">{new Date(signal.createdAt).toLocaleString()}</div>
@@ -207,7 +213,6 @@ const SignalCard = ({ signal, onTrack, onViewDetails, showTracking = true }) => 
         </div>
       )}
       
-      {/* Tracking Buttons */}
       {showTracking && (
         <div className="border-t border-white/10 pt-2 mt-2">
           {!tracking.operated && !tracking.result ? (
@@ -237,12 +242,6 @@ const SignalCard = ({ signal, onTrack, onViewDetails, showTracking = true }) => 
             </div>
           )}
         </div>
-      )}
-      
-      {onViewDetails && (
-        <button onClick={() => onViewDetails(signal)} className="w-full mt-2 py-1 rounded bg-zinc-800/50 text-zinc-400 text-[10px] hover:bg-zinc-700/50">
-          Ver detalles →
-        </button>
       )}
     </div>
   );
@@ -279,7 +278,6 @@ const StatsPanel = ({ stats }) => {
         </div>
       </div>
       
-      {/* Rachas */}
       <div className="flex gap-2 mb-3">
         <div className={`flex-1 rounded p-2 text-center ${stats.streaks?.currentWin > 0 ? 'bg-emerald-500/10' : 'bg-zinc-800/30'}`}>
           <div className="text-xs text-emerald-400">🔥 {stats.streaks?.currentWin || 0}</div>
@@ -290,12 +288,6 @@ const StatsPanel = ({ stats }) => {
           <div className="text-[8px] text-zinc-500">Racha Loss</div>
         </div>
       </div>
-      
-      {/* Mejor/Peor símbolo */}
-      <div className="text-[10px] text-zinc-400 space-y-1">
-        <div>🏆 Mejor: <span className="text-emerald-400">{stats.bestSymbol}</span></div>
-        <div>⚠️ Peor: <span className="text-red-400">{stats.worstSymbol}</span></div>
-      </div>
     </div>
   );
 };
@@ -303,7 +295,7 @@ const StatsPanel = ({ stats }) => {
 // =============================================
 // 🧠 PSICOTRADING PANEL
 // =============================================
-const PsychoPanel = ({ emotionalState, onSendMessage }) => {
+const PsychoPanel = ({ emotionalState }) => {
   const [message, setMessage] = useState('');
   const [chat, setChat] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -313,7 +305,6 @@ const PsychoPanel = ({ emotionalState, onSendMessage }) => {
     'CONFIDENT': 'bg-emerald-500/20 text-emerald-400',
     'TILT': 'bg-red-500/20 text-red-400',
     'OVERTRADING': 'bg-amber-500/20 text-amber-400',
-    'REVENGE_TRADING': 'bg-red-500/30 text-red-500',
   };
   
   const stateLabels = {
@@ -321,7 +312,6 @@ const PsychoPanel = ({ emotionalState, onSendMessage }) => {
     'CONFIDENT': '😊 Confiado',
     'TILT': '😤 En Tilt',
     'OVERTRADING': '⚡ Overtrading',
-    'REVENGE_TRADING': '🚨 Revenge Trading',
   };
   
   const handleSend = async () => {
@@ -348,14 +338,13 @@ const PsychoPanel = ({ emotionalState, onSendMessage }) => {
   
   const quickMessages = [
     '¿Debería operar ahora?',
-    'Estoy nervioso por mi último trade',
-    '¿Cómo manejo una racha perdedora?',
-    'Siento que estoy haciendo overtrading'
+    'Estoy nervioso',
+    '¿Cómo manejo pérdidas?',
+    'Tips para el oro'
   ];
 
   return (
     <div className="space-y-4">
-      {/* Estado Emocional */}
       <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-4">
         <h3 className="text-sm font-bold text-white mb-3">🧠 Estado Emocional</h3>
         
@@ -371,45 +360,24 @@ const PsychoPanel = ({ emotionalState, onSendMessage }) => {
             ))}
           </div>
         )}
-        
-        <div className="grid grid-cols-3 gap-2 mt-3 text-center text-[10px]">
-          <div className="bg-black/20 rounded p-2">
-            <div className="text-white font-bold">{emotionalState?.stats?.todayTrades || 0}</div>
-            <div className="text-zinc-500">Trades hoy</div>
-          </div>
-          <div className="bg-black/20 rounded p-2">
-            <div className="text-emerald-400 font-bold">{emotionalState?.stats?.currentWinStreak || 0}</div>
-            <div className="text-zinc-500">Wins seguidos</div>
-          </div>
-          <div className="bg-black/20 rounded p-2">
-            <div className="text-red-400 font-bold">{emotionalState?.stats?.currentLossStreak || 0}</div>
-            <div className="text-zinc-500">Loss seguidos</div>
-          </div>
-        </div>
       </div>
       
-      {/* Chat con Coach */}
       <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-4">
         <h3 className="text-sm font-bold text-white mb-3">💬 Coach de Trading</h3>
         
-        {/* Quick messages */}
         <div className="flex flex-wrap gap-1 mb-3">
           {quickMessages.map((q, i) => (
-            <button
-              key={i}
-              onClick={() => setMessage(q)}
-              className="text-[9px] px-2 py-1 rounded bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
-            >
+            <button key={i} onClick={() => setMessage(q)}
+              className="text-[9px] px-2 py-1 rounded bg-zinc-800 text-zinc-400 hover:bg-zinc-700">
               {q}
             </button>
           ))}
         </div>
         
-        {/* Chat history */}
-        <div className="h-48 overflow-y-auto mb-3 space-y-2">
+        <div className="h-40 overflow-y-auto mb-3 space-y-2">
           {chat.length === 0 ? (
-            <div className="text-center text-zinc-500 text-xs py-8">
-              Hola! Soy tu coach de trading. ¿En qué puedo ayudarte hoy?
+            <div className="text-center text-zinc-500 text-xs py-4">
+              Soy tu coach de trading. ¿En qué puedo ayudarte?
             </div>
           ) : (
             chat.map((msg, i) => (
@@ -420,12 +388,9 @@ const PsychoPanel = ({ emotionalState, onSendMessage }) => {
               </div>
             ))
           )}
-          {loading && (
-            <div className="text-xs text-zinc-500 animate-pulse">Pensando...</div>
-          )}
+          {loading && <div className="text-xs text-zinc-500 animate-pulse">Pensando...</div>}
         </div>
         
-        {/* Input */}
         <div className="flex gap-2">
           <input
             type="text"
@@ -433,132 +398,54 @@ const PsychoPanel = ({ emotionalState, onSendMessage }) => {
             onChange={(e) => setMessage(e.target.value)}
             onKeyPress={(e) => e.key === 'Enter' && handleSend()}
             placeholder="Escribe tu pregunta..."
-            className="flex-1 bg-zinc-800 rounded-lg px-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className="flex-1 bg-zinc-800 rounded-lg px-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none"
           />
-          <button
-            onClick={handleSend}
-            disabled={loading}
-            className="px-4 py-2 rounded-lg bg-blue-600 text-white text-xs hover:bg-blue-500 disabled:opacity-50"
-          >
+          <button onClick={handleSend} disabled={loading}
+            className="px-4 py-2 rounded-lg bg-blue-600 text-white text-xs hover:bg-blue-500 disabled:opacity-50">
             Enviar
           </button>
         </div>
       </div>
-      
-      {/* Generar Plan */}
-      <PlanGenerator />
     </div>
   );
 };
 
 // =============================================
-// GENERADOR DE PLAN
+// 🎯 SYMBOL SELECTOR (Con Oro)
 // =============================================
-const PlanGenerator = () => {
-  const [loading, setLoading] = useState(false);
-  const [plan, setPlan] = useState(null);
-  const [prefs, setPrefs] = useState({
-    capital: '',
-    riskPerTrade: '1-2%',
-    schedule: '',
-    experience: 'Intermedio',
-    monthlyGoal: '10%'
-  });
-  
-  const generatePlan = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`${API_URL}/api/psycho/plan`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(prefs)
-      });
-      const data = await res.json();
-      setPlan(data.plan);
-    } catch {
-      setPlan('Error generando plan');
-    }
-    setLoading(false);
+const SymbolSelector = ({ symbols, selected, onSelect, counts }) => {
+  // Emojis por símbolo
+  const getEmoji = (key) => {
+    if (key === 'frxXAUUSD') return '🥇';
+    if (key === 'stpRNG') return '📊';
+    if (key === 'R_75') return '📈';
+    if (key === 'R_100') return '📉';
+    return '📊';
   };
-
+  
   return (
-    <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-4">
-      <h3 className="text-sm font-bold text-white mb-3">📋 Mi Plan de Trading</h3>
-      
-      {!plan ? (
-        <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-2">
-            <input
-              placeholder="Capital ($)"
-              value={prefs.capital}
-              onChange={(e) => setPrefs({...prefs, capital: e.target.value})}
-              className="bg-zinc-800 rounded px-2 py-1.5 text-xs text-white"
-            />
-            <select
-              value={prefs.riskPerTrade}
-              onChange={(e) => setPrefs({...prefs, riskPerTrade: e.target.value})}
-              className="bg-zinc-800 rounded px-2 py-1.5 text-xs text-white"
-            >
-              <option value="0.5%">0.5% por trade</option>
-              <option value="1%">1% por trade</option>
-              <option value="1-2%">1-2% por trade</option>
-              <option value="2%">2% por trade</option>
-            </select>
-            <input
-              placeholder="Horario (ej: 9am-12pm)"
-              value={prefs.schedule}
-              onChange={(e) => setPrefs({...prefs, schedule: e.target.value})}
-              className="bg-zinc-800 rounded px-2 py-1.5 text-xs text-white"
-            />
-            <select
-              value={prefs.experience}
-              onChange={(e) => setPrefs({...prefs, experience: e.target.value})}
-              className="bg-zinc-800 rounded px-2 py-1.5 text-xs text-white"
-            >
-              <option>Principiante</option>
-              <option>Intermedio</option>
-              <option>Avanzado</option>
-            </select>
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+      {Object.entries(symbols).map(([key, info]) => (
+        <button key={key} onClick={() => onSelect(key)}
+          className={`py-2 px-3 rounded-xl transition ${
+            selected === key 
+              ? key === 'frxXAUUSD' 
+                ? 'bg-amber-600 text-white' 
+                : 'bg-blue-600 text-white' 
+              : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-700/50'
+          }`}>
+          <div className="flex items-center justify-center gap-1">
+            <span>{getEmoji(key)}</span>
+            <span className="font-medium text-sm">{info.name}</span>
           </div>
-          <button
-            onClick={generatePlan}
-            disabled={loading}
-            className="w-full py-2 rounded-lg bg-purple-600 text-white text-xs hover:bg-purple-500 disabled:opacity-50"
-          >
-            {loading ? 'Generando...' : '🚀 Generar Mi Plan'}
-          </button>
-        </div>
-      ) : (
-        <div>
-          <div className="bg-black/20 rounded-lg p-3 text-xs text-zinc-300 whitespace-pre-wrap max-h-64 overflow-y-auto">
-            {plan}
+          <div className={`text-xs ${(counts?.[key] || 0) >= 7 ? 'text-red-400' : 'text-zinc-500'}`}>
+            {counts?.[key] || 0}/7
           </div>
-          <button
-            onClick={() => setPlan(null)}
-            className="w-full mt-2 py-1.5 rounded bg-zinc-800 text-zinc-400 text-xs hover:bg-zinc-700"
-          >
-            Generar nuevo plan
-          </button>
-        </div>
-      )}
+        </button>
+      ))}
     </div>
   );
 };
-
-// =============================================
-// SYMBOL SELECTOR
-// =============================================
-const SymbolSelector = ({ symbols, selected, onSelect, counts }) => (
-  <div className="flex gap-2">
-    {Object.entries(symbols).map(([key, info]) => (
-      <button key={key} onClick={() => onSelect(key)}
-        className={`flex-1 py-2 px-3 rounded-xl transition ${selected === key ? 'bg-blue-600 text-white' : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-700/50'}`}>
-        <div className="font-medium text-sm">{info.name}</div>
-        <div className={`text-xs ${(counts?.[key] || 0) >= 7 ? 'text-red-400' : 'text-zinc-500'}`}>{counts?.[key] || 0}/7</div>
-      </button>
-    ))}
-  </div>
-);
 
 // =============================================
 // MAIN DASHBOARD
@@ -653,7 +540,6 @@ export default function Dashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ operated, result })
       });
-      // Refresh signals & stats
       const [s, st] = await Promise.all([
         fetch(`${API_URL}/api/signals/history`).then(r => r.json()),
         fetch(`${API_URL}/api/stats`).then(r => r.json()),
@@ -663,6 +549,9 @@ export default function Dashboard() {
     } catch {}
   };
 
+  // Determinar si es Oro
+  const isGold = selectedSymbol === 'frxXAUUSD';
+
   return (
     <div className="min-h-screen bg-[#08080a] text-white">
       {/* Header */}
@@ -670,16 +559,14 @@ export default function Dashboard() {
         <div className="max-w-6xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-2">
             <h1 className="text-base font-bold">Trading<span className="text-blue-500">Pro</span></h1>
-            <span className="text-[8px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400">v7.2</span>
+            <span className="text-[8px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400">v7.3.1</span>
+            <span className="text-[8px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400">+GOLD</span>
             <div className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
           </div>
           
-          {/* Emotional indicator */}
           {emotionalState && (
             <div className={`px-2 py-0.5 rounded text-[9px] ${
-              emotionalState.riskLevel === 'CRITICAL' ? 'bg-red-500/30 text-red-400' :
-              emotionalState.riskLevel === 'HIGH' ? 'bg-amber-500/20 text-amber-400' :
-              'bg-emerald-500/20 text-emerald-400'
+              emotionalState.riskLevel === 'HIGH' ? 'bg-red-500/20 text-red-400' : 'bg-emerald-500/20 text-emerald-400'
             }`}>
               {emotionalState.emotionalState}
             </div>
@@ -709,9 +596,21 @@ export default function Dashboard() {
         {tab === 'live' && (
           <div className="space-y-4">
             <SymbolSelector symbols={symbols} selected={selectedSymbol} onSelect={setSelectedSymbol} counts={dailyCounts} />
+            
+            {/* Indicador de Gold */}
+            {isGold && (
+              <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-2 text-center">
+                <span className="text-amber-400 text-xs">🥇 Analizando Gold/USD - Mayor volatilidad, configuración adaptada</span>
+              </div>
+            )}
+            
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               <div className="lg:col-span-2 space-y-3">
-                <SMCChart candles={analysis?.candles?.htf || []} markers={analysis?.chartMarkers} title={`${symbols[selectedSymbol]?.name} - 5M`} />
+                <SMCChart 
+                  candles={analysis?.candles?.htf || []} 
+                  markers={analysis?.chartMarkers} 
+                  title={`${isGold ? '🥇' : '📊'} ${symbols[selectedSymbol]?.name || selectedSymbol} - 5M`} 
+                />
                 <NarrationPanel narration={narration?.text} status={analysis?.status} aiEnabled={aiEnabled} onToggleAI={handleToggleAI} />
                 {analysis?.hasSignal && <SignalCard signal={analysis} onTrack={handleTrackSignal} />}
               </div>
