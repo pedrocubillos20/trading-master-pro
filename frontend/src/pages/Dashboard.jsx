@@ -1,6 +1,6 @@
 // =============================================
-// TRADING MASTER PRO - DASHBOARD v6.1
-// Selector TF + Narración en Vivo + BOS/CHoCH
+// TRADING MASTER PRO - DASHBOARD v7.1 ELITE
+// Toggle IA + Historial con gráfico + Ratios 1:10
 // =============================================
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -10,7 +10,7 @@ const API_URL = import.meta.env.VITE_API_URL || 'https://trading-master-pro-prod
 // =============================================
 // GRÁFICO SMC
 // =============================================
-const SMCChart = ({ candles, markers, symbol, height = 400 }) => {
+const SMCChart = ({ candles, markers, title, height = 350 }) => {
   const canvasRef = useRef(null);
   
   useEffect(() => {
@@ -18,297 +18,258 @@ const SMCChart = ({ candles, markers, symbol, height = 400 }) => {
     
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
-    const width = canvas.width;
+    const w = canvas.width;
     const h = canvas.height;
     
-    ctx.fillStyle = '#09090b';
-    ctx.fillRect(0, 0, width, h);
+    ctx.fillStyle = '#08080a';
+    ctx.fillRect(0, 0, w, h);
     
-    const visibleCandles = candles.slice(-80);
-    const allPrices = visibleCandles.flatMap(c => [c.high, c.low]);
+    const visible = candles.slice(-55);
+    const prices = visible.flatMap(c => [c.high, c.low]);
+    markers?.liquidity?.equalHighs?.forEach(p => prices.push(p));
+    markers?.liquidity?.equalLows?.forEach(p => prices.push(p));
     
-    if (markers?.fibonacci?.optimalZone) {
-      allPrices.push(markers.fibonacci.optimalZone.start, markers.fibonacci.optimalZone.end);
-    }
+    const minP = Math.min(...prices);
+    const maxP = Math.max(...prices);
+    const range = maxP - minP;
+    const pad = range * 0.1;
     
-    const minPrice = Math.min(...allPrices);
-    const maxPrice = Math.max(...allPrices);
-    const priceRange = maxPrice - minPrice;
-    const padding = priceRange * 0.1;
-    
-    const scaleY = (price) => h - 30 - ((price - minPrice + padding) / (priceRange + padding * 2)) * (h - 60);
-    const candleWidth = (width - 80) / visibleCandles.length;
-    const chartRight = width - 70;
+    const scaleY = (p) => h - 22 - ((p - minP + pad) / (range + pad * 2)) * (h - 44);
+    const candleW = (w - 55) / visible.length;
+    const chartR = w - 50;
     
     // Grid
-    ctx.strokeStyle = '#1f1f23';
+    ctx.strokeStyle = '#141418';
     ctx.lineWidth = 0.5;
-    for (let i = 0; i <= 5; i++) {
-      const y = 30 + ((h - 60) / 5) * i;
+    for (let i = 0; i <= 4; i++) {
+      const y = 22 + ((h - 44) / 4) * i;
       ctx.beginPath();
       ctx.moveTo(0, y);
-      ctx.lineTo(chartRight, y);
+      ctx.lineTo(chartR, y);
       ctx.stroke();
-      const price = maxPrice + padding - ((priceRange + padding * 2) / 5) * i;
-      ctx.fillStyle = '#52525b';
-      ctx.font = '10px monospace';
-      ctx.fillText(price.toFixed(2), chartRight + 5, y + 3);
+      ctx.fillStyle = '#3f3f46';
+      ctx.font = '8px monospace';
+      ctx.fillText((maxP + pad - ((range + pad * 2) / 4) * i).toFixed(2), chartR + 2, y + 3);
     }
 
-    // Fibonacci Zone (70.6% - 92.6%)
-    if (markers?.fibonacci?.optimalZone) {
-      const fib = markers.fibonacci;
-      const zoneTop = scaleY(fib.optimalZone.start);
-      const zoneBottom = scaleY(fib.optimalZone.end);
-      
-      ctx.fillStyle = 'rgba(251, 191, 36, 0.08)';
-      ctx.fillRect(0, Math.min(zoneTop, zoneBottom), chartRight, Math.abs(zoneBottom - zoneTop));
-      
-      // Líneas Fib
-      [
-        { level: '70.6%', price: fib.fib_706 },
-        { level: '78.6%', price: fib.fib_786 },
-        { level: '92.6%', price: fib.fib_926 },
-      ].forEach(({ level, price }) => {
-        if (price) {
-          const y = scaleY(price);
-          ctx.strokeStyle = '#f59e0b';
-          ctx.lineWidth = 1;
-          ctx.setLineDash([3, 3]);
-          ctx.beginPath();
-          ctx.moveTo(0, y);
-          ctx.lineTo(chartRight, y);
-          ctx.stroke();
-          ctx.setLineDash([]);
-          ctx.fillStyle = '#f59e0b';
-          ctx.font = '9px sans-serif';
-          ctx.fillText(level, 5, y - 3);
-        }
-      });
-    }
+    // Liquidez EQH
+    markers?.liquidity?.equalHighs?.forEach(level => {
+      const y = scaleY(level);
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([2, 2]);
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(chartR, y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#ef4444';
+      ctx.font = 'bold 7px sans-serif';
+      ctx.fillText('$$$ EQH', 2, y - 2);
+    });
+    
+    // Liquidez EQL
+    markers?.liquidity?.equalLows?.forEach(level => {
+      const y = scaleY(level);
+      ctx.strokeStyle = '#22c55e';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([2, 2]);
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(chartR, y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#22c55e';
+      ctx.font = 'bold 7px sans-serif';
+      ctx.fillText('$$$ EQL', 2, y + 8);
+    });
 
-    // Order Blocks
-    if (markers?.orderBlocks) {
-      [markers.orderBlocks.original, markers.orderBlocks.decisional].forEach((ob) => {
-        if (ob) {
-          const y1 = scaleY(ob.high);
-          const y2 = scaleY(ob.low);
-          const isDemand = ob.obType === 'DEMAND';
-          
-          ctx.fillStyle = isDemand ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)';
-          ctx.fillRect(0, Math.min(y1, y2), chartRight, Math.abs(y2 - y1));
-          
-          ctx.strokeStyle = isDemand ? '#10b981' : '#ef4444';
-          ctx.lineWidth = 1.5;
-          ctx.strokeRect(0, Math.min(y1, y2), chartRight, Math.abs(y2 - y1));
-          
-          ctx.fillStyle = isDemand ? '#10b981' : '#ef4444';
-          ctx.font = 'bold 9px sans-serif';
-          ctx.fillText(`OB ${ob.type}`, 5, Math.min(y1, y2) - 3);
-        }
-      });
+    // Order Block
+    if (markers?.orderBlock) {
+      const ob = markers.orderBlock;
+      const y1 = scaleY(ob.high);
+      const y2 = scaleY(ob.low);
+      const isDemand = ob.obType === 'DEMAND';
+      
+      ctx.fillStyle = isDemand ? 'rgba(34, 197, 94, 0.12)' : 'rgba(239, 68, 68, 0.12)';
+      ctx.fillRect(0, Math.min(y1, y2), chartR, Math.abs(y2 - y1));
+      ctx.strokeStyle = isDemand ? '#22c55e' : '#ef4444';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(0, Math.min(y1, y2), chartR, Math.abs(y2 - y1));
+      ctx.fillStyle = isDemand ? '#22c55e' : '#ef4444';
+      ctx.font = 'bold 8px sans-serif';
+      ctx.fillText(`OB ${ob.obType}`, 2, Math.min(y1, y2) - 2);
     }
 
     // Velas
-    visibleCandles.forEach((candle, i) => {
-      const x = 10 + i * candleWidth + candleWidth / 2;
-      const open = scaleY(candle.open);
-      const close = scaleY(candle.close);
-      const high = scaleY(candle.high);
-      const low = scaleY(candle.low);
-      const isBullish = candle.close > candle.open;
-      const color = isBullish ? '#10b981' : '#ef4444';
+    visible.forEach((c, i) => {
+      const x = 6 + i * candleW + candleW / 2;
+      const o = scaleY(c.open);
+      const cl = scaleY(c.close);
+      const hi = scaleY(c.high);
+      const lo = scaleY(c.low);
+      const bull = c.close > c.open;
+      const col = bull ? '#22c55e' : '#ef4444';
       
-      ctx.strokeStyle = color;
+      ctx.strokeStyle = col;
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.moveTo(x, high);
-      ctx.lineTo(x, low);
+      ctx.moveTo(x, hi);
+      ctx.lineTo(x, lo);
       ctx.stroke();
       
-      ctx.fillStyle = color;
-      ctx.fillRect(x - candleWidth * 0.35, Math.min(open, close), candleWidth * 0.7, Math.abs(close - open) || 1);
+      ctx.fillStyle = col;
+      ctx.fillRect(x - candleW * 0.35, Math.min(o, cl), candleW * 0.7, Math.abs(cl - o) || 1);
     });
 
-    // BOS Line
-    if (markers?.bos) {
-      const y = scaleY(markers.bos.price);
-      const color = markers.bos.direction === 'BULLISH' ? '#3b82f6' : '#f97316';
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
-      ctx.setLineDash([8, 4]);
+    // Sweep marker
+    if (markers?.sweep) {
+      const y = scaleY(markers.sweep.price);
+      ctx.fillStyle = '#f59e0b';
       ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(chartRight, y);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      
-      // Label
-      ctx.fillStyle = color;
-      ctx.fillRect(chartRight - 45, y - 10, 40, 16);
-      ctx.fillStyle = '#fff';
-      ctx.font = 'bold 9px sans-serif';
-      ctx.fillText('BOS', chartRight - 35, y + 2);
+      ctx.arc(chartR - 25, y, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#000';
+      ctx.font = 'bold 7px sans-serif';
+      ctx.fillText('S', chartR - 27, y + 2);
     }
 
-    // CHoCH Line
+    // CHoCH
     if (markers?.choch) {
       const y = scaleY(markers.choch.price);
-      const color = markers.choch.direction === 'BULLISH' ? '#22c55e' : '#ef4444';
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = markers.choch.direction === 'BULLISH' ? '#22c55e' : '#ef4444';
+      ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(chartRight, y);
+      ctx.moveTo(chartR - 80, y);
+      ctx.lineTo(chartR, y);
       ctx.stroke();
       
-      // Label
-      ctx.fillStyle = color;
-      ctx.fillRect(chartRight - 55, y - 10, 50, 16);
+      ctx.fillStyle = markers.choch.direction === 'BULLISH' ? '#22c55e' : '#ef4444';
+      ctx.fillRect(chartR - 42, y - 8, 38, 14);
       ctx.fillStyle = '#000';
-      ctx.font = 'bold 9px sans-serif';
-      ctx.fillText('CHoCH', chartRight - 50, y + 2);
+      ctx.font = 'bold 7px sans-serif';
+      ctx.fillText('CHoCH', chartR - 40, y + 2);
     }
 
-    // Entry/SL/TP Lines
+    // Entry/SL/TP
     if (markers?.levels) {
-      const { entry, stopLoss, takeProfit1 } = markers.levels;
+      const { entry, stopLoss, tp1, tp3 } = markers.levels;
       
-      if (entry) {
-        const y = scaleY(parseFloat(entry));
-        ctx.strokeStyle = '#3b82f6';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(chartRight - 120, y);
-        ctx.lineTo(chartRight, y);
-        ctx.stroke();
-        ctx.fillStyle = '#3b82f6';
-        ctx.font = 'bold 9px sans-serif';
-        ctx.fillText(`ENTRY ${entry}`, chartRight - 115, y - 3);
-      }
-      
-      if (stopLoss) {
-        const y = scaleY(parseFloat(stopLoss));
-        ctx.strokeStyle = '#ef4444';
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([4, 4]);
-        ctx.beginPath();
-        ctx.moveTo(chartRight - 120, y);
-        ctx.lineTo(chartRight, y);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.fillStyle = '#ef4444';
-        ctx.fillText(`SL ${stopLoss}`, chartRight - 115, y - 3);
-      }
-      
-      if (takeProfit1) {
-        const y = scaleY(parseFloat(takeProfit1));
-        ctx.strokeStyle = '#10b981';
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([4, 4]);
-        ctx.beginPath();
-        ctx.moveTo(chartRight - 120, y);
-        ctx.lineTo(chartRight, y);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.fillStyle = '#10b981';
-        ctx.fillText(`TP ${takeProfit1}`, chartRight - 115, y - 3);
-      }
+      [[entry, 'ENTRY', '#3b82f6'], [stopLoss, 'SL', '#ef4444'], [tp1, 'TP1', '#22c55e'], [tp3, 'TP3', '#10b981']].forEach(([val, label, col]) => {
+        if (val) {
+          const y = scaleY(parseFloat(val));
+          ctx.strokeStyle = col;
+          ctx.lineWidth = 1;
+          ctx.setLineDash(label === 'ENTRY' ? [] : [3, 2]);
+          ctx.beginPath();
+          ctx.moveTo(chartR - 60, y);
+          ctx.lineTo(chartR, y);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = col;
+          ctx.font = '7px sans-serif';
+          ctx.fillText(label, chartR - 55, y - 1);
+        }
+      });
     }
 
     // Título
     ctx.fillStyle = '#fff';
-    ctx.font = 'bold 12px sans-serif';
-    ctx.fillText(symbol || '', 10, 18);
+    ctx.font = 'bold 10px sans-serif';
+    ctx.fillText(title || '', 6, 13);
     
-  }, [candles, markers, symbol]);
+  }, [candles, markers, title]);
+  
+  return <canvas ref={canvasRef} width={700} height={height} className="w-full rounded-lg border border-zinc-800/50" />;
+};
+
+// =============================================
+// FLUJO SMC
+// =============================================
+const SMCFlow = ({ analysis }) => {
+  const steps = [
+    { id: 'liq', label: 'Liquidez', icon: '💰', active: (analysis?.liquidity?.equalHighs?.length > 0 || analysis?.liquidity?.equalLows?.length > 0), detail: `${analysis?.liquidity?.equalHighs?.length || 0} EQH, ${analysis?.liquidity?.equalLows?.length || 0} EQL` },
+    { id: 'sweep', label: 'Sweep', icon: '🧹', active: analysis?.sweep?.valid, detail: analysis?.sweep?.description || 'Esperando' },
+    { id: 'disp', label: 'Displacement', icon: '💨', active: analysis?.displacement?.valid, detail: analysis?.displacement?.valid ? `${analysis.displacement.multiplier}x ATR` : 'Esperando' },
+    { id: 'choch', label: 'CHoCH', icon: '🔄', active: analysis?.choch?.valid, detail: analysis?.choch?.description || 'Esperando' },
+    { id: 'ob', label: 'OB', icon: '📦', active: analysis?.orderBlock?.valid, detail: analysis?.orderBlock?.description || 'Buscando' },
+    { id: 'entry', label: 'Entrada 1M', icon: '🎯', active: analysis?.ltfEntry?.valid, detail: analysis?.ltfEntry?.confirmationType || 'Esperando' },
+  ];
+  
+  const activeIdx = steps.findIndex(s => !s.active);
+  const progress = activeIdx === -1 ? 100 : (activeIdx / steps.length) * 100;
   
   return (
-    <canvas 
-      ref={canvasRef} 
-      width={850} 
-      height={height}
-      className="w-full rounded-xl border border-zinc-800"
-    />
+    <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-3">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs font-bold text-white">Flujo SMC</span>
+        <span className="text-[10px] text-zinc-500">{Math.round(progress)}%</span>
+      </div>
+      <div className="h-1 bg-zinc-800 rounded-full mb-3 overflow-hidden">
+        <div className="h-full bg-gradient-to-r from-amber-500 to-emerald-500 transition-all" style={{ width: `${progress}%` }} />
+      </div>
+      <div className="space-y-1">
+        {steps.map((s, i) => (
+          <div key={s.id} className={`flex items-center gap-2 p-1.5 rounded-lg text-xs ${
+            s.active ? 'bg-emerald-500/10' : i === activeIdx ? 'bg-amber-500/10 animate-pulse' : 'bg-zinc-800/30'
+          }`}>
+            <span>{s.icon}</span>
+            <div className="flex-1">
+              <div className={s.active ? 'text-emerald-400' : i === activeIdx ? 'text-amber-400' : 'text-zinc-500'}>{s.label}</div>
+            </div>
+            <div className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] ${
+              s.active ? 'bg-emerald-500 text-black' : 'bg-zinc-700 text-zinc-500'
+            }`}>{s.active ? '✓' : i + 1}</div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 };
 
 // =============================================
-// NARRACIÓN EN VIVO
+// NARRACIÓN + TOGGLE IA
 // =============================================
-const NarrationPanel = ({ narration, waiting, status, levels }) => {
-  const statusColors = {
-    'ENTRADA_LISTA': 'bg-emerald-500/20 border-emerald-500/50',
-    'ESPERANDO_RETROCESO': 'bg-amber-500/20 border-amber-500/50',
-    'ESPERANDO_BREAK': 'bg-blue-500/20 border-blue-500/50',
-    'ESPERANDO_OB': 'bg-purple-500/20 border-purple-500/50',
-    'SIN_ESTRUCTURA': 'bg-zinc-500/20 border-zinc-500/50',
-    'BUSCANDO': 'bg-zinc-500/20 border-zinc-500/50',
+const NarrationPanel = ({ narration, waiting, status, aiEnabled, onToggleAI }) => {
+  const statusCfg = {
+    'SEÑAL_ACTIVA': { bg: 'bg-emerald-500/10 border-emerald-500/40', label: '🎯 SEÑAL', color: 'text-emerald-400' },
+    'ESPERANDO_ENTRADA': { bg: 'bg-blue-500/10 border-blue-500/40', label: '⏳ Esperando 1M', color: 'text-blue-400' },
+    'BUSCANDO_OB': { bg: 'bg-purple-500/10 border-purple-500/40', label: '📦 Buscando OB', color: 'text-purple-400' },
+    'ESPERANDO_CHOCH': { bg: 'bg-amber-500/10 border-amber-500/40', label: '🔄 Esperando CHoCH', color: 'text-amber-400' },
+    'ESPERANDO_DISPLACEMENT': { bg: 'bg-orange-500/10 border-orange-500/40', label: '💨 Esperando Impulso', color: 'text-orange-400' },
+    'ESPERANDO_SWEEP': { bg: 'bg-yellow-500/10 border-yellow-500/40', label: '🧹 Esperando Sweep', color: 'text-yellow-400' },
+    'SIN_LIQUIDEZ': { bg: 'bg-zinc-500/10 border-zinc-500/40', label: '💰 Buscando Liquidez', color: 'text-zinc-400' },
+    'ESTRUCTURA_USADA': { bg: 'bg-zinc-500/10 border-zinc-500/40', label: '⏸️ Estructura usada', color: 'text-zinc-400' },
   };
-
-  const statusLabels = {
-    'ENTRADA_LISTA': '🎯 ENTRADA LISTA',
-    'ESPERANDO_RETROCESO': '⏳ Esperando Retroceso',
-    'ESPERANDO_BREAK': '👀 Esperando BOS/CHoCH',
-    'ESPERANDO_OB': '🔍 Buscando Order Block',
-    'SIN_ESTRUCTURA': '📊 Sin Estructura Clara',
-    'BUSCANDO': '🔄 Analizando...',
-  };
+  
+  const cfg = statusCfg[status] || statusCfg.SIN_LIQUIDEZ;
 
   return (
-    <div className={`rounded-xl border p-4 ${statusColors[status] || statusColors.BUSCANDO}`}>
-      {/* Status Badge */}
-      <div className="flex items-center justify-between mb-3">
+    <div className={`rounded-xl border p-3 ${cfg.bg}`}>
+      <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
-          <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-          <span className="text-sm font-medium text-white">Narración en Vivo</span>
+          <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
+          <span className="text-xs font-medium text-white">Narración</span>
+          <span className={`text-[10px] ${cfg.color}`}>{cfg.label}</span>
         </div>
-        <span className="text-xs px-2 py-1 rounded bg-zinc-800 text-zinc-300">
-          {statusLabels[status] || status}
-        </span>
+        {/* Toggle IA */}
+        <button 
+          onClick={onToggleAI}
+          className={`px-2 py-0.5 rounded text-[10px] font-medium transition ${
+            aiEnabled ? 'bg-emerald-500/20 text-emerald-400' : 'bg-zinc-700 text-zinc-500'
+          }`}
+        >
+          🤖 IA {aiEnabled ? 'ON' : 'OFF'}
+        </button>
       </div>
       
-      {/* Narración */}
-      <div className="bg-zinc-900/50 rounded-lg p-3 mb-3">
-        <p className="text-zinc-200 text-sm leading-relaxed">
-          {narration || 'Analizando el mercado...'}
-        </p>
-      </div>
+      <p className="text-zinc-300 text-xs leading-relaxed mb-2">{narration || 'Analizando...'}</p>
       
-      {/* Qué estamos esperando */}
-      {waiting && waiting.length > 0 && (
-        <div className="mb-3">
-          <div className="text-xs text-zinc-400 mb-2">⏳ Esperando:</div>
-          <div className="space-y-1">
-            {waiting.map((item, i) => (
-              <div key={i} className="flex items-center gap-2 text-xs">
-                <span className="text-amber-400">○</span>
-                <span className="text-zinc-300">{item}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      
-      {/* Niveles si hay entrada lista */}
-      {status === 'ENTRADA_LISTA' && levels && (
-        <div className="grid grid-cols-4 gap-2 pt-3 border-t border-zinc-700">
-          <div className="text-center">
-            <div className="text-xs text-zinc-500">Entry</div>
-            <div className="font-mono text-sm text-blue-400">{levels.entry}</div>
-          </div>
-          <div className="text-center">
-            <div className="text-xs text-zinc-500">SL</div>
-            <div className="font-mono text-sm text-red-400">{levels.stopLoss}</div>
-          </div>
-          <div className="text-center">
-            <div className="text-xs text-zinc-500">TP1</div>
-            <div className="font-mono text-sm text-emerald-400">{levels.takeProfit1}</div>
-          </div>
-          <div className="text-center">
-            <div className="text-xs text-zinc-500">R:R</div>
-            <div className="font-mono text-sm text-amber-400">{levels.riskReward}</div>
-          </div>
+      {waiting?.length > 0 && (
+        <div className="border-t border-white/10 pt-2 space-y-0.5">
+          {waiting.map((w, i) => (
+            <div key={i} className="text-[10px] text-amber-400">• {w}</div>
+          ))}
         </div>
       )}
     </div>
@@ -316,239 +277,215 @@ const NarrationPanel = ({ narration, waiting, status, levels }) => {
 };
 
 // =============================================
-// SELECTOR DE SÍMBOLO
+// SIGNAL CARD (con ratios 1:10)
 // =============================================
-const SymbolSelector = ({ symbols, selected, onSelect, dailyCounts }) => (
-  <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-thin">
+const SignalCard = ({ signal, onViewDetails }) => {
+  if (!signal?.hasSignal && !signal?.scoring) return null;
+  const isBuy = signal.direction === 'BULLISH';
+  
+  return (
+    <div className={`rounded-xl border p-3 ${
+      isBuy ? 'bg-emerald-500/10 border-emerald-500/40' : 'bg-red-500/10 border-red-500/40'
+    }`}>
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <span className="text-xl">{isBuy ? '🟢' : '🔴'}</span>
+          <div>
+            <div className="font-bold text-white text-sm">{signal.symbolName}</div>
+            <div className="text-[10px] text-zinc-400">{signal.scoring?.classification} • {signal.ltfEntry?.confirmationType || ''}</div>
+          </div>
+        </div>
+        <div className="text-right">
+          <div className={`font-bold ${isBuy ? 'text-emerald-400' : 'text-red-400'}`}>{isBuy ? 'COMPRA' : 'VENTA'}</div>
+          <div className="text-[10px] text-zinc-500">{signal.scoring?.score}/100</div>
+        </div>
+      </div>
+      
+      {signal.levels && (
+        <>
+          <div className="grid grid-cols-6 gap-1 text-[10px] mb-2">
+            <div className="bg-black/20 rounded p-1.5 text-center">
+              <div className="text-zinc-500">Entry</div>
+              <div className="font-mono text-blue-400">{signal.levels.entry}</div>
+            </div>
+            <div className="bg-black/20 rounded p-1.5 text-center">
+              <div className="text-zinc-500">SL</div>
+              <div className="font-mono text-red-400">{signal.levels.stopLoss}</div>
+            </div>
+            <div className="bg-black/20 rounded p-1.5 text-center">
+              <div className="text-zinc-500">1:2</div>
+              <div className="font-mono text-emerald-400">{signal.levels.tp1}</div>
+            </div>
+            <div className="bg-black/20 rounded p-1.5 text-center">
+              <div className="text-zinc-500">1:3</div>
+              <div className="font-mono text-emerald-400">{signal.levels.tp2}</div>
+            </div>
+            <div className="bg-black/20 rounded p-1.5 text-center">
+              <div className="text-zinc-500">1:5</div>
+              <div className="font-mono text-emerald-500">{signal.levels.tp3}</div>
+            </div>
+            <div className="bg-black/20 rounded p-1.5 text-center">
+              <div className="text-zinc-500">1:10</div>
+              <div className="font-mono text-emerald-600">{signal.levels.tp4}</div>
+            </div>
+          </div>
+          
+          <div className="text-[9px] text-zinc-500 space-y-0.5">
+            <div>✓ {signal.sweep?.description}</div>
+            <div>✓ {signal.choch?.description}</div>
+            <div>✓ {signal.orderBlock?.description}</div>
+          </div>
+        </>
+      )}
+      
+      {onViewDetails && (
+        <button 
+          onClick={() => onViewDetails(signal)}
+          className="w-full mt-2 py-1.5 rounded bg-zinc-800/50 text-zinc-400 text-xs hover:bg-zinc-700/50 transition"
+        >
+          Ver gráfico y contexto →
+        </button>
+      )}
+    </div>
+  );
+};
+
+// =============================================
+// MODAL DETALLE SEÑAL (Historial con gráfico)
+// =============================================
+const SignalDetailModal = ({ signal, onClose }) => {
+  if (!signal) return null;
+  const isBuy = signal.direction === 'BULLISH';
+  
+  return (
+    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-zinc-900 rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div className={`p-4 border-b border-zinc-800 flex items-center justify-between ${isBuy ? 'bg-emerald-500/10' : 'bg-red-500/10'}`}>
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">{isBuy ? '🟢' : '🔴'}</span>
+            <div>
+              <h2 className="text-lg font-bold text-white">{signal.symbolName}</h2>
+              <div className="text-xs text-zinc-400">{new Date(signal.createdAt).toLocaleString()}</div>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-zinc-400 hover:text-white text-xl">×</button>
+        </div>
+        
+        {/* Gráfico */}
+        <div className="p-4">
+          <SMCChart 
+            candles={signal.candles?.htf || []}
+            markers={signal.chartMarkers}
+            title={`${signal.symbolName} - 5M (HTF)`}
+            height={300}
+          />
+        </div>
+        
+        {/* Contexto */}
+        <div className="px-4 pb-4 grid grid-cols-2 gap-4">
+          <div className="bg-zinc-800/50 rounded-xl p-3">
+            <h3 className="text-xs font-bold text-white mb-2">📊 Contexto SMC</h3>
+            <div className="space-y-1 text-xs">
+              <div className="flex justify-between"><span className="text-zinc-500">Sweep:</span><span className="text-amber-400">{signal.sweep?.type}</span></div>
+              <div className="flex justify-between"><span className="text-zinc-500">Displacement:</span><span className="text-orange-400">{signal.displacement?.multiplier}x ATR</span></div>
+              <div className="flex justify-between"><span className="text-zinc-500">CHoCH:</span><span className={isBuy ? 'text-emerald-400' : 'text-red-400'}>{signal.choch?.direction}</span></div>
+              <div className="flex justify-between"><span className="text-zinc-500">OB Type:</span><span className="text-purple-400">{signal.orderBlock?.obType}</span></div>
+              <div className="flex justify-between"><span className="text-zinc-500">LTF Entry:</span><span className="text-blue-400">{signal.ltfEntry?.confirmationType}</span></div>
+            </div>
+          </div>
+          
+          <div className="bg-zinc-800/50 rounded-xl p-3">
+            <h3 className="text-xs font-bold text-white mb-2">🎯 Niveles</h3>
+            <div className="space-y-1 text-xs">
+              <div className="flex justify-between"><span className="text-zinc-500">Entry:</span><span className="text-blue-400 font-mono">{signal.levels?.entry}</span></div>
+              <div className="flex justify-between"><span className="text-zinc-500">Stop Loss:</span><span className="text-red-400 font-mono">{signal.levels?.stopLoss}</span></div>
+              <div className="flex justify-between"><span className="text-zinc-500">TP1 (1:2):</span><span className="text-emerald-400 font-mono">{signal.levels?.tp1}</span></div>
+              <div className="flex justify-between"><span className="text-zinc-500">TP2 (1:3):</span><span className="text-emerald-400 font-mono">{signal.levels?.tp2}</span></div>
+              <div className="flex justify-between"><span className="text-zinc-500">TP3 (1:5):</span><span className="text-emerald-500 font-mono">{signal.levels?.tp3}</span></div>
+              <div className="flex justify-between"><span className="text-zinc-500">TP4 (1:10):</span><span className="text-emerald-600 font-mono">{signal.levels?.tp4}</span></div>
+            </div>
+          </div>
+        </div>
+        
+        {/* Score */}
+        <div className="px-4 pb-4">
+          <div className="bg-zinc-800/50 rounded-xl p-3">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs text-zinc-500">Score Total</span>
+              <span className={`text-sm font-bold ${signal.scoring?.score >= 90 ? 'text-emerald-400' : 'text-blue-400'}`}>
+                {signal.scoring?.score}/100 ({signal.scoring?.classification})
+              </span>
+            </div>
+            <div className="h-2 bg-zinc-800 rounded-full overflow-hidden">
+              <div className="h-full bg-emerald-500" style={{ width: `${signal.scoring?.score}%` }} />
+            </div>
+            <div className="mt-2 flex gap-2 text-[10px]">
+              {Object.entries(signal.scoring?.breakdown || {}).map(([k, v]) => (
+                <div key={k} className="bg-zinc-900 rounded px-2 py-1">
+                  <span className="text-zinc-500">{k}:</span> <span className="text-white">{v}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// =============================================
+// SYMBOL SELECTOR
+// =============================================
+const SymbolSelector = ({ symbols, selected, onSelect, counts }) => (
+  <div className="flex gap-2">
     {Object.entries(symbols).map(([key, info]) => (
       <button
         key={key}
         onClick={() => onSelect(key)}
-        className={`px-3 py-2 rounded-lg whitespace-nowrap transition flex items-center gap-2 text-sm ${
-          selected === key 
-            ? 'bg-blue-600 text-white' 
-            : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
+        className={`flex-1 py-2.5 px-3 rounded-xl transition ${
+          selected === key ? 'bg-blue-600 text-white' : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-700/50'
         }`}
       >
-        <span>{info.name}</span>
-        <span className={`text-xs px-1.5 py-0.5 rounded ${
-          (dailyCounts?.[key] || 0) >= 7 ? 'bg-red-500/30 text-red-400' : 'bg-zinc-700/50 text-zinc-500'
-        }`}>
-          {dailyCounts?.[key] || 0}/7
-        </span>
+        <div className="font-medium text-sm">{info.name}</div>
+        <div className={`text-xs ${(counts?.[key] || 0) >= 7 ? 'text-red-400' : 'text-zinc-500'}`}>{counts?.[key] || 0}/7</div>
       </button>
     ))}
   </div>
 );
 
 // =============================================
-// SELECTOR DE TIMEFRAME
-// =============================================
-const TimeframeSelector = ({ selected, onSelect }) => {
-  const tfs = [
-    { id: 'M15', label: 'M15', desc: 'Estructura' },
-    { id: 'M5', label: 'M5', desc: 'Zonas' },
-    { id: 'M1', label: 'M1', desc: 'Entrada' },
-  ];
-  
-  return (
-    <div className="flex gap-1 bg-zinc-800/50 rounded-lg p-1">
-      {tfs.map(tf => (
-        <button
-          key={tf.id}
-          onClick={() => onSelect(tf.id)}
-          className={`px-3 py-1.5 rounded transition ${
-            selected === tf.id 
-              ? 'bg-zinc-600 text-white' 
-              : 'text-zinc-400 hover:text-white'
-          }`}
-        >
-          <div className="text-sm font-medium">{tf.label}</div>
-          <div className="text-[10px] text-zinc-500">{tf.desc}</div>
-        </button>
-      ))}
-    </div>
-  );
-};
-
-// =============================================
-// PANEL DE ANÁLISIS
-// =============================================
-const AnalysisPanel = ({ analysis }) => {
-  if (!analysis) return null;
-  
-  const { structure, bos, choch, orderBlocks, zoneCheck, scoring } = analysis;
-  
-  return (
-    <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-4 space-y-4">
-      <h3 className="font-bold text-white flex items-center gap-2">
-        <span className="w-2 h-2 bg-blue-500 rounded-full" />
-        Análisis SMC
-      </h3>
-      
-      {/* Estructura */}
-      <div className="grid grid-cols-2 gap-2">
-        <div className="bg-zinc-800/50 rounded-lg p-2">
-          <div className="text-xs text-zinc-500">Tendencia</div>
-          <div className={`font-bold ${
-            structure?.trend === 'BULLISH' ? 'text-emerald-400' :
-            structure?.trend === 'BEARISH' ? 'text-red-400' : 'text-zinc-400'
-          }`}>
-            {structure?.trend || 'N/A'}
-          </div>
-        </div>
-        <div className="bg-zinc-800/50 rounded-lg p-2">
-          <div className="text-xs text-zinc-500">Estructura</div>
-          <div className="font-bold text-white text-sm">
-            {structure?.structure?.join(' → ') || 'N/A'}
-          </div>
-        </div>
-      </div>
-      
-      {/* BOS / CHoCH */}
-      <div className="grid grid-cols-2 gap-2">
-        <div className={`rounded-lg p-2 ${bos ? 'bg-blue-500/10 border border-blue-500/30' : 'bg-zinc-800/50'}`}>
-          <div className="text-xs text-zinc-500">BOS</div>
-          <div className={`font-bold ${bos ? 'text-blue-400' : 'text-zinc-600'}`}>
-            {bos ? `✓ ${bos.direction}` : '○ No'}
-          </div>
-        </div>
-        <div className={`rounded-lg p-2 ${choch ? 'bg-emerald-500/10 border border-emerald-500/30' : 'bg-zinc-800/50'}`}>
-          <div className="text-xs text-zinc-500">CHoCH</div>
-          <div className={`font-bold ${choch ? 'text-emerald-400' : 'text-zinc-600'}`}>
-            {choch ? `✓ ${choch.direction}` : '○ No'}
-          </div>
-        </div>
-      </div>
-      
-      {/* Order Block & Fib */}
-      <div className="grid grid-cols-2 gap-2">
-        <div className={`rounded-lg p-2 ${orderBlocks?.decisional || orderBlocks?.original ? 'bg-purple-500/10 border border-purple-500/30' : 'bg-zinc-800/50'}`}>
-          <div className="text-xs text-zinc-500">Order Block</div>
-          <div className={`font-bold text-sm ${orderBlocks?.original ? 'text-purple-400' : orderBlocks?.decisional ? 'text-purple-300' : 'text-zinc-600'}`}>
-            {orderBlocks?.original ? 'Original ✓' : orderBlocks?.decisional ? 'Decisional ✓' : '○ Buscando'}
-          </div>
-        </div>
-        <div className={`rounded-lg p-2 ${zoneCheck?.inFibZone ? 'bg-amber-500/10 border border-amber-500/30' : 'bg-zinc-800/50'}`}>
-          <div className="text-xs text-zinc-500">Zona Fib</div>
-          <div className={`font-bold text-sm ${zoneCheck?.inFibZone ? 'text-amber-400' : zoneCheck?.nearZone ? 'text-amber-300' : 'text-zinc-600'}`}>
-            {zoneCheck?.inFibZone ? '✓ En zona' : zoneCheck?.nearZone ? '~ Cerca' : '○ Fuera'}
-          </div>
-        </div>
-      </div>
-      
-      {/* Score */}
-      {scoring && (
-        <div className="pt-3 border-t border-zinc-800">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-zinc-400 text-sm">Score</span>
-            <span className={`font-bold ${
-              scoring.score >= 85 ? 'text-emerald-400' :
-              scoring.score >= 70 ? 'text-blue-400' :
-              scoring.score >= 55 ? 'text-amber-400' : 'text-zinc-400'
-            }`}>
-              {scoring.score}/100 ({scoring.classification})
-            </span>
-          </div>
-          <div className="h-2 bg-zinc-800 rounded-full overflow-hidden">
-            <div 
-              className={`h-full transition-all ${
-                scoring.score >= 85 ? 'bg-emerald-500' :
-                scoring.score >= 70 ? 'bg-blue-500' :
-                scoring.score >= 55 ? 'bg-amber-500' : 'bg-zinc-600'
-              }`}
-              style={{ width: `${scoring.score}%` }}
-            />
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-// =============================================
-// SIGNAL CARD
-// =============================================
-const SignalCard = ({ signal, onClick }) => {
-  if (!signal?.hasSignal) return null;
-  const isBuy = signal.direction === 'BULLISH';
-  
-  return (
-    <div 
-      onClick={() => onClick?.(signal)}
-      className={`rounded-xl border p-4 cursor-pointer transition hover:scale-[1.01] ${
-        isBuy ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-red-500/10 border-red-500/30'
-      }`}
-    >
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <span className="text-2xl">{isBuy ? '🟢' : '🔴'}</span>
-          <div>
-            <div className="font-bold text-white">{signal.symbolName}</div>
-            <div className="text-xs text-zinc-400">{signal.breakSignal?.type} - {new Date(signal.createdAt).toLocaleTimeString()}</div>
-          </div>
-        </div>
-        <div className={`font-bold ${isBuy ? 'text-emerald-400' : 'text-red-400'}`}>
-          {isBuy ? 'COMPRA' : 'VENTA'}
-        </div>
-      </div>
-      
-      {signal.levels && (
-        <div className="grid grid-cols-4 gap-2 text-xs">
-          <div className="bg-zinc-800/50 rounded p-2 text-center">
-            <div className="text-zinc-500">Entry</div>
-            <div className="font-mono text-blue-400">{signal.levels.entry}</div>
-          </div>
-          <div className="bg-zinc-800/50 rounded p-2 text-center">
-            <div className="text-zinc-500">SL</div>
-            <div className="font-mono text-red-400">{signal.levels.stopLoss}</div>
-          </div>
-          <div className="bg-zinc-800/50 rounded p-2 text-center">
-            <div className="text-zinc-500">TP1</div>
-            <div className="font-mono text-emerald-400">{signal.levels.takeProfit1}</div>
-          </div>
-          <div className="bg-zinc-800/50 rounded p-2 text-center">
-            <div className="text-zinc-500">Score</div>
-            <div className="font-mono text-amber-400">{signal.scoring?.score}</div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-// =============================================
-// DASHBOARD PRINCIPAL
+// MAIN DASHBOARD
 // =============================================
 export default function Dashboard() {
-  const [isConnected, setIsConnected] = useState(false);
+  const [connected, setConnected] = useState(false);
   const [symbols, setSymbols] = useState({});
-  const [selectedSymbol, setSelectedSymbol] = useState('R_75');
-  const [selectedTF, setSelectedTF] = useState('M15');
+  const [selectedSymbol, setSelectedSymbol] = useState('stpRNG');
   const [analysis, setAnalysis] = useState(null);
   const [narration, setNarration] = useState(null);
   const [signals, setSignals] = useState([]);
   const [dailyCounts, setDailyCounts] = useState({});
-  const [activeTab, setActiveTab] = useState('live');
-  const [loading, setLoading] = useState(false);
+  const [tab, setTab] = useState('live');
+  const [aiEnabled, setAiEnabled] = useState(true);
+  const [selectedSignal, setSelectedSignal] = useState(null);
 
   // Init
   useEffect(() => {
     const init = async () => {
       try {
-        const [health, syms, sigs, counts] = await Promise.all([
+        const [health, syms, sigs, counts, aiStatus] = await Promise.all([
           fetch(`${API_URL}/health`).then(r => r.json()),
           fetch(`${API_URL}/api/deriv/symbols`).then(r => r.json()),
           fetch(`${API_URL}/api/signals/history`).then(r => r.json()),
           fetch(`${API_URL}/api/signals/daily-count`).then(r => r.json()),
+          fetch(`${API_URL}/api/ai/status`).then(r => r.json()).catch(() => ({ aiEnabled: true })),
         ]);
-        setIsConnected(health.deriv);
+        setConnected(health.deriv);
         setSymbols(syms);
         setSignals(sigs);
         setDailyCounts(counts);
-      } catch (e) {
-        setIsConnected(false);
-      }
+        setAiEnabled(aiStatus.aiEnabled);
+      } catch { setConnected(false); }
     };
     init();
   }, []);
@@ -556,175 +493,156 @@ export default function Dashboard() {
   // Fetch analysis
   const fetchData = useCallback(async () => {
     if (!selectedSymbol) return;
-    setLoading(true);
     try {
-      const [analysisRes, narrationRes] = await Promise.all([
-        fetch(`${API_URL}/api/analyze/live/${selectedSymbol}?timeframe=${selectedTF}`).then(r => r.json()),
-        fetch(`${API_URL}/api/narration/${selectedSymbol}?timeframe=${selectedTF}`).then(r => r.json()),
+      const [a, n] = await Promise.all([
+        fetch(`${API_URL}/api/analyze/${selectedSymbol}`).then(r => r.json()),
+        fetch(`${API_URL}/api/narration/${selectedSymbol}`).then(r => r.json()),
       ]);
-      setAnalysis(analysisRes);
-      setNarration(narrationRes);
-    } catch (e) {}
-    setLoading(false);
-  }, [selectedSymbol, selectedTF]);
+      setAnalysis(a);
+      setNarration(n);
+    } catch {}
+  }, [selectedSymbol]);
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 8000);
-    return () => clearInterval(interval);
+    const i = setInterval(fetchData, 5000);
+    return () => clearInterval(i);
   }, [fetchData]);
 
   // Fetch signals
   useEffect(() => {
-    const fetchSignals = async () => {
+    const f = async () => {
       try {
-        const [sigs, counts] = await Promise.all([
+        const [s, c] = await Promise.all([
           fetch(`${API_URL}/api/signals/history`).then(r => r.json()),
           fetch(`${API_URL}/api/signals/daily-count`).then(r => r.json()),
         ]);
-        setSignals(sigs);
-        setDailyCounts(counts);
-      } catch (e) {}
+        setSignals(s);
+        setDailyCounts(c);
+      } catch {}
     };
-    const interval = setInterval(fetchSignals, 30000);
-    return () => clearInterval(interval);
+    const i = setInterval(f, 15000);
+    return () => clearInterval(i);
   }, []);
 
+  // Toggle IA
+  const handleToggleAI = async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/ai/toggle`, { method: 'POST' });
+      const data = await res.json();
+      setAiEnabled(data.aiEnabled);
+    } catch {}
+  };
+
   return (
-    <div className="min-h-screen bg-[#09090b] text-white">
+    <div className="min-h-screen bg-[#08080a] text-white">
       {/* Header */}
-      <header className="border-b border-zinc-800 px-4 py-3">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
+      <header className="border-b border-zinc-800/50 px-4 py-2.5">
+        <div className="max-w-6xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <h1 className="text-lg font-bold">Trading<span className="text-blue-500">Pro</span></h1>
-            <div className="flex items-center gap-1.5">
-              <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
-              <span className="text-xs text-zinc-400">{isConnected ? 'Online' : 'Offline'}</span>
+            <h1 className="text-base font-bold">Trading<span className="text-blue-500">Pro</span></h1>
+            <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400">v7.1 ELITE</span>
+            <div className="flex items-center gap-1">
+              <div className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+              <span className="text-[10px] text-zinc-500">{connected ? 'Online' : 'Offline'}</span>
             </div>
           </div>
-          <span className="text-xs text-zinc-500">v6.1 SMC</span>
+          <div className="text-[9px] text-zinc-600">Liquidez → Sweep → Displacement → CHoCH → OB → 1M</div>
         </div>
       </header>
 
       {/* Tabs */}
-      <nav className="border-b border-zinc-800 px-4">
-        <div className="max-w-7xl mx-auto flex gap-1">
+      <nav className="border-b border-zinc-800/50 px-4">
+        <div className="max-w-6xl mx-auto flex">
           {[
-            { id: 'live', label: '📊 Trading en Vivo' },
-            { id: 'signals', label: '🎯 Señales' },
+            { id: 'live', label: '📊 Análisis' },
             { id: 'history', label: '📜 Historial' },
-          ].map(tab => (
+          ].map(t => (
             <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`px-4 py-2.5 text-sm transition border-b-2 ${
-                activeTab === tab.id
-                  ? 'border-blue-500 text-white'
-                  : 'border-transparent text-zinc-400 hover:text-white'
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={`px-4 py-2 text-xs border-b-2 transition ${
+                tab === t.id ? 'border-blue-500 text-white' : 'border-transparent text-zinc-500'
               }`}
             >
-              {tab.label}
+              {t.label}
             </button>
           ))}
         </div>
       </nav>
 
       {/* Main */}
-      <main className="max-w-7xl mx-auto p-4">
-        {activeTab === 'live' && (
+      <main className="max-w-6xl mx-auto p-4">
+        {tab === 'live' && (
           <div className="space-y-4">
-            {/* Selectors */}
-            <div className="flex items-center justify-between gap-4 flex-wrap">
-              <SymbolSelector 
-                symbols={symbols} 
-                selected={selectedSymbol} 
-                onSelect={setSelectedSymbol}
-                dailyCounts={dailyCounts}
-              />
-              <TimeframeSelector selected={selectedTF} onSelect={setSelectedTF} />
-            </div>
-            
-            {/* Grid */}
+            <SymbolSelector symbols={symbols} selected={selectedSymbol} onSelect={setSelectedSymbol} counts={dailyCounts} />
+
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              {/* Chart + Narration */}
-              <div className="lg:col-span-2 space-y-4">
-                <div className="relative">
-                  {loading && (
-                    <div className="absolute inset-0 bg-zinc-900/70 flex items-center justify-center z-10 rounded-xl">
-                      <div className="text-zinc-400 text-sm">Analizando...</div>
-                    </div>
-                  )}
-                  <SMCChart 
-                    candles={analysis?.candles || []}
-                    markers={analysis?.chartMarkers}
-                    symbol={`${symbols[selectedSymbol]?.name || selectedSymbol} - ${selectedTF}`}
-                  />
-                </div>
+              <div className="lg:col-span-2 space-y-3">
+                <SMCChart 
+                  candles={analysis?.candles?.htf || []}
+                  markers={analysis?.chartMarkers}
+                  title={`${symbols[selectedSymbol]?.name} - 5M`}
+                />
                 
                 <NarrationPanel 
-                  narration={narration?.narration}
+                  narration={narration?.text}
                   waiting={narration?.waiting}
-                  status={narration?.status}
-                  levels={narration?.levels}
+                  status={analysis?.status}
+                  aiEnabled={aiEnabled}
+                  onToggleAI={handleToggleAI}
                 />
                 
                 {analysis?.hasSignal && <SignalCard signal={analysis} />}
               </div>
               
-              {/* Analysis Panel */}
-              <div>
-                <AnalysisPanel analysis={analysis} />
+              <div className="space-y-3">
+                <SMCFlow analysis={analysis} />
+                
+                {analysis?.scoring && (
+                  <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-3">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs text-zinc-500">Score</span>
+                      <span className={`text-sm font-bold ${analysis.scoring.score >= 90 ? 'text-emerald-400' : analysis.scoring.score >= 75 ? 'text-blue-400' : 'text-zinc-400'}`}>
+                        {analysis.scoring.score}/100 ({analysis.scoring.classification})
+                      </span>
+                    </div>
+                    <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                      <div className={`h-full transition-all ${analysis.scoring.score >= 90 ? 'bg-emerald-500' : analysis.scoring.score >= 75 ? 'bg-blue-500' : 'bg-zinc-600'}`} style={{ width: `${analysis.scoring.score}%` }} />
+                    </div>
+                    <div className="mt-1 text-[9px] text-zinc-500">
+                      {analysis.scoring.canAutomate ? '✅ Auto-ejecutable' : '⏳ Manual'}
+                      {analysis.structureUsed && ' • ⚠️ Estructura ya usada'}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
         )}
 
-        {activeTab === 'signals' && (
-          <div className="space-y-4">
-            <h2 className="text-lg font-bold">🎯 Señales Activas</h2>
-            {signals.filter(s => s.hasSignal).length === 0 ? (
-              <div className="text-center text-zinc-500 py-8">No hay señales activas</div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {signals.filter(s => s.hasSignal).slice(0, 10).map(s => (
-                  <SignalCard key={s.id} signal={s} />
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {activeTab === 'history' && (
-          <div className="space-y-4">
-            <h2 className="text-lg font-bold">📜 Historial</h2>
+        {tab === 'history' && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-bold">📜 Historial de Señales A+</h2>
+              <span className="text-[10px] text-zinc-500">Click para ver gráfico</span>
+            </div>
+            
             {signals.length === 0 ? (
-              <div className="text-center text-zinc-500 py-8">Sin historial</div>
+              <div className="text-center text-zinc-500 py-8 text-sm">Sin señales A+ aún</div>
             ) : (
-              <div className="space-y-2">
-                {signals.slice(0, 30).map(s => (
-                  <div key={s.id} className={`flex items-center justify-between p-3 rounded-lg border ${
-                    s.direction === 'BULLISH' ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-red-500/5 border-red-500/20'
-                  }`}>
-                    <div className="flex items-center gap-3">
-                      <span>{s.direction === 'BULLISH' ? '🟢' : '🔴'}</span>
-                      <div>
-                        <div className="font-medium text-white text-sm">{s.symbolName}</div>
-                        <div className="text-xs text-zinc-500">{s.breakSignal?.type} - {new Date(s.createdAt).toLocaleString()}</div>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className={`font-bold text-sm ${s.direction === 'BULLISH' ? 'text-emerald-400' : 'text-red-400'}`}>
-                        {s.direction === 'BULLISH' ? 'COMPRA' : 'VENTA'}
-                      </div>
-                      <div className="text-xs text-zinc-500">Entry: {s.levels?.entry}</div>
-                    </div>
-                  </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {signals.map(s => (
+                  <SignalCard key={s.id} signal={s} onViewDetails={setSelectedSignal} />
                 ))}
               </div>
             )}
           </div>
         )}
       </main>
+
+      {/* Modal */}
+      {selectedSignal && <SignalDetailModal signal={selectedSignal} onClose={() => setSelectedSignal(null)} />}
     </div>
   );
 }
