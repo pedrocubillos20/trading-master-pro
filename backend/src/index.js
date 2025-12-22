@@ -33,8 +33,12 @@ if (process.env.OPENAI_API_KEY) {
 const DERIV_APP_ID = process.env.DERIV_APP_ID || '117347';
 const DERIV_API_TOKEN = process.env.DERIV_API_TOKEN || '';
 const DERIV_WS_URL = 'wss://ws.derivws.com/websockets/v3';
-const WHATSAPP_PHONE = process.env.WHATSAPP_PHONE || '+573203921881';
+// WhatsApp Config - SIN el + en el número
+const WHATSAPP_PHONE = (process.env.WHATSAPP_PHONE || '573203921881').replace('+', '');
 const CALLMEBOT_API_KEY = process.env.CALLMEBOT_API_KEY || 'w2VJk5AzEsg3';
+
+console.log('📱 WhatsApp Phone:', WHATSAPP_PHONE);
+console.log('📱 WhatsApp API Key:', CALLMEBOT_API_KEY ? '✅ Configurada' : '❌ Falta');
 
 // =============================================
 // ÍNDICES
@@ -808,31 +812,55 @@ Habla como trader profesional SMC. Di qué está pasando y qué esperar.`;
 // WHATSAPP
 // =============================================
 async function sendWhatsApp(signal) {
-  if (!CALLMEBOT_API_KEY) return false;
-  const phone = WHATSAPP_PHONE.replace('+', '');
+  console.log('📱 Intentando enviar WhatsApp via TextMeBot...');
+  console.log('📱 Phone:', WHATSAPP_PHONE);
+  console.log('📱 API Key:', CALLMEBOT_API_KEY ? CALLMEBOT_API_KEY.substring(0, 4) + '***' : 'NO CONFIGURADA');
+  
+  if (!CALLMEBOT_API_KEY) {
+    console.log('❌ WhatsApp: API Key no configurada');
+    return false;
+  }
+  
   const msg = `🎯 *SMC ELITE v7.1*
-📊 ${signal.symbolName}
+📊 ${signal.symbolName || 'Test'}
 ${signal.direction === 'BULLISH' ? '🟢 COMPRA' : '🔴 VENTA'}
 
-✅ Sweep: ${signal.sweep?.description}
-✅ CHoCH: ${signal.choch?.description}
-✅ OB: ${signal.orderBlock?.description}
-✅ Entry: ${signal.ltfEntry?.confirmationType}
+✅ Sweep: ${signal.sweep?.description || 'N/A'}
+✅ CHoCH: ${signal.choch?.description || 'N/A'}
+✅ OB: ${signal.orderBlock?.description || 'N/A'}
+✅ Entry: ${signal.ltfEntry?.confirmationType || 'N/A'}
 
-📍 Entry: ${signal.levels?.entry}
-🛑 SL: ${signal.levels?.stopLoss}
-🎯 TP1 (1:2): ${signal.levels?.tp1}
-🎯 TP2 (1:3): ${signal.levels?.tp2}
-🎯 TP3 (1:5): ${signal.levels?.tp3}
-🎯 TP4 (1:10): ${signal.levels?.tp4}
+📍 Entry: ${signal.levels?.entry || 'N/A'}
+🛑 SL: ${signal.levels?.stopLoss || 'N/A'}
+🎯 TP1 (1:2): ${signal.levels?.tp1 || 'N/A'}
+🎯 TP2 (1:3): ${signal.levels?.tp2 || 'N/A'}
+🎯 TP3 (1:5): ${signal.levels?.tp3 || 'N/A'}
+🎯 TP4 (1:10): ${signal.levels?.tp4 || 'N/A'}
 
-🏆 Score: ${signal.scoring?.score}/100 (${signal.scoring?.classification})`;
+🏆 Score: ${signal.scoring?.score || 0}/100 (${signal.scoring?.classification || 'N/A'})`;
+
+  // TextMeBot API (diferente a CallMeBot)
+  const url = `https://api.textmebot.com/send.php?recipient=${WHATSAPP_PHONE}&apikey=${CALLMEBOT_API_KEY}&text=${encodeURIComponent(msg)}`;
+  
+  console.log('📱 Usando TextMeBot API');
 
   try {
-    await fetch(`https://api.callmebot.com/whatsapp.php?phone=${phone}&text=${encodeURIComponent(msg)}&apikey=${CALLMEBOT_API_KEY}`);
-    console.log('📱 WhatsApp enviado');
-    return true;
-  } catch { return false; }
+    const response = await fetch(url);
+    const text = await response.text();
+    console.log('📱 WhatsApp Response Status:', response.status);
+    console.log('📱 WhatsApp Response:', text.substring(0, 200));
+    
+    if (response.ok || text.includes('success') || text.includes('sent') || text.includes('queued')) {
+      console.log('✅ WhatsApp enviado exitosamente');
+      return true;
+    } else {
+      console.log('⚠️ WhatsApp respuesta:', text);
+      return false;
+    }
+  } catch (error) {
+    console.error('❌ WhatsApp Error:', error.message);
+    return false;
+  }
 }
 
 // =============================================
@@ -984,14 +1012,52 @@ app.get('/api/signals/daily-count', (req, res) => {
 });
 
 app.get('/api/test-whatsapp', async (req, res) => {
+  console.log('🧪 Test WhatsApp iniciado...');
+  
+  const config = {
+    phone: WHATSAPP_PHONE,
+    apiKeyConfigured: !!CALLMEBOT_API_KEY,
+    apiKeyPreview: CALLMEBOT_API_KEY ? CALLMEBOT_API_KEY.substring(0, 4) + '***' : 'NO CONFIGURADA',
+    service: 'TextMeBot'
+  };
+  
   const result = await sendWhatsApp({
-    symbolName: 'Test v7.1', direction: 'BULLISH',
-    sweep: { description: 'Sweep EQL' }, choch: { description: 'CHoCH Alcista' }, 
-    orderBlock: { description: 'OB Demanda' }, ltfEntry: { confirmationType: 'MICRO_CHOCH' },
-    levels: { entry: '100', stopLoss: '99', tp1: '102', tp2: '103', tp3: '105', tp4: '110' },
+    symbolName: '🧪 TEST v7.1', 
+    direction: 'BULLISH',
+    sweep: { description: 'Sweep EQL Test' }, 
+    choch: { description: 'CHoCH Alcista Test' }, 
+    orderBlock: { description: 'OB Demanda Test' }, 
+    ltfEntry: { confirmationType: 'TEST' },
+    levels: { entry: '100.00', stopLoss: '99.00', tp1: '102.00', tp2: '103.00', tp3: '105.00', tp4: '110.00' },
     scoring: { score: 95, classification: 'A+' }
   });
-  res.json({ success: result });
+  
+  res.json({ 
+    success: result, 
+    config,
+    message: result ? '✅ Mensaje enviado, revisa tu WhatsApp' : '❌ Error al enviar, revisa los logs en Railway',
+    testUrl: `https://api.textmebot.com/send.php?recipient=${WHATSAPP_PHONE}&apikey=${CALLMEBOT_API_KEY}&text=Test+Manual`
+  });
+});
+
+// Endpoint para ver configuración
+app.get('/api/config', (req, res) => {
+  res.json({
+    version: '7.1-elite',
+    whatsapp: {
+      phone: WHATSAPP_PHONE,
+      apiKeyConfigured: !!CALLMEBOT_API_KEY,
+      apiKeyPreview: CALLMEBOT_API_KEY ? CALLMEBOT_API_KEY.substring(0, 4) + '***' : 'NO'
+    },
+    deriv: {
+      connected: isDerivConnected,
+      appId: DERIV_APP_ID
+    },
+    ai: {
+      enabled: aiEnabled,
+      configured: !!openai
+    }
+  });
 });
 
 app.listen(PORT, () => {
