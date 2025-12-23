@@ -1,6 +1,6 @@
 // =============================================
-// TRADING MASTER PRO - DASHBOARD v7.3.1
-// SMC + PSICOTRADING + ORO (GOLD)
+// TRADING MASTER PRO - DASHBOARD v7.4
+// SMC + PSICOTRADING COMPLETO + PLAN SMC
 // =============================================
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -33,7 +33,6 @@ const SMCChart = ({ candles, markers, title, height = 320 }) => {
     const candleW = (w - 50) / visible.length;
     const chartR = w - 45;
     
-    // Grid
     ctx.strokeStyle = '#141418';
     for (let i = 0; i <= 4; i++) {
       const y = 20 + ((h - 40) / 4) * i;
@@ -42,7 +41,6 @@ const SMCChart = ({ candles, markers, title, height = 320 }) => {
       ctx.fillText((maxP + pad - ((range + pad * 2) / 4) * i).toFixed(2), chartR + 2, y + 3);
     }
 
-    // EQH/EQL
     markers?.liquidity?.equalHighs?.forEach(level => {
       const y = scaleY(level);
       ctx.strokeStyle = '#ef4444'; ctx.setLineDash([2, 2]);
@@ -50,6 +48,7 @@ const SMCChart = ({ candles, markers, title, height = 320 }) => {
       ctx.setLineDash([]); ctx.fillStyle = '#ef4444'; ctx.font = 'bold 7px sans-serif';
       ctx.fillText('$$$ EQH', 2, y - 2);
     });
+    
     markers?.liquidity?.equalLows?.forEach(level => {
       const y = scaleY(level);
       ctx.strokeStyle = '#22c55e'; ctx.setLineDash([2, 2]);
@@ -58,7 +57,6 @@ const SMCChart = ({ candles, markers, title, height = 320 }) => {
       ctx.fillText('$$$ EQL', 2, y + 8);
     });
 
-    // OB
     if (markers?.orderBlock) {
       const ob = markers.orderBlock;
       const y1 = scaleY(ob.high), y2 = scaleY(ob.low);
@@ -68,7 +66,6 @@ const SMCChart = ({ candles, markers, title, height = 320 }) => {
       ctx.strokeRect(0, Math.min(y1, y2), chartR, Math.abs(y2 - y1));
     }
 
-    // Candles
     visible.forEach((c, i) => {
       const x = 5 + i * candleW + candleW / 2;
       const o = scaleY(c.open), cl = scaleY(c.close), hi = scaleY(c.high), lo = scaleY(c.low);
@@ -77,7 +74,6 @@ const SMCChart = ({ candles, markers, title, height = 320 }) => {
       ctx.fillStyle = col; ctx.fillRect(x - candleW * 0.35, Math.min(o, cl), candleW * 0.7, Math.abs(cl - o) || 1);
     });
 
-    // CHoCH
     if (markers?.choch) {
       const y = scaleY(markers.choch.price);
       ctx.strokeStyle = markers.choch.direction === 'BULLISH' ? '#22c55e' : '#ef4444';
@@ -132,13 +128,15 @@ const SMCFlow = ({ analysis }) => {
 // =============================================
 // NARRACIÓN
 // =============================================
-const NarrationPanel = ({ narration, status, aiEnabled, onToggleAI }) => {
+const NarrationPanel = ({ narration, status, aiEnabled, onToggleAI, score }) => {
   const statusCfg = {
     'SEÑAL_ACTIVA': { bg: 'bg-emerald-500/10 border-emerald-500/40', label: '🎯 SEÑAL' },
-    'ESPERANDO_ENTRADA': { bg: 'bg-blue-500/10 border-blue-500/40', label: '⏳ Esperando' },
+    'ESPERANDO_ENTRADA': { bg: 'bg-blue-500/10 border-blue-500/40', label: '⏳ Entrada' },
     'ESPERANDO_CHOCH': { bg: 'bg-amber-500/10 border-amber-500/40', label: '🔄 CHoCH' },
+    'ESPERANDO_DISPLACEMENT': { bg: 'bg-orange-500/10 border-orange-500/40', label: '💨 Displacement' },
     'ESPERANDO_SWEEP': { bg: 'bg-yellow-500/10 border-yellow-500/40', label: '🧹 Sweep' },
     'SIN_LIQUIDEZ': { bg: 'bg-zinc-500/10 border-zinc-500/40', label: '💰 Liquidez' },
+    'BUSCANDO_OB': { bg: 'bg-purple-500/10 border-purple-500/40', label: '📦 OB' },
   };
   const cfg = statusCfg[status] || statusCfg.SIN_LIQUIDEZ;
 
@@ -148,6 +146,11 @@ const NarrationPanel = ({ narration, status, aiEnabled, onToggleAI }) => {
         <div className="flex items-center gap-2">
           <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
           <span className="text-xs text-white">{cfg.label}</span>
+          {score > 0 && (
+            <span className={`text-[9px] px-1.5 py-0.5 rounded ${score >= 85 ? 'bg-emerald-500/20 text-emerald-400' : score >= 70 ? 'bg-blue-500/20 text-blue-400' : 'bg-zinc-500/20 text-zinc-400'}`}>
+              {score}/100
+            </span>
+          )}
         </div>
         <button onClick={onToggleAI} className={`px-2 py-0.5 rounded text-[9px] ${aiEnabled ? 'bg-emerald-500/20 text-emerald-400' : 'bg-zinc-700 text-zinc-500'}`}>
           🤖 {aiEnabled ? 'ON' : 'OFF'}
@@ -159,13 +162,12 @@ const NarrationPanel = ({ narration, status, aiEnabled, onToggleAI }) => {
 };
 
 // =============================================
-// SIGNAL CARD CON TRACKING
+// SIGNAL CARD
 // =============================================
 const SignalCard = ({ signal, onTrack, showTracking = true }) => {
   const [tracking, setTracking] = useState({ operated: signal.operated, result: signal.result });
   const isBuy = signal.direction === 'BULLISH';
   
-  // Emoji según el activo
   const getEmoji = (symbol) => {
     if (symbol === 'frxXAUUSD') return '🥇';
     return isBuy ? '🟢' : '🔴';
@@ -188,7 +190,7 @@ const SignalCard = ({ signal, onTrack, showTracking = true }) => {
         </div>
         <div className="text-right">
           <div className={`font-bold text-sm ${isBuy ? 'text-emerald-400' : 'text-red-400'}`}>{isBuy ? 'COMPRA' : 'VENTA'}</div>
-          <div className="text-[9px] text-zinc-500">{signal.scoring?.score}/100</div>
+          <div className="text-[9px] text-zinc-500">{signal.scoring?.score}/100 ({signal.scoring?.classification})</div>
         </div>
       </div>
       
@@ -248,7 +250,7 @@ const SignalCard = ({ signal, onTrack, showTracking = true }) => {
 };
 
 // =============================================
-// ESTADÍSTICAS PANEL
+// ESTADÍSTICAS
 // =============================================
 const StatsPanel = ({ stats }) => {
   if (!stats) return null;
@@ -278,7 +280,7 @@ const StatsPanel = ({ stats }) => {
         </div>
       </div>
       
-      <div className="flex gap-2 mb-3">
+      <div className="flex gap-2">
         <div className={`flex-1 rounded p-2 text-center ${stats.streaks?.currentWin > 0 ? 'bg-emerald-500/10' : 'bg-zinc-800/30'}`}>
           <div className="text-xs text-emerald-400">🔥 {stats.streaks?.currentWin || 0}</div>
           <div className="text-[8px] text-zinc-500">Racha Wins</div>
@@ -293,12 +295,21 @@ const StatsPanel = ({ stats }) => {
 };
 
 // =============================================
-// 🧠 PSICOTRADING PANEL
+// 🧠 PSICOTRADING COMPLETO
 // =============================================
 const PsychoPanel = ({ emotionalState }) => {
   const [message, setMessage] = useState('');
   const [chat, setChat] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState('coach'); // 'coach' o 'plan'
+  const [plan, setPlan] = useState(null);
+  const [planLoading, setPlanLoading] = useState(false);
+  const [planPrefs, setPlanPrefs] = useState({
+    capital: '',
+    riskPerTrade: '1-2%',
+    schedule: '',
+    experience: 'Intermedio'
+  });
   
   const stateColors = {
     'NEUTRAL': 'bg-zinc-500/20 text-zinc-400',
@@ -329,22 +340,41 @@ const PsychoPanel = ({ emotionalState }) => {
         body: JSON.stringify({ message: userMsg })
       });
       const data = await res.json();
-      setChat(prev => [...prev, { role: 'assistant', content: data.response }]);
-    } catch {
-      setChat(prev => [...prev, { role: 'assistant', content: 'Error al conectar con el coach' }]);
+      setChat(prev => [...prev, { role: 'assistant', content: data.response || data.error || 'Sin respuesta' }]);
+    } catch (err) {
+      setChat(prev => [...prev, { role: 'assistant', content: 'Error de conexión. Intenta de nuevo.' }]);
     }
     setLoading(false);
   };
   
+  const handleGeneratePlan = async () => {
+    setPlanLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/psycho/plan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(planPrefs)
+      });
+      const data = await res.json();
+      setPlan(data.plan || data.error);
+    } catch {
+      setPlan('Error generando plan. Intenta de nuevo.');
+    }
+    setPlanLoading(false);
+  };
+  
   const quickMessages = [
     '¿Debería operar ahora?',
-    'Estoy nervioso',
-    '¿Cómo manejo pérdidas?',
-    'Tips para el oro'
+    'Estoy nervioso después de perder',
+    '¿Cómo identifico un buen sweep?',
+    '¿Qué es un CHoCH válido?',
+    'Tips para manejar el FOMO',
+    '¿Cuándo NO debo operar?'
   ];
 
   return (
     <div className="space-y-4">
+      {/* Estado Emocional */}
       <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-4">
         <h3 className="text-sm font-bold text-white mb-3">🧠 Estado Emocional</h3>
         
@@ -360,50 +390,167 @@ const PsychoPanel = ({ emotionalState }) => {
             ))}
           </div>
         )}
+        
+        <div className="grid grid-cols-3 gap-2 mt-3 text-center text-[10px]">
+          <div className="bg-black/20 rounded p-2">
+            <div className="text-white font-bold">{emotionalState?.stats?.todayTrades || 0}</div>
+            <div className="text-zinc-500">Hoy</div>
+          </div>
+          <div className="bg-black/20 rounded p-2">
+            <div className="text-emerald-400 font-bold">{emotionalState?.stats?.currentWinStreak || 0}</div>
+            <div className="text-zinc-500">Wins</div>
+          </div>
+          <div className="bg-black/20 rounded p-2">
+            <div className="text-red-400 font-bold">{emotionalState?.stats?.currentLossStreak || 0}</div>
+            <div className="text-zinc-500">Losses</div>
+          </div>
+        </div>
       </div>
       
-      <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-4">
-        <h3 className="text-sm font-bold text-white mb-3">💬 Coach de Trading</h3>
-        
-        <div className="flex flex-wrap gap-1 mb-3">
-          {quickMessages.map((q, i) => (
-            <button key={i} onClick={() => setMessage(q)}
-              className="text-[9px] px-2 py-1 rounded bg-zinc-800 text-zinc-400 hover:bg-zinc-700">
-              {q}
-            </button>
-          ))}
-        </div>
-        
-        <div className="h-40 overflow-y-auto mb-3 space-y-2">
-          {chat.length === 0 ? (
-            <div className="text-center text-zinc-500 text-xs py-4">
-              Soy tu coach de trading. ¿En qué puedo ayudarte?
-            </div>
-          ) : (
-            chat.map((msg, i) => (
-              <div key={i} className={`text-xs p-2 rounded ${
-                msg.role === 'user' ? 'bg-blue-500/20 text-blue-300 ml-8' : 'bg-zinc-800 text-zinc-300 mr-8'
-              }`}>
-                {msg.content}
-              </div>
-            ))
-          )}
-          {loading && <div className="text-xs text-zinc-500 animate-pulse">Pensando...</div>}
-        </div>
-        
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && handleSend()}
-            placeholder="Escribe tu pregunta..."
-            className="flex-1 bg-zinc-800 rounded-lg px-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none"
-          />
-          <button onClick={handleSend} disabled={loading}
-            className="px-4 py-2 rounded-lg bg-blue-600 text-white text-xs hover:bg-blue-500 disabled:opacity-50">
-            Enviar
+      {/* Tabs: Coach / Plan */}
+      <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl overflow-hidden">
+        <div className="flex border-b border-zinc-800">
+          <button
+            onClick={() => setActiveTab('coach')}
+            className={`flex-1 py-2 text-xs font-medium ${activeTab === 'coach' ? 'bg-blue-500/20 text-blue-400 border-b-2 border-blue-500' : 'text-zinc-500'}`}
+          >
+            💬 Coach SMC
           </button>
+          <button
+            onClick={() => setActiveTab('plan')}
+            className={`flex-1 py-2 text-xs font-medium ${activeTab === 'plan' ? 'bg-purple-500/20 text-purple-400 border-b-2 border-purple-500' : 'text-zinc-500'}`}
+          >
+            📋 Plan Trading
+          </button>
+        </div>
+        
+        <div className="p-4">
+          {/* Tab: Coach */}
+          {activeTab === 'coach' && (
+            <>
+              <div className="flex flex-wrap gap-1 mb-3">
+                {quickMessages.map((q, i) => (
+                  <button key={i} onClick={() => setMessage(q)}
+                    className="text-[9px] px-2 py-1 rounded bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white transition">
+                    {q}
+                  </button>
+                ))}
+              </div>
+              
+              <div className="h-48 overflow-y-auto mb-3 space-y-2 bg-black/20 rounded-lg p-2">
+                {chat.length === 0 ? (
+                  <div className="text-center text-zinc-500 text-xs py-8">
+                    👋 Hola! Soy tu coach de SMC.<br/>
+                    Pregúntame sobre trading, emociones o metodología.
+                  </div>
+                ) : (
+                  chat.map((msg, i) => (
+                    <div key={i} className={`text-xs p-2 rounded-lg ${
+                      msg.role === 'user' ? 'bg-blue-500/20 text-blue-300 ml-8' : 'bg-zinc-800 text-zinc-300 mr-8'
+                    }`}>
+                      {msg.content}
+                    </div>
+                  ))
+                )}
+                {loading && <div className="text-xs text-zinc-500 animate-pulse p-2">🤔 Pensando...</div>}
+              </div>
+              
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+                  placeholder="Escribe tu pregunta sobre SMC..."
+                  className="flex-1 bg-zinc-800 rounded-lg px-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                <button onClick={handleSend} disabled={loading}
+                  className="px-4 py-2 rounded-lg bg-blue-600 text-white text-xs hover:bg-blue-500 disabled:opacity-50 transition">
+                  Enviar
+                </button>
+              </div>
+            </>
+          )}
+          
+          {/* Tab: Plan de Trading SMC */}
+          {activeTab === 'plan' && (
+            <>
+              {!plan ? (
+                <div className="space-y-3">
+                  <p className="text-xs text-zinc-400 mb-3">
+                    Genera tu plan de trading personalizado basado en Smart Money Concepts.
+                  </p>
+                  
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[10px] text-zinc-500">Capital</label>
+                      <input
+                        placeholder="Ej: $500"
+                        value={planPrefs.capital}
+                        onChange={(e) => setPlanPrefs({...planPrefs, capital: e.target.value})}
+                        className="w-full bg-zinc-800 rounded px-2 py-1.5 text-xs text-white mt-1"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-zinc-500">Riesgo/Trade</label>
+                      <select
+                        value={planPrefs.riskPerTrade}
+                        onChange={(e) => setPlanPrefs({...planPrefs, riskPerTrade: e.target.value})}
+                        className="w-full bg-zinc-800 rounded px-2 py-1.5 text-xs text-white mt-1"
+                      >
+                        <option value="0.5%">0.5%</option>
+                        <option value="1%">1%</option>
+                        <option value="1-2%">1-2%</option>
+                        <option value="2%">2%</option>
+                        <option value="3%">3%</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-zinc-500">Horario</label>
+                      <input
+                        placeholder="Ej: 8am-12pm"
+                        value={planPrefs.schedule}
+                        onChange={(e) => setPlanPrefs({...planPrefs, schedule: e.target.value})}
+                        className="w-full bg-zinc-800 rounded px-2 py-1.5 text-xs text-white mt-1"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-zinc-500">Experiencia</label>
+                      <select
+                        value={planPrefs.experience}
+                        onChange={(e) => setPlanPrefs({...planPrefs, experience: e.target.value})}
+                        className="w-full bg-zinc-800 rounded px-2 py-1.5 text-xs text-white mt-1"
+                      >
+                        <option>Principiante</option>
+                        <option>Intermedio</option>
+                        <option>Avanzado</option>
+                      </select>
+                    </div>
+                  </div>
+                  
+                  <button
+                    onClick={handleGeneratePlan}
+                    disabled={planLoading}
+                    className="w-full py-2.5 rounded-lg bg-purple-600 text-white text-xs font-medium hover:bg-purple-500 disabled:opacity-50 transition"
+                  >
+                    {planLoading ? '⏳ Generando plan SMC...' : '🚀 Generar Mi Plan SMC'}
+                  </button>
+                </div>
+              ) : (
+                <div>
+                  <div className="bg-black/20 rounded-lg p-3 text-xs text-zinc-300 whitespace-pre-wrap max-h-72 overflow-y-auto">
+                    {plan}
+                  </div>
+                  <button
+                    onClick={() => setPlan(null)}
+                    className="w-full mt-3 py-2 rounded-lg bg-zinc-800 text-zinc-400 text-xs hover:bg-zinc-700 transition"
+                  >
+                    🔄 Generar nuevo plan
+                  </button>
+                </div>
+              )}
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -411,10 +558,9 @@ const PsychoPanel = ({ emotionalState }) => {
 };
 
 // =============================================
-// 🎯 SYMBOL SELECTOR (Con Oro)
+// SYMBOL SELECTOR
 // =============================================
 const SymbolSelector = ({ symbols, selected, onSelect, counts }) => {
-  // Emojis por símbolo
   const getEmoji = (key) => {
     if (key === 'frxXAUUSD') return '🥇';
     if (key === 'stpRNG') return '📊';
@@ -463,7 +609,6 @@ export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [emotionalState, setEmotionalState] = useState(null);
 
-  // Init
   useEffect(() => {
     const init = async () => {
       try {
@@ -486,7 +631,6 @@ export default function Dashboard() {
     init();
   }, []);
 
-  // Fetch analysis
   const fetchData = useCallback(async () => {
     if (!selectedSymbol) return;
     try {
@@ -505,7 +649,6 @@ export default function Dashboard() {
     return () => clearInterval(i);
   }, [fetchData]);
 
-  // Fetch signals & stats
   useEffect(() => {
     const f = async () => {
       try {
@@ -549,17 +692,15 @@ export default function Dashboard() {
     } catch {}
   };
 
-  // Determinar si es Oro
   const isGold = selectedSymbol === 'frxXAUUSD';
 
   return (
     <div className="min-h-screen bg-[#08080a] text-white">
-      {/* Header */}
       <header className="border-b border-zinc-800/50 px-4 py-2">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-2">
             <h1 className="text-base font-bold">Trading<span className="text-blue-500">Pro</span></h1>
-            <span className="text-[8px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400">v7.3.1</span>
+            <span className="text-[8px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400">v7.4</span>
             <span className="text-[8px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400">+GOLD</span>
             <div className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
           </div>
@@ -574,7 +715,6 @@ export default function Dashboard() {
         </div>
       </header>
 
-      {/* Tabs */}
       <nav className="border-b border-zinc-800/50 px-4">
         <div className="max-w-6xl mx-auto flex">
           {[
@@ -590,17 +730,14 @@ export default function Dashboard() {
         </div>
       </nav>
 
-      {/* Main */}
       <main className="max-w-6xl mx-auto p-4">
-        {/* LIVE TAB */}
         {tab === 'live' && (
           <div className="space-y-4">
             <SymbolSelector symbols={symbols} selected={selectedSymbol} onSelect={setSelectedSymbol} counts={dailyCounts} />
             
-            {/* Indicador de Gold */}
             {isGold && (
               <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-2 text-center">
-                <span className="text-amber-400 text-xs">🥇 Analizando Gold/USD - Mayor volatilidad, configuración adaptada</span>
+                <span className="text-amber-400 text-xs">🥇 Gold/USD - Parámetros ajustados para mayor volatilidad</span>
               </div>
             )}
             
@@ -611,7 +748,13 @@ export default function Dashboard() {
                   markers={analysis?.chartMarkers} 
                   title={`${isGold ? '🥇' : '📊'} ${symbols[selectedSymbol]?.name || selectedSymbol} - 5M`} 
                 />
-                <NarrationPanel narration={narration?.text} status={analysis?.status} aiEnabled={aiEnabled} onToggleAI={handleToggleAI} />
+                <NarrationPanel 
+                  narration={narration?.text} 
+                  status={analysis?.status} 
+                  aiEnabled={aiEnabled} 
+                  onToggleAI={handleToggleAI}
+                  score={analysis?.scoring?.score || 0}
+                />
                 {analysis?.hasSignal && <SignalCard signal={analysis} onTrack={handleTrackSignal} />}
               </div>
               <div className="space-y-3">
@@ -622,7 +765,6 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* HISTORY TAB */}
         {tab === 'history' && (
           <div className="space-y-4">
             <div className="flex justify-between items-center">
@@ -633,7 +775,9 @@ export default function Dashboard() {
             </div>
             
             {signals.length === 0 ? (
-              <div className="text-center text-zinc-500 py-8 text-sm">Sin señales aún</div>
+              <div className="text-center text-zinc-500 py-8 text-sm">
+                Sin señales aún. El sistema está analizando el mercado...
+              </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {signals.map(s => (
@@ -644,7 +788,6 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* PSICOTRADING TAB */}
         {tab === 'psycho' && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <PsychoPanel emotionalState={emotionalState} />

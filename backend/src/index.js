@@ -1,6 +1,6 @@
 // =============================================
-// TRADING MASTER PRO - BACKEND v7.3.1
-// SMC + PERSISTENCIA + ORO (GOLD)
+// TRADING MASTER PRO - BACKEND v7.4
+// SMC AJUSTADO + PSICOTRADING COMPLETO
 // =============================================
 
 import express from 'express';
@@ -16,9 +16,9 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-console.log('\n🔧 TRADING MASTER PRO v7.3.1');
+console.log('\n🔧 TRADING MASTER PRO v7.4');
 console.log('═══════════════════════════════════════');
-console.log('SMC + PERSISTENCIA + ORO (GOLD)');
+console.log('SMC AJUSTADO + PSICOTRADING COMPLETO');
 console.log('═══════════════════════════════════════');
 
 // =============================================
@@ -36,6 +36,9 @@ if (SUPABASE_URL && SUPABASE_KEY) {
 let openai = null;
 if (process.env.OPENAI_API_KEY) {
   openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  console.log('✅ OpenAI conectado');
+} else {
+  console.log('⚠️ OpenAI NO configurado');
 }
 
 const DERIV_APP_ID = process.env.DERIV_APP_ID || '117347';
@@ -48,33 +51,38 @@ const BACKEND_URL = process.env.RAILWAY_PUBLIC_DOMAIN
   : process.env.BACKEND_URL || 'https://trading-master-pro-production.up.railway.app';
 
 // =============================================
-// 🎯 ÍNDICES - AHORA CON ORO
+// 🎯 ÍNDICES CON ORO
 // =============================================
 const SYNTHETIC_INDICES = {
-  // Índices sintéticos
-  'stpRNG': { name: 'Step Index', pip: 0.01, type: 'synthetic' },
-  'R_75': { name: 'Volatility 75', pip: 0.0001, type: 'synthetic' },
-  'R_100': { name: 'Volatility 100', pip: 0.01, type: 'synthetic' },
-  
-  // 🥇 ORO - Gold/USD
+  'stpRNG': { name: 'Step Index', pip: 0.01, type: 'synthetic', emoji: '📊' },
+  'R_75': { name: 'Volatility 75', pip: 0.0001, type: 'synthetic', emoji: '📈' },
+  'R_100': { name: 'Volatility 100', pip: 0.01, type: 'synthetic', emoji: '📉' },
   'frxXAUUSD': { name: 'Gold/USD', pip: 0.01, type: 'forex', emoji: '🥇' },
 };
 
-// Configuración específica por tipo de activo
+// =============================================
+// 🔧 CONFIGURACIÓN SMC AJUSTADA (MENOS ESTRICTA)
+// =============================================
 const ASSET_CONFIG = {
   synthetic: {
-    tolerance: 0.0003,      // Tolerancia para EQH/EQL
-    sweepWindow: 6,         // Velas para detectar sweep
-    maxAge: 20,             // Máxima antigüedad de liquidez
-    displacementMultiplier: 1.5,
+    tolerance: 0.0005,        // ⬆️ Era 0.0003 - Más tolerante para EQH/EQL
+    sweepWindow: 8,           // ⬆️ Era 6 - Más velas para detectar sweep
+    maxAge: 30,               // ⬆️ Era 20 - Más tiempo para liquidez válida
+    displacementMultiplier: 1.2, // ⬇️ Era 1.5 - Menos exigente
+    minSwingDistance: 2,      // ⬇️ Era 3 - Swings más cercanos válidos
   },
   forex: {
-    tolerance: 0.0005,      // Oro es más volátil
-    sweepWindow: 8,         // Más velas para sweep
-    maxAge: 25,             // Más tiempo para liquidez
-    displacementMultiplier: 1.3, // Menos estricto
+    tolerance: 0.0008,        // ⬆️ Era 0.0005
+    sweepWindow: 10,          // ⬆️ Era 8
+    maxAge: 35,               // ⬆️ Era 25
+    displacementMultiplier: 1.1, // ⬇️ Era 1.3
+    minSwingDistance: 2,
   }
 };
+
+// Score mínimo ajustado
+const MIN_SCORE_VALID = 70;      // ⬇️ Era 75
+const MIN_SCORE_AUTO = 85;       // ⬇️ Era 90
 
 const TF_HTF = 300;  // 5M
 const TF_LTF = 60;   // 1M
@@ -139,7 +147,7 @@ const Persistence = {
       const age = (Date.now() - new Date(data.updated_at).getTime()) / 1000 / 60;
       if (age > 30) return null;
       
-      console.log(`✅ Cargadas ${key} desde Supabase (${age.toFixed(1)} min antigüedad)`);
+      console.log(`✅ Cargadas ${key} desde Supabase (${age.toFixed(1)} min)`);
       return JSON.parse(data.candles);
     } catch {
       return null;
@@ -261,7 +269,7 @@ const KeepAlive = {
     this.interval = setInterval(async () => {
       try {
         await fetch(`${BACKEND_URL}/health`);
-        console.log(`💓 Keep-alive ping OK - ${new Date().toLocaleTimeString()}`);
+        console.log(`💓 Keep-alive OK - ${new Date().toLocaleTimeString()}`);
         await Persistence.saveState();
         
         for (const [key, candles] of candleData.entries()) {
@@ -284,7 +292,7 @@ const KeepAlive = {
 };
 
 // =============================================
-// 🧠 ANALIZADOR SMC (Adaptativo por activo)
+// 🧠 ANALIZADOR SMC AJUSTADO
 // =============================================
 const SMCAnalyzer = {
   
@@ -293,7 +301,7 @@ const SMCAnalyzer = {
     return ASSET_CONFIG[asset?.type] || ASSET_CONFIG.synthetic;
   },
   
-  findSwings(candles, length = 3) {
+  findSwings(candles, length = 2) { // ⬇️ Era 3
     const highs = [], lows = [];
     for (let i = length; i < candles.length - length; i++) {
       let isHigh = true, isLow = true;
@@ -309,14 +317,14 @@ const SMCAnalyzer = {
 
   detectLiquidity(candles, swings, config) {
     const liquidity = { equalHighs: [], equalLows: [] };
-    const recentHighs = swings.highs.slice(-5);
-    const recentLows = swings.lows.slice(-5);
+    const recentHighs = swings.highs.slice(-7); // ⬆️ Era 5
+    const recentLows = swings.lows.slice(-7);   // ⬆️ Era 5
     const tolerance = config.tolerance;
     
     for (let i = 0; i < recentHighs.length - 1; i++) {
       for (let j = i + 1; j < recentHighs.length; j++) {
         const diff = Math.abs(recentHighs[i].price - recentHighs[j].price) / recentHighs[i].price;
-        if (diff <= tolerance && Math.abs(recentHighs[i].index - recentHighs[j].index) >= 3) {
+        if (diff <= tolerance && Math.abs(recentHighs[i].index - recentHighs[j].index) >= config.minSwingDistance) {
           liquidity.equalHighs.push({
             level: (recentHighs[i].price + recentHighs[j].price) / 2,
             age: candles.length - Math.max(recentHighs[i].index, recentHighs[j].index),
@@ -328,7 +336,7 @@ const SMCAnalyzer = {
     for (let i = 0; i < recentLows.length - 1; i++) {
       for (let j = i + 1; j < recentLows.length; j++) {
         const diff = Math.abs(recentLows[i].price - recentLows[j].price) / recentLows[i].price;
-        if (diff <= tolerance && Math.abs(recentLows[i].index - recentLows[j].index) >= 3) {
+        if (diff <= tolerance && Math.abs(recentLows[i].index - recentLows[j].index) >= config.minSwingDistance) {
           liquidity.equalLows.push({
             level: (recentLows[i].price + recentLows[j].price) / 2,
             age: candles.length - Math.max(recentLows[i].index, recentLows[j].index),
@@ -345,26 +353,45 @@ const SMCAnalyzer = {
     const recent = candles.slice(-config.sweepWindow);
     const currentIndex = candles.length;
     
+    // Sweep de EQH (Bearish)
     for (const eqHigh of liquidity.equalHighs) {
       if (eqHigh.age > config.maxAge) continue;
       for (let i = 0; i < recent.length; i++) {
         const c = recent[i];
         const wickAbove = c.high - Math.max(c.open, c.close);
-        const bodySize = Math.abs(c.close - c.open);
-        if (c.high > eqHigh.level && c.close < eqHigh.level && c.open < eqHigh.level && wickAbove > bodySize * 0.3) {
-          return { type: 'SWEEP_HIGH', direction: 'BEARISH', level: eqHigh.level, sweepIndex: currentIndex - (recent.length - i), description: 'Sweep EQH', valid: true };
+        const bodySize = Math.abs(c.close - c.open) || 0.0001;
+        
+        // Relajado: wick > 20% del body (era 30%)
+        if (c.high > eqHigh.level && c.close < eqHigh.level && wickAbove > bodySize * 0.2) {
+          return { 
+            type: 'SWEEP_HIGH', 
+            direction: 'BEARISH', 
+            level: eqHigh.level, 
+            sweepIndex: currentIndex - (recent.length - i), 
+            description: 'Sweep de EQH', 
+            valid: true 
+          };
         }
       }
     }
     
+    // Sweep de EQL (Bullish)
     for (const eqLow of liquidity.equalLows) {
       if (eqLow.age > config.maxAge) continue;
       for (let i = 0; i < recent.length; i++) {
         const c = recent[i];
         const wickBelow = Math.min(c.open, c.close) - c.low;
-        const bodySize = Math.abs(c.close - c.open);
-        if (c.low < eqLow.level && c.close > eqLow.level && c.open > eqLow.level && wickBelow > bodySize * 0.3) {
-          return { type: 'SWEEP_LOW', direction: 'BULLISH', level: eqLow.level, sweepIndex: currentIndex - (recent.length - i), description: 'Sweep EQL', valid: true };
+        const bodySize = Math.abs(c.close - c.open) || 0.0001;
+        
+        if (c.low < eqLow.level && c.close > eqLow.level && wickBelow > bodySize * 0.2) {
+          return { 
+            type: 'SWEEP_LOW', 
+            direction: 'BULLISH', 
+            level: eqLow.level, 
+            sweepIndex: currentIndex - (recent.length - i), 
+            description: 'Sweep de EQL', 
+            valid: true 
+          };
         }
       }
     }
@@ -379,21 +406,28 @@ const SMCAnalyzer = {
     if (afterSweep.length < 2) return null;
     
     const lookback = candles.slice(Math.max(0, sweepIndex - 20), Math.max(0, sweepIndex - 2));
-    if (lookback.length < 5) return null;
+    if (lookback.length < 3) return null; // ⬇️ Era 5
     
     const avgRange = lookback.reduce((sum, c) => sum + (c.high - c.low), 0) / lookback.length;
     if (!avgRange || isNaN(avgRange)) return null;
     
-    for (let i = 0; i < Math.min(afterSweep.length, 5); i++) {
+    for (let i = 0; i < Math.min(afterSweep.length, 6); i++) { // ⬆️ Era 5
       const c = afterSweep[i];
       const candleRange = c.high - c.low;
       const bodySize = Math.abs(c.close - c.open);
       const multiplier = candleRange / avgRange;
       
-      if (multiplier > config.displacementMultiplier && bodySize > candleRange * 0.6) {
+      // Relajado: body > 50% del rango (era 60%)
+      if (multiplier > config.displacementMultiplier && bodySize > candleRange * 0.5) {
         const isBullish = c.close > c.open;
         if ((sweep.direction === 'BULLISH' && isBullish) || (sweep.direction === 'BEARISH' && !isBullish)) {
-          return { direction: sweep.direction, index: sweepIndex + i, multiplier: multiplier.toFixed(2), description: `Displacement ${multiplier.toFixed(1)}x`, valid: true };
+          return { 
+            direction: sweep.direction, 
+            index: sweepIndex + i, 
+            multiplier: multiplier.toFixed(2), 
+            description: `Displacement ${multiplier.toFixed(1)}x`, 
+            valid: true 
+          };
         }
       }
     }
@@ -405,27 +439,39 @@ const SMCAnalyzer = {
     const { highs, lows } = swings;
     const displacementIndex = displacement.index;
     const afterDisplacement = candles.slice(displacementIndex);
-    if (afterDisplacement.length < 2) return null;
+    if (afterDisplacement.length < 1) return null; // ⬇️ Era 2
     
     if (sweep.direction === 'BULLISH') {
-      const structuralHighs = highs.filter(h => h.index < displacementIndex).slice(-3);
+      const structuralHighs = highs.filter(h => h.index < displacementIndex).slice(-5); // ⬆️ Era 3
       const relevantHigh = structuralHighs.reduce((best, h) => (!best || h.price > best.price) ? h : best, null);
       if (relevantHigh) {
         for (let i = 0; i < afterDisplacement.length; i++) {
           if (afterDisplacement[i].close > relevantHigh.price) {
-            return { id: `${sweep.sweepIndex}_${relevantHigh.price}`, direction: 'BULLISH', breakLevel: relevantHigh.price, description: 'CHoCH Alcista', valid: true };
+            return { 
+              id: `${sweep.sweepIndex}_${relevantHigh.price}`, 
+              direction: 'BULLISH', 
+              breakLevel: relevantHigh.price, 
+              description: 'CHoCH Alcista', 
+              valid: true 
+            };
           }
         }
       }
     }
     
     if (sweep.direction === 'BEARISH') {
-      const structuralLows = lows.filter(l => l.index < displacementIndex).slice(-3);
+      const structuralLows = lows.filter(l => l.index < displacementIndex).slice(-5);
       const relevantLow = structuralLows.reduce((best, l) => (!best || l.price < best.price) ? l : best, null);
       if (relevantLow) {
         for (let i = 0; i < afterDisplacement.length; i++) {
           if (afterDisplacement[i].close < relevantLow.price) {
-            return { id: `${sweep.sweepIndex}_${relevantLow.price}`, direction: 'BEARISH', breakLevel: relevantLow.price, description: 'CHoCH Bajista', valid: true };
+            return { 
+              id: `${sweep.sweepIndex}_${relevantLow.price}`, 
+              direction: 'BEARISH', 
+              breakLevel: relevantLow.price, 
+              description: 'CHoCH Bajista', 
+              valid: true 
+            };
           }
         }
       }
@@ -435,23 +481,30 @@ const SMCAnalyzer = {
 
   findOB(candles, choch, displacement) {
     if (!choch?.valid || !displacement) return null;
-    const searchStart = Math.max(0, displacement.index - 10);
+    const searchStart = Math.max(0, displacement.index - 15); // ⬆️ Era 10
     const searchRange = candles.slice(searchStart, displacement.index);
     
     for (let i = searchRange.length - 1; i >= 0; i--) {
       const c = searchRange[i];
       const bodySize = Math.abs(c.close - c.open);
+      const candleRange = c.high - c.low;
       
-      if (choch.direction === 'BULLISH' && c.close < c.open && bodySize > (c.high - c.low) * 0.4) {
+      // Relajado: body > 35% del rango (era 40%)
+      if (choch.direction === 'BULLISH' && c.close < c.open && bodySize > candleRange * 0.35) {
         const obIndex = searchStart + i;
-        if (!candles.slice(obIndex + 1).some(x => x.low <= c.low)) {
+        const afterOB = candles.slice(obIndex + 1);
+        // Relajado: permitir mitigación parcial
+        const fullyMitigated = afterOB.filter(x => x.low < c.low).length > 3;
+        if (!fullyMitigated) {
           return { obType: 'DEMAND', high: c.high, low: c.low, description: 'OB Demanda', valid: true };
         }
       }
       
-      if (choch.direction === 'BEARISH' && c.close > c.open && bodySize > (c.high - c.low) * 0.4) {
+      if (choch.direction === 'BEARISH' && c.close > c.open && bodySize > candleRange * 0.35) {
         const obIndex = searchStart + i;
-        if (!candles.slice(obIndex + 1).some(x => x.high >= c.high)) {
+        const afterOB = candles.slice(obIndex + 1);
+        const fullyMitigated = afterOB.filter(x => x.high > c.high).length > 3;
+        if (!fullyMitigated) {
           return { obType: 'SUPPLY', high: c.high, low: c.low, description: 'OB Oferta', valid: true };
         }
       }
@@ -460,32 +513,57 @@ const SMCAnalyzer = {
   },
 
   checkLTFEntry(candlesLTF, ob, direction) {
-    if (!ob || !candlesLTF || candlesLTF.length < 20) return null;
-    const recent = candlesLTF.slice(-15);
+    if (!ob || !candlesLTF || candlesLTF.length < 15) return null; // ⬇️ Era 20
+    const recent = candlesLTF.slice(-20); // ⬆️ Era 15
     const currentPrice = recent[recent.length - 1]?.close;
     if (!currentPrice) return null;
     
-    const inOBZone = currentPrice >= ob.low && currentPrice <= ob.high;
+    // Zona OB extendida 10%
+    const obRange = ob.high - ob.low;
+    const extendedHigh = ob.high + obRange * 0.1;
+    const extendedLow = ob.low - obRange * 0.1;
+    const inOBZone = currentPrice >= extendedLow && currentPrice <= extendedHigh;
     
     if (inOBZone) {
-      for (let i = recent.length - 5; i < recent.length - 1; i++) {
+      for (let i = recent.length - 8; i < recent.length - 1; i++) { // ⬆️ Era 5
+        if (i < 0) continue;
         const prev = recent[i], curr = recent[i + 1];
+        if (!prev || !curr) continue;
         
         if (direction === 'BULLISH') {
+          // Micro CHoCH
           const isMicroCHoCH = curr.close > prev.high && curr.close > curr.open;
+          // Rejection
           const wickBelow = Math.min(curr.open, curr.close) - curr.low;
-          const isRejection = wickBelow > Math.abs(curr.close - curr.open) * 2 && curr.close > curr.open;
-          if (isMicroCHoCH || isRejection) {
-            return { confirmationType: isMicroCHoCH ? 'MICRO_CHOCH' : 'REJECTION', direction: 'BULLISH', entryPrice: curr.close, valid: true };
+          const bodySize = Math.abs(curr.close - curr.open) || 0.0001;
+          const isRejection = wickBelow > bodySize * 1.5 && curr.close > curr.open; // ⬇️ Era 2
+          // Engulfing
+          const isEngulfing = curr.close > curr.open && curr.close > prev.high && curr.open < prev.low;
+          
+          if (isMicroCHoCH || isRejection || isEngulfing) {
+            return { 
+              confirmationType: isMicroCHoCH ? 'MICRO_CHOCH' : isRejection ? 'REJECTION' : 'ENGULFING', 
+              direction: 'BULLISH', 
+              entryPrice: curr.close, 
+              valid: true 
+            };
           }
         }
         
         if (direction === 'BEARISH') {
           const isMicroCHoCH = curr.close < prev.low && curr.close < curr.open;
           const wickAbove = curr.high - Math.max(curr.open, curr.close);
-          const isRejection = wickAbove > Math.abs(curr.close - curr.open) * 2 && curr.close < curr.open;
-          if (isMicroCHoCH || isRejection) {
-            return { confirmationType: isMicroCHoCH ? 'MICRO_CHOCH' : 'REJECTION', direction: 'BEARISH', entryPrice: curr.close, valid: true };
+          const bodySize = Math.abs(curr.close - curr.open) || 0.0001;
+          const isRejection = wickAbove > bodySize * 1.5 && curr.close < curr.open;
+          const isEngulfing = curr.close < curr.open && curr.close < prev.low && curr.open > prev.high;
+          
+          if (isMicroCHoCH || isRejection || isEngulfing) {
+            return { 
+              confirmationType: isMicroCHoCH ? 'MICRO_CHOCH' : isRejection ? 'REJECTION' : 'ENGULFING', 
+              direction: 'BEARISH', 
+              entryPrice: curr.close, 
+              valid: true 
+            };
           }
         }
       }
@@ -497,10 +575,9 @@ const SMCAnalyzer = {
   calculateLevels(ob, direction, symbol) {
     if (!ob) return null;
     const entry = direction === 'BULLISH' ? ob.high : ob.low;
-    const stopLoss = direction === 'BULLISH' ? ob.low - (ob.high - ob.low) * 0.3 : ob.high + (ob.high - ob.low) * 0.3;
+    const stopLoss = direction === 'BULLISH' ? ob.low - (ob.high - ob.low) * 0.2 : ob.high + (ob.high - ob.low) * 0.2; // ⬇️ Era 0.3
     const risk = Math.abs(entry - stopLoss);
     
-    // Para Oro, usamos más decimales
     const decimals = symbol === 'frxXAUUSD' ? 2 : 4;
     
     return {
@@ -515,17 +592,52 @@ const SMCAnalyzer = {
 
   calculateScore(a) {
     let score = 0;
-    if (a.liquidity?.equalHighs?.length > 0 || a.liquidity?.equalLows?.length > 0) score += 20;
-    if (a.sweep?.valid) score += 25;
-    if (a.displacement?.valid) score += Math.min(20, Math.floor(parseFloat(a.displacement.multiplier) * 8));
-    if (a.choch?.valid) score += 20;
-    if (a.orderBlock?.valid) score += 15;
+    const breakdown = {};
+    
+    // Liquidez: 15 pts
+    if (a.liquidity?.equalHighs?.length > 0 || a.liquidity?.equalLows?.length > 0) {
+      score += 15;
+      breakdown.liquidity = 15;
+    }
+    
+    // Sweep: 25 pts
+    if (a.sweep?.valid) {
+      score += 25;
+      breakdown.sweep = 25;
+    }
+    
+    // Displacement: hasta 20 pts
+    if (a.displacement?.valid) {
+      const mult = parseFloat(a.displacement.multiplier) || 1;
+      const pts = Math.min(20, Math.floor(mult * 10));
+      score += pts;
+      breakdown.displacement = pts;
+    }
+    
+    // CHoCH: 20 pts
+    if (a.choch?.valid) {
+      score += 20;
+      breakdown.choch = 20;
+    }
+    
+    // OB: 15 pts
+    if (a.orderBlock?.valid) {
+      score += 15;
+      breakdown.orderBlock = 15;
+    }
+    
+    // LTF Entry: 5 pts bonus
+    if (a.ltfEntry?.valid) {
+      score += 5;
+      breakdown.ltfEntry = 5;
+    }
     
     return {
       score,
-      classification: score >= 90 ? 'A+' : score >= 75 ? 'A' : score >= 60 ? 'B' : 'INVALID',
-      isValid: score >= 75,
-      canAutomate: score >= 90
+      breakdown,
+      classification: score >= MIN_SCORE_AUTO ? 'A+' : score >= MIN_SCORE_VALID ? 'A' : score >= 60 ? 'B' : 'INVALID',
+      isValid: score >= MIN_SCORE_VALID,
+      canAutomate: score >= MIN_SCORE_AUTO
     };
   },
 
@@ -550,7 +662,7 @@ const SMCAnalyzer = {
     const orderBlock = this.findOB(candlesHTF, choch, displacement);
     const ltfEntry = orderBlock && choch ? this.checkLTFEntry(candlesLTF, orderBlock, choch.direction) : null;
     
-    const scoring = this.calculateScore({ liquidity, sweep, displacement, choch, orderBlock });
+    const scoring = this.calculateScore({ liquidity, sweep, displacement, choch, orderBlock, ltfEntry });
     const levels = orderBlock && choch ? this.calculateLevels(orderBlock, choch.direction, symbol) : null;
     
     const structureUsed = choch?.id ? usedStructures.has(choch.id) : false;
@@ -588,6 +700,161 @@ const SMCAnalyzer = {
 };
 
 // =============================================
+// 🧠 PSICOTRADING CON IA
+// =============================================
+const PsychoTrading = {
+  
+  analyzeEmotionalState() {
+    const recentTrades = signalHistory.slice(0, 10);
+    const operated = recentTrades.filter(s => s.operated);
+    const wins = operated.filter(s => s.result === 'WIN').length;
+    const losses = operated.filter(s => s.result === 'LOSS').length;
+    
+    let emotionalState = 'NEUTRAL';
+    let riskLevel = 'NORMAL';
+    const recommendations = [];
+    
+    if (tradingStats.streaks.currentLoss >= 3) {
+      emotionalState = 'TILT';
+      riskLevel = 'HIGH';
+      recommendations.push('⚠️ 3+ pérdidas seguidas. Considera pausar 30 min.');
+      recommendations.push('🧘 Respira. El mercado siempre estará ahí.');
+    }
+    
+    if (tradingStats.streaks.currentWin >= 3) {
+      emotionalState = 'CONFIDENT';
+      riskLevel = 'MODERATE';
+      recommendations.push('✅ Buena racha! Pero no aumentes el riesgo.');
+      recommendations.push('📏 Mantén tu tamaño de posición.');
+    }
+    
+    const todayTrades = operated.filter(s => {
+      const d = new Date(s.createdAt);
+      return d.toDateString() === new Date().toDateString();
+    });
+    
+    if (todayTrades.length >= 5) {
+      emotionalState = 'OVERTRADING';
+      riskLevel = 'HIGH';
+      recommendations.push('🛑 5+ trades hoy. ¿Estás siguiendo tu plan?');
+    }
+    
+    return {
+      emotionalState,
+      riskLevel,
+      recommendations,
+      stats: {
+        currentWinStreak: tradingStats.streaks.currentWin,
+        currentLossStreak: tradingStats.streaks.currentLoss,
+        todayTrades: todayTrades.length,
+        winRate: operated.length > 0 ? ((wins / operated.length) * 100).toFixed(1) : 0
+      }
+    };
+  },
+
+  async getCoaching(userMessage) {
+    if (!openai) {
+      return { response: 'El coach de IA no está disponible. Verifica tu API key de OpenAI.', type: 'error' };
+    }
+    
+    const emotionalState = this.analyzeEmotionalState();
+    
+    const systemPrompt = `Eres un coach de psicotrading experto especializado en Smart Money Concepts (SMC).
+
+Tu rol es ayudar a traders a:
+1. Mantener disciplina y seguir su plan SMC
+2. Manejar emociones (miedo, codicia, frustración, FOMO)
+3. Evitar errores comunes (revenge trading, overtrading)
+4. Entender la metodología SMC (liquidez, sweep, CHoCH, OB)
+
+CONTEXTO DEL TRADER:
+- Estado emocional: ${emotionalState.emotionalState}
+- Nivel de riesgo: ${emotionalState.riskLevel}
+- Racha actual: ${emotionalState.stats.currentWinStreak} wins / ${emotionalState.stats.currentLossStreak} losses
+- Trades hoy: ${emotionalState.stats.todayTrades}
+
+REGLAS:
+- Responde en español
+- Sé directo pero empático
+- Da consejos ESPECÍFICOS sobre SMC cuando sea relevante
+- Si detectas peligro emocional, sé firme
+- Máximo 100 palabras
+- Usa emojis con moderación`;
+
+    try {
+      const response = await openai.chat.completions.create({
+        model: 'gpt-4o',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userMessage }
+        ],
+        max_tokens: 200,
+      });
+      
+      return {
+        response: response.choices[0]?.message?.content || 'Sin respuesta',
+        emotionalState,
+        type: 'coaching'
+      };
+    } catch (error) {
+      console.error('Error coaching:', error.message);
+      return { response: 'Error al conectar con el coach. Intenta de nuevo.', type: 'error' };
+    }
+  },
+
+  async generateTradingPlan(preferences) {
+    if (!openai) return { error: 'IA no disponible' };
+    
+    const prompt = `Genera un PLAN DE TRADING SMC (Smart Money Concepts) personalizado.
+
+Datos del trader:
+- Capital: ${preferences.capital || 'No especificado'}
+- Riesgo por trade: ${preferences.riskPerTrade || '1-2%'}
+- Horario: ${preferences.schedule || 'Flexible'}
+- Experiencia: ${preferences.experience || 'Intermedio'}
+- Activos: Step Index, Volatility 75/100, Gold/USD
+
+El plan debe incluir:
+
+1. 📋 CHECKLIST PRE-TRADE SMC
+   - Qué verificar antes de entrar
+
+2. 🎯 REGLAS DE ENTRADA
+   - Basadas en: Liquidez → Sweep → Displacement → CHoCH → OB → Entrada 1M
+
+3. 💰 GESTIÓN DE RIESGO
+   - Tamaño de posición
+   - Stop loss obligatorio
+   - Take profits (1:2, 1:3, 1:5)
+
+4. 🚫 REGLAS DE NO OPERAR
+   - Cuándo mantenerse fuera
+
+5. 📊 LÍMITES DIARIOS
+   - Máximo de trades
+   - Máximo de pérdidas
+
+Formato: Estructurado, claro, en español.`;
+
+    try {
+      const response = await openai.chat.completions.create({
+        model: 'gpt-4o',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 1000,
+      });
+      
+      return { 
+        plan: response.choices[0]?.message?.content, 
+        generatedAt: new Date().toISOString() 
+      };
+    } catch (error) {
+      console.error('Error plan:', error.message);
+      return { error: 'Error generando plan' };
+    }
+  }
+};
+
+// =============================================
 // NARRACIÓN IA
 // =============================================
 async function generateNarration(analysis) {
@@ -596,14 +863,10 @@ async function generateNarration(analysis) {
   }
 
   try {
-    const assetContext = analysis.assetType === 'forex' 
-      ? 'Este es un par de Forex (Oro), considera su mayor volatilidad.'
-      : 'Este es un índice sintético.';
-      
     const res = await openai.chat.completions.create({
       model: 'gpt-4o',
-      messages: [{ role: 'user', content: `Narra en 2 oraciones el estado SMC de ${analysis.symbolName}: Liquidez ${analysis.liquidity?.equalHighs?.length || 0} EQH/${analysis.liquidity?.equalLows?.length || 0} EQL, Sweep ${analysis.sweep?.valid ? 'SÍ' : 'NO'}, CHoCH ${analysis.choch?.valid ? analysis.choch.direction : 'NO'}, Estado ${analysis.status}. ${assetContext} Habla como trader SMC.` }],
-      max_tokens: 100,
+      messages: [{ role: 'user', content: `Narra en 2 oraciones el estado SMC de ${analysis.symbolName}: Liquidez ${analysis.liquidity?.equalHighs?.length || 0} EQH/${analysis.liquidity?.equalLows?.length || 0} EQL, Sweep ${analysis.sweep?.valid ? 'SÍ' : 'NO'}, Displacement ${analysis.displacement?.valid ? analysis.displacement.multiplier + 'x' : 'NO'}, CHoCH ${analysis.choch?.valid ? analysis.choch.direction : 'NO'}, OB ${analysis.orderBlock?.valid ? analysis.orderBlock.obType : 'NO'}, Estado ${analysis.status}. Score: ${analysis.scoring?.score || 0}/100. Habla como trader SMC profesional en español.` }],
+      max_tokens: 120,
     });
     return { text: res.choices[0]?.message?.content || 'Analizando...', waiting: analysis.waiting };
   } catch {
@@ -619,19 +882,25 @@ async function sendWhatsApp(signal) {
   
   const emoji = SYNTHETIC_INDICES[signal.symbol]?.emoji || '📊';
   
-  const msg = `🎯 *SMC v7.3.1*
+  const msg = `🎯 *SMC v7.4*
 ${emoji} ${signal.symbolName || 'Test'}
 ${signal.direction === 'BULLISH' ? '🟢 COMPRA' : '🔴 VENTA'}
+
+✅ ${signal.sweep?.description || 'Sweep'}
+✅ ${signal.choch?.description || 'CHoCH'}
+✅ ${signal.orderBlock?.description || 'OB'}
+✅ Entry: ${signal.ltfEntry?.confirmationType || 'Confirmado'}
 
 📍 Entry: ${signal.levels?.entry || 'N/A'}
 🛑 SL: ${signal.levels?.stopLoss || 'N/A'}
 🎯 TP1: ${signal.levels?.tp1 || 'N/A'}
 🎯 TP3: ${signal.levels?.tp3 || 'N/A'}
 
-🏆 Score: ${signal.scoring?.score || 0}/100`;
+🏆 Score: ${signal.scoring?.score || 0}/100 (${signal.scoring?.classification})`;
 
   try {
-    await fetch(`https://api.textmebot.com/send.php?recipient=${WHATSAPP_PHONE}&apikey=${CALLMEBOT_API_KEY}&text=${encodeURIComponent(msg)}`);
+    const url = `https://api.textmebot.com/send.php?recipient=${WHATSAPP_PHONE}&apikey=${CALLMEBOT_API_KEY}&text=${encodeURIComponent(msg)}`;
+    await fetch(url);
     console.log('📱 WhatsApp enviado');
     return true;
   } catch (e) {
@@ -645,11 +914,7 @@ ${signal.direction === 'BULLISH' ? '🟢 COMPRA' : '🔴 VENTA'}
 // =============================================
 function connectDeriv() {
   if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-    console.error('❌ Máximo de reconexiones alcanzado');
-    setTimeout(() => {
-      reconnectAttempts = 0;
-      connectDeriv();
-    }, 60000);
+    setTimeout(() => { reconnectAttempts = 0; connectDeriv(); }, 60000);
     return;
   }
   
@@ -658,7 +923,6 @@ function connectDeriv() {
   try {
     derivWs = new WebSocket(`${DERIV_WS_URL}?app_id=${DERIV_APP_ID}`);
   } catch (e) {
-    console.error('Error creando WebSocket:', e.message);
     reconnectAttempts++;
     setTimeout(connectDeriv, 5000);
     return;
@@ -674,10 +938,9 @@ function connectDeriv() {
       derivWs.send(JSON.stringify({ authorize: DERIV_API_TOKEN }));
     }
 
-    // Suscribir a TODOS los símbolos (incluyendo Oro)
     for (const symbol of Object.keys(SYNTHETIC_INDICES)) {
       const assetInfo = SYNTHETIC_INDICES[symbol];
-      console.log(`📡 Suscribiendo a ${assetInfo.name} (${symbol})...`);
+      console.log(`📡 Suscribiendo a ${assetInfo.name}...`);
       
       derivWs.send(JSON.stringify({ ticks: symbol, subscribe: 1 }));
       
@@ -707,11 +970,8 @@ function connectDeriv() {
       lastActivity = Date.now();
       
       if (msg.error) {
-        // Ignorar errores de símbolos no disponibles
         if (msg.error.code === 'MarketIsClosed') {
-          console.log(`⚠️ Mercado cerrado para: ${msg.echo_req?.ticks_history || msg.echo_req?.ticks}`);
-        } else if (msg.error.code !== 'InvalidSymbol') {
-          console.error('Deriv error:', msg.error.message);
+          console.log(`⏸️ Mercado cerrado: ${msg.echo_req?.ticks_history || msg.echo_req?.ticks}`);
         }
         return;
       }
@@ -761,28 +1021,23 @@ function connectDeriv() {
         }));
         
         if (existingCandles.length > 0 && existingCandles[existingCandles.length - 1].time > newCandles[newCandles.length - 1].time) {
-          console.log(`✅ ${assetInfo?.name || symbol} ${granularity === TF_HTF ? '5M' : '1M'}: ${existingCandles.length} velas (preservadas)`);
+          console.log(`✅ ${assetInfo?.name} ${granularity === TF_HTF ? '5M' : '1M'}: ${existingCandles.length} velas (preservadas)`);
         } else {
           candleData.set(key, newCandles);
-          console.log(`✅ ${assetInfo?.name || symbol} ${granularity === TF_HTF ? '5M' : '1M'}: ${newCandles.length} velas (nuevas)`);
+          console.log(`✅ ${assetInfo?.name} ${granularity === TF_HTF ? '5M' : '1M'}: ${newCandles.length} velas`);
           await Persistence.saveCandles(symbol, granularity, newCandles);
         }
       }
-    } catch (e) {
-      console.error('Error procesando mensaje:', e.message);
-    }
+    } catch {}
   });
 
   derivWs.on('close', () => {
-    console.log('⚠️ Desconectado de Deriv');
     isDerivConnected = false;
     reconnectAttempts++;
     setTimeout(connectDeriv, 3000 + reconnectAttempts * 1000);
   });
 
-  derivWs.on('error', (e) => {
-    console.error('WebSocket error:', e.message);
-  });
+  derivWs.on('error', () => {});
   
   setInterval(() => {
     if (derivWs && derivWs.readyState === WebSocket.OPEN) {
@@ -818,7 +1073,7 @@ async function checkSignal(symbol) {
     tradingStats.totalSignals++;
 
     const emoji = SYNTHETIC_INDICES[symbol]?.emoji || '📊';
-    console.log(`🎯 SEÑAL A+ #${count + 1}/7: ${emoji} ${analysis.direction} ${analysis.symbolName}`);
+    console.log(`🎯 SEÑAL A+ #${count + 1}/7: ${emoji} ${analysis.direction} ${analysis.symbolName} - Score: ${analysis.scoring.score}`);
     
     await Persistence.saveSignal(signal);
     await Persistence.saveState();
@@ -836,14 +1091,12 @@ app.use(express.json({ limit: '10mb' }));
 app.get('/', (req, res) => {
   res.json({
     status: 'ok',
-    version: '7.3.1',
-    assets: Object.keys(SYNTHETIC_INDICES).map(k => ({
-      symbol: k,
-      name: SYNTHETIC_INDICES[k].name,
-      type: SYNTHETIC_INDICES[k].type,
-      emoji: SYNTHETIC_INDICES[k].emoji
-    })),
+    version: '7.4',
+    features: ['SMC Ajustado', 'Psicotrading Completo', 'Plan SMC', 'Gold/USD'],
+    minScore: { valid: MIN_SCORE_VALID, auto: MIN_SCORE_AUTO },
+    assets: Object.keys(SYNTHETIC_INDICES),
     deriv: isDerivConnected,
+    openai: !!openai,
     supabase: !!supabase
   });
 });
@@ -875,7 +1128,7 @@ app.post('/api/ai/toggle', (req, res) => {
   res.json({ aiEnabled });
 });
 
-app.get('/api/ai/status', (req, res) => res.json({ aiEnabled }));
+app.get('/api/ai/status', (req, res) => res.json({ aiEnabled, openaiConfigured: !!openai }));
 
 // Señales
 app.get('/api/signals/active', (req, res) => res.json(Array.from(activeSignals.values())));
@@ -907,10 +1160,16 @@ app.post('/api/signals/:id/track', async (req, res) => {
     tradingStats.wins++;
     tradingStats.streaks.currentWin++;
     tradingStats.streaks.currentLoss = 0;
+    if (tradingStats.streaks.currentWin > tradingStats.streaks.maxWin) {
+      tradingStats.streaks.maxWin = tradingStats.streaks.currentWin;
+    }
   } else if (operated && result === 'LOSS') {
     tradingStats.losses++;
     tradingStats.streaks.currentLoss++;
     tradingStats.streaks.currentWin = 0;
+    if (tradingStats.streaks.currentLoss > tradingStats.streaks.maxLoss) {
+      tradingStats.streaks.maxLoss = tradingStats.streaks.currentLoss;
+    }
   }
   
   await Persistence.updateSignalTracking(id, operated, result, notes);
@@ -935,51 +1194,77 @@ app.get('/api/stats', (req, res) => {
 });
 
 app.get('/api/stats/emotional', (req, res) => {
-  let emotionalState = 'NEUTRAL';
-  let riskLevel = 'NORMAL';
-  const recommendations = [];
-  
-  if (tradingStats.streaks.currentLoss >= 3) {
-    emotionalState = 'TILT';
-    riskLevel = 'HIGH';
-    recommendations.push('⚠️ 3+ pérdidas seguidas. Pausa recomendada.');
+  res.json(PsychoTrading.analyzeEmotionalState());
+});
+
+// =============================================
+// 🧠 PSICOTRADING ENDPOINTS
+// =============================================
+app.post('/api/psycho/coaching', async (req, res) => {
+  const { message } = req.body;
+  if (!message) {
+    return res.status(400).json({ error: 'Mensaje requerido' });
   }
-  
-  if (tradingStats.streaks.currentWin >= 3) {
-    emotionalState = 'CONFIDENT';
-    recommendations.push('✅ Buena racha, mantén la disciplina.');
-  }
-  
+  const response = await PsychoTrading.getCoaching(message);
+  res.json(response);
+});
+
+app.post('/api/psycho/plan', async (req, res) => {
+  const plan = await PsychoTrading.generateTradingPlan(req.body);
+  res.json(plan);
+});
+
+app.get('/api/psycho/check', (req, res) => {
+  const state = PsychoTrading.analyzeEmotionalState();
   res.json({
-    emotionalState, riskLevel, recommendations,
-    stats: {
-      currentWinStreak: tradingStats.streaks.currentWin,
-      currentLossStreak: tradingStats.streaks.currentLoss
-    }
+    canTrade: state.riskLevel !== 'HIGH',
+    state: state.emotionalState,
+    risk: state.riskLevel,
+    message: state.recommendations[0] || '✅ Listo para operar',
+    recommendations: state.recommendations
   });
 });
 
 // WhatsApp test
 app.get('/api/test-whatsapp', async (req, res) => {
   const result = await sendWhatsApp({
-    symbol: 'frxXAUUSD',
-    symbolName: '🥇 Gold/USD TEST',
+    symbol: 'stpRNG',
+    symbolName: '🧪 TEST v7.4',
     direction: 'BULLISH',
-    levels: { entry: '2650.50', stopLoss: '2645.00', tp1: '2661.50', tp3: '2678.00' },
-    scoring: { score: 95 }
+    sweep: { description: 'Sweep EQL' },
+    choch: { description: 'CHoCH Alcista' },
+    orderBlock: { description: 'OB Demanda' },
+    ltfEntry: { confirmationType: 'MICRO_CHOCH' },
+    levels: { entry: '7850.00', stopLoss: '7845.00', tp1: '7860.00', tp3: '7875.00' },
+    scoring: { score: 90, classification: 'A+' }
   });
   res.json({ success: result });
 });
 
 // Debug
 app.get('/api/debug', (req, res) => {
+  const analyses = {};
+  Object.keys(SYNTHETIC_INDICES).forEach(sym => {
+    const a = SMCAnalyzer.analyze(sym);
+    analyses[sym] = {
+      status: a.status,
+      score: a.scoring?.score,
+      hasSignal: a.hasSignal,
+      liquidity: `${a.liquidity?.equalHighs?.length || 0} EQH / ${a.liquidity?.equalLows?.length || 0} EQL`,
+      sweep: a.sweep?.valid ? '✅' : '❌',
+      displacement: a.displacement?.valid ? `✅ ${a.displacement.multiplier}x` : '❌',
+      choch: a.choch?.valid ? '✅' : '❌',
+      ob: a.orderBlock?.valid ? '✅' : '❌',
+      ltf: a.ltfEntry?.valid ? '✅' : '❌'
+    };
+  });
+  
   res.json({
-    candleData: Object.fromEntries([...candleData.entries()].map(([k, v]) => [k, { count: v.length, lastTime: v[v.length-1]?.time }])),
-    analysisCache: Object.fromEntries(analysisCache),
+    candleData: Object.fromEntries([...candleData.entries()].map(([k, v]) => [k, v.length])),
+    analyses,
     dailySignals: Object.fromEntries(dailySignals),
-    usedStructures: usedStructures.size,
-    reconnectAttempts,
-    lastActivity: new Date(lastActivity).toISOString(),
+    totalSignals: signalHistory.length,
+    config: { minScoreValid: MIN_SCORE_VALID, minScoreAuto: MIN_SCORE_AUTO },
     uptime: process.uptime()
   });
 });
@@ -988,18 +1273,15 @@ app.get('/api/debug', (req, res) => {
 // INICIALIZACIÓN
 // =============================================
 async function init() {
-  console.log('🚀 Iniciando Trading Master Pro v7.3.1...');
-  console.log('📊 Activos configurados:');
-  Object.entries(SYNTHETIC_INDICES).forEach(([sym, info]) => {
-    console.log(`   ${info.emoji || '📈'} ${info.name} (${sym}) - ${info.type}`);
-  });
+  console.log('🚀 Iniciando Trading Master Pro v7.4...');
+  console.log(`📊 Score mínimo: ${MIN_SCORE_VALID} (válido) / ${MIN_SCORE_AUTO} (auto)`);
   
   await Persistence.loadState();
   
   const savedSignals = await Persistence.loadSignalHistory();
   if (savedSignals.length > 0) {
     signalHistory = savedSignals;
-    console.log(`📜 ${savedSignals.length} señales cargadas desde Supabase`);
+    console.log(`📜 ${savedSignals.length} señales cargadas`);
   }
   
   connectDeriv();
@@ -1019,17 +1301,14 @@ async function init() {
 app.listen(PORT, () => {
   console.log(`
 ╔════════════════════════════════════════════════════════════╗
-║     TRADING MASTER PRO v7.3.1                              ║
-║     SMC + PERSISTENCIA + ORO (GOLD)                        ║
+║     TRADING MASTER PRO v7.4                                ║
+║     SMC AJUSTADO + PSICOTRADING COMPLETO                   ║
 ╠════════════════════════════════════════════════════════════╣
-║  📊 Step Index                                             ║
-║  📊 Volatility 75                                          ║
-║  📊 Volatility 100                                         ║
-║  🥇 Gold/USD (NUEVO)                                       ║
-╠════════════════════════════════════════════════════════════╣
-║  💾 Persistencia Supabase                                  ║
-║  💓 Keep-alive cada 4 min                                  ║
-║  📱 WhatsApp TextMeBot                                     ║
+║  🔧 SMC menos estricto (más señales)                       ║
+║  🧠 Coaching IA funcionando                                ║
+║  📋 Plan de Trading SMC                                    ║
+║  🥇 Gold/USD incluido                                      ║
+║  📱 WhatsApp alerts                                        ║
 ║  🎯 Puerto: ${PORT}                                            ║
 ╚════════════════════════════════════════════════════════════╝
   `);
