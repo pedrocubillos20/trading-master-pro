@@ -3,10 +3,10 @@
   "version": "8.0.0",
   "description": "Trading Master Pro - SMC Institucional (Reversal + Continuation)",
   "type": "module",
-  "main": "server-v8.js",
+  "main": "index.js",
   "scripts": {
-    "start": "node server-v8.js",
-    "dev": "nodemon server-v8.js",
+    "start": "node index.js",
+    "dev": "nodemon index.js",
     "test": "node --test"
   },
   "dependencies": {
