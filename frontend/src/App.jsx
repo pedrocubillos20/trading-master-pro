@@ -1,60 +1,39 @@
 // =============================================
-// TRADING MASTER PRO - APP.JSX
+// TRADING MASTER PRO v8.0 - APP PRINCIPAL
 // =============================================
 
-import { useEffect, useState } from 'react'
-import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
-import { supabase } from './services/supabase'
-import Login from './pages/Login'
-import Register from './pages/Register'
-import Dashboard from './pages/Dashboard'
+import { useState, useEffect } from 'react';
+import Dashboard from './Dashboard';
 
 function App() {
-  const [session, setSession] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Obtener sesión inicial
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session)
-      setLoading(false)
-    })
+    // Simular carga inicial
+    const timer = setTimeout(() => setIsLoading(false), 1000);
+    return () => clearTimeout(timer);
+  }, []);
 
-    // Escuchar cambios de autenticación
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session)
-    })
-
-    return () => subscription.unsubscribe()
-  }, [])
-
-  if (loading) {
+  if (isLoading) {
     return (
-      <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
+      <div className="min-h-screen bg-black flex items-center justify-center">
         <div className="text-center">
-          <div className="w-12 h-12 border-4 border-green-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-zinc-400">Cargando...</p>
+          <div className="mb-6">
+            <h1 className="text-3xl font-bold text-white mb-2">
+              Trading<span className="text-green-500">Pro</span>
+            </h1>
+            <span className="px-3 py-1 bg-green-500/20 text-green-400 text-sm rounded-full">
+              v8.0 - SMC INSTITUCIONAL
+            </span>
+          </div>
+          <div className="w-16 h-16 border-4 border-zinc-700 border-t-green-500 rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-zinc-400">Iniciando motor de análisis...</p>
         </div>
       </div>
-    )
+    );
   }
 
-  return (
-    <Routes>
-      <Route 
-        path="/login" 
-        element={session ? <Navigate to="/" replace /> : <Login />} 
-      />
-      <Route 
-        path="/register" 
-        element={session ? <Navigate to="/" replace /> : <Register />} 
-      />
-      <Route 
-        path="/*" 
-        element={session ? <Dashboard session={session} /> : <Navigate to="/login" replace />} 
-      />
-    </Routes>
-  )
+  return <Dashboard />;
 }
 
-export default App
+export default App;
