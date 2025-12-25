@@ -1,6 +1,6 @@
 // =============================================
-// TRADING MASTER PRO - DASHBOARD v8.0
-// SMC INSTITUCIONAL
+// TRADING MASTER PRO v9.0 - DASHBOARD COMPLETO
+// Coach, Seguimiento, Plan de Trading, Chat
 // =============================================
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -8,13 +8,13 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 const API_URL = import.meta.env.VITE_API_URL || 'https://trading-master-pro-production.up.railway.app';
 
 // =============================================
-// COMPONENTE: Gráfico de Velas con Zonas SMC
+// GRÁFICO DE VELAS PROFESIONAL
 // =============================================
-const CandleChart = ({ candles, signal, height = 300 }) => {
+const CandleChart = ({ candles = [], signal, height = 350, decimals = 2 }) => {
   const canvasRef = useRef(null);
   
   useEffect(() => {
-    if (!canvasRef.current || !candles || candles.length === 0) return;
+    if (!canvasRef.current || !candles.length) return;
     
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
@@ -24,196 +24,190 @@ const CandleChart = ({ candles, signal, height = 300 }) => {
     canvas.height = height * 2;
     ctx.scale(2, 2);
     
-    const width = rect.width;
+    const w = rect.width;
     const h = height;
     
-    // Fondo
-    ctx.fillStyle = '#0a0a0a';
-    ctx.fillRect(0, 0, width, h);
+    // Fondo gradiente
+    const gradient = ctx.createLinearGradient(0, 0, 0, h);
+    gradient.addColorStop(0, '#0f0f0f');
+    gradient.addColorStop(1, '#1a1a1a');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, w, h);
     
-    // Calcular rangos
     const data = candles.slice(-50);
+    if (!data.length) return;
+    
+    const padding = { top: 20, right: 70, bottom: 30, left: 10 };
+    const chartW = w - padding.left - padding.right;
+    const chartH = h - padding.top - padding.bottom;
+    
     const highs = data.map(c => c.high);
     const lows = data.map(c => c.low);
-    const maxPrice = Math.max(...highs);
-    const minPrice = Math.min(...lows);
-    const priceRange = maxPrice - minPrice || 1;
+    const maxP = Math.max(...highs);
+    const minP = Math.min(...lows);
+    const range = maxP - minP || 1;
     
-    const padding = 10;
-    const chartWidth = width - padding * 2;
-    const chartHeight = h - padding * 2;
-    const candleWidth = chartWidth / data.length * 0.7;
-    const gap = chartWidth / data.length * 0.3;
+    const candleW = chartW / data.length * 0.7;
+    const gap = chartW / data.length * 0.3;
     
-    const priceToY = (price) => padding + (1 - (price - minPrice) / priceRange) * chartHeight;
+    const priceToY = (p) => padding.top + (1 - (p - minP) / range) * chartH;
+    const indexToX = (i) => padding.left + i * (candleW + gap) + gap / 2;
     
-    // Dibujar grid
-    ctx.strokeStyle = '#1a1a1a';
+    // Grid horizontal
+    ctx.strokeStyle = '#262626';
     ctx.lineWidth = 0.5;
-    for (let i = 0; i <= 4; i++) {
-      const y = padding + (chartHeight / 4) * i;
+    for (let i = 0; i <= 5; i++) {
+      const y = padding.top + (chartH / 5) * i;
       ctx.beginPath();
-      ctx.moveTo(padding, y);
-      ctx.lineTo(width - padding, y);
+      ctx.moveTo(padding.left, y);
+      ctx.lineTo(w - padding.right, y);
       ctx.stroke();
+      
+      // Precio en eje Y
+      const price = maxP - (range / 5) * i;
+      ctx.fillStyle = '#666';
+      ctx.font = '10px monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText(price.toFixed(decimals), w - padding.right + 5, y + 3);
     }
     
-    // Dibujar zona de OB si existe
-    if (signal?.entryZone) {
-      const obTop = priceToY(signal.entryZone.high);
-      const obBottom = priceToY(signal.entryZone.low);
-      const obColor = signal.action === 'LONG' || signal.action === 'BUY' ? 'rgba(34, 197, 94, 0.2)' : 'rgba(239, 68, 68, 0.2)';
-      const obBorder = signal.action === 'LONG' || signal.action === 'BUY' ? 'rgba(34, 197, 94, 0.5)' : 'rgba(239, 68, 68, 0.5)';
+    // Dibujar zona de OB si hay señal
+    if (signal?.entry && signal?.stop && signal.action !== 'WAIT') {
+      const obColor = signal.action === 'LONG' ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)';
+      const obY1 = priceToY(Math.max(signal.entry, signal.stop));
+      const obY2 = priceToY(Math.min(signal.entry, signal.stop));
       
       ctx.fillStyle = obColor;
-      ctx.fillRect(padding, obTop, chartWidth, obBottom - obTop);
-      ctx.strokeStyle = obBorder;
-      ctx.lineWidth = 1;
-      ctx.strokeRect(padding, obTop, chartWidth, obBottom - obTop);
-      
-      // Label OB
-      ctx.fillStyle = obBorder;
-      ctx.font = '10px Arial';
-      ctx.fillText('OB', padding + 5, obTop + 12);
+      ctx.fillRect(padding.left, obY1, chartW, obY2 - obY1);
     }
     
     // Dibujar velas
-    data.forEach((candle, i) => {
-      const x = padding + i * (candleWidth + gap) + gap / 2;
-      const isGreen = candle.close >= candle.open;
-      
-      const openY = priceToY(candle.open);
-      const closeY = priceToY(candle.close);
-      const highY = priceToY(candle.high);
-      const lowY = priceToY(candle.low);
+    data.forEach((c, i) => {
+      const x = indexToX(i);
+      const isGreen = c.close >= c.open;
+      const color = isGreen ? '#22c55e' : '#ef4444';
       
       // Mecha
-      ctx.strokeStyle = isGreen ? '#22c55e' : '#ef4444';
+      ctx.strokeStyle = color;
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.moveTo(x + candleWidth / 2, highY);
-      ctx.lineTo(x + candleWidth / 2, lowY);
+      ctx.moveTo(x + candleW / 2, priceToY(c.high));
+      ctx.lineTo(x + candleW / 2, priceToY(c.low));
       ctx.stroke();
       
       // Cuerpo
-      ctx.fillStyle = isGreen ? '#22c55e' : '#ef4444';
-      const bodyTop = Math.min(openY, closeY);
-      const bodyHeight = Math.abs(closeY - openY) || 1;
-      ctx.fillRect(x, bodyTop, candleWidth, bodyHeight);
+      ctx.fillStyle = color;
+      const bodyTop = priceToY(Math.max(c.open, c.close));
+      const bodyH = Math.abs(priceToY(c.open) - priceToY(c.close)) || 1;
+      ctx.fillRect(x, bodyTop, candleW, bodyH);
     });
     
-    // Dibujar líneas de Entry, Stop, TP
-    if (signal && signal.action !== 'WAIT') {
-      const drawLine = (price, color, label) => {
-        if (!price || typeof price !== 'number') return;
+    // Líneas de señal
+    if (signal?.action && signal.action !== 'WAIT' && signal.action !== 'LOADING') {
+      const drawPriceLine = (price, color, label, dash = false) => {
+        if (!price) return;
         const y = priceToY(price);
-        if (y < 0 || y > h) return;
+        if (y < padding.top || y > h - padding.bottom) return;
         
         ctx.strokeStyle = color;
-        ctx.lineWidth = 1;
-        ctx.setLineDash([5, 3]);
+        ctx.lineWidth = 1.5;
+        if (dash) ctx.setLineDash([5, 3]);
         ctx.beginPath();
-        ctx.moveTo(padding, y);
-        ctx.lineTo(width - padding, y);
+        ctx.moveTo(padding.left, y);
+        ctx.lineTo(w - padding.right, y);
         ctx.stroke();
         ctx.setLineDash([]);
         
+        // Badge
         ctx.fillStyle = color;
+        ctx.fillRect(w - padding.right - 50, y - 10, 55, 20);
+        ctx.fillStyle = '#fff';
         ctx.font = 'bold 10px Arial';
-        ctx.fillText(`${label}: ${price.toFixed(2)}`, width - 80, y - 3);
+        ctx.textAlign = 'center';
+        ctx.fillText(`${label}`, w - padding.right - 22, y + 4);
       };
       
-      if (signal.entry) drawLine(signal.entry, '#3b82f6', 'Entry');
-      if (signal.stop) drawLine(signal.stop, '#ef4444', 'SL');
-      if (signal.tp1 && typeof signal.tp1 === 'number') drawLine(signal.tp1, '#22c55e', 'TP');
+      drawPriceLine(signal.entry, '#3b82f6', 'ENTRY');
+      drawPriceLine(signal.stop, '#ef4444', 'SL', true);
+      drawPriceLine(signal.tp, '#22c55e', 'TP', true);
     }
     
     // Precio actual
-    const lastCandle = data[data.length - 1];
-    if (lastCandle) {
+    const lastPrice = data[data.length - 1]?.close;
+    if (lastPrice) {
+      const y = priceToY(lastPrice);
       ctx.fillStyle = '#fff';
-      ctx.font = 'bold 11px Arial';
-      ctx.fillText(lastCandle.close.toFixed(2), width - 60, priceToY(lastCandle.close) + 4);
+      ctx.fillRect(w - padding.right, y - 10, 65, 20);
+      ctx.fillStyle = '#000';
+      ctx.font = 'bold 11px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(lastPrice.toFixed(decimals), w - padding.right + 32, y + 4);
     }
     
-  }, [candles, signal, height]);
+  }, [candles, signal, height, decimals]);
   
   return (
     <canvas 
       ref={canvasRef} 
-      style={{ width: '100%', height: `${height}px` }}
-      className="rounded-lg"
+      style={{ width: '100%', height }}
+      className="rounded-xl"
     />
   );
 };
 
 // =============================================
-// COMPONENTE: Tarjeta de Activo
+// TARJETA DE ACTIVO
 // =============================================
-const AssetCard = ({ asset, onSelect, isSelected }) => {
-  const getActionColor = (action) => {
-    if (action === 'LONG' || action === 'BUY') return 'text-green-500';
-    if (action === 'SHORT' || action === 'SELL') return 'text-red-500';
-    return 'text-zinc-500';
-  };
+const AssetCard = ({ asset, selected, onClick }) => {
+  const sig = asset.signal;
+  const hasSignal = sig?.action && !['WAIT', 'LOADING'].includes(sig.action);
   
-  const getActionBg = (action) => {
-    if (action === 'LONG' || action === 'BUY') return 'bg-green-500/20 border-green-500/50';
-    if (action === 'SHORT' || action === 'SELL') return 'bg-red-500/20 border-red-500/50';
-    return 'bg-zinc-800/50 border-zinc-700';
-  };
-  
-  const getScoreColor = (score) => {
-    if (score >= 85) return 'text-green-400';
-    if (score >= 70) return 'text-yellow-400';
-    return 'text-zinc-500';
-  };
-
-  const analysis = asset.analysis || {};
-  const hasSignal = analysis.action && analysis.action !== 'WAIT';
+  const bgColor = hasSignal 
+    ? (sig.action === 'LONG' ? 'bg-green-900/30 border-green-500/50' : 'bg-red-900/30 border-red-500/50')
+    : 'bg-zinc-900/50 border-zinc-800';
   
   return (
     <div 
-      onClick={() => onSelect(asset)}
-      className={`
-        p-4 rounded-xl border cursor-pointer transition-all duration-200
-        ${isSelected ? 'border-blue-500 bg-blue-500/10' : 'border-zinc-800 bg-zinc-900/50 hover:border-zinc-700'}
-        ${hasSignal ? getActionBg(analysis.action) : ''}
-      `}
+      onClick={() => onClick(asset)}
+      className={`p-4 rounded-xl border cursor-pointer transition-all ${bgColor} ${selected ? 'ring-2 ring-blue-500' : 'hover:border-zinc-600'}`}
     >
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
-          <span className="text-lg">{asset.type === 'synthetic' ? '📊' : asset.type === 'commodity' ? '🥇' : '💱'}</span>
+          <span className="text-xl">{asset.emoji}</span>
           <span className="font-semibold text-white">{asset.name}</span>
         </div>
         {hasSignal && (
-          <span className={`px-2 py-1 rounded text-xs font-bold ${getActionColor(analysis.action)}`}>
-            {analysis.action}
+          <span className={`px-2 py-1 rounded text-xs font-bold ${sig.action === 'LONG' ? 'bg-green-500 text-white' : 'bg-red-500 text-white'}`}>
+            {sig.action}
           </span>
         )}
       </div>
       
-      <div className="flex items-center justify-between">
-        <span className="text-zinc-400 text-sm">
-          {asset.price?.toFixed(asset.type === 'forex' ? 5 : 2) || 'Cargando...'}
-        </span>
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-white font-mono">{asset.price?.toFixed(asset.decimals) || '---'}</span>
         <div className="flex items-center gap-2">
-          {analysis.score > 0 && (
-            <span className={`text-sm font-medium ${getScoreColor(analysis.score)}`}>
-              {analysis.score}%
+          {sig?.score > 0 && (
+            <span className={`font-medium ${sig.score >= 70 ? 'text-green-400' : 'text-zinc-500'}`}>
+              {sig.score}%
             </span>
           )}
-          <span className="text-xs text-zinc-600">
-            {asset.signalsToday || 0}/día
-          </span>
         </div>
       </div>
       
-      {hasSignal && analysis.model && (
-        <div className="mt-2 pt-2 border-t border-zinc-800">
-          <span className="text-xs text-zinc-500">
-            {analysis.model.replace('_', ' ')}
-          </span>
+      {hasSignal && sig.entry && (
+        <div className="mt-3 pt-3 border-t border-zinc-700/50 grid grid-cols-3 gap-2 text-xs">
+          <div className="text-center">
+            <p className="text-zinc-500">Entry</p>
+            <p className="text-blue-400 font-mono">{sig.entry}</p>
+          </div>
+          <div className="text-center">
+            <p className="text-zinc-500">SL</p>
+            <p className="text-red-400 font-mono">{sig.stop}</p>
+          </div>
+          <div className="text-center">
+            <p className="text-zinc-500">TP</p>
+            <p className="text-green-400 font-mono">{sig.tp}</p>
+          </div>
         </div>
       )}
     </div>
@@ -221,309 +215,337 @@ const AssetCard = ({ asset, onSelect, isSelected }) => {
 };
 
 // =============================================
-// COMPONENTE: Panel de Señal Detallada
+// PANEL DE SEÑAL
 // =============================================
-const SignalPanel = ({ asset, signal }) => {
-  if (!signal) return null;
+const SignalPanel = ({ asset }) => {
+  const sig = asset?.signal;
+  if (!sig) return null;
   
-  const isActive = signal.action && signal.action !== 'WAIT';
-  
-  const ScoreBar = ({ score }) => (
-    <div className="w-full bg-zinc-800 rounded-full h-3 overflow-hidden">
-      <div 
-        className={`h-full rounded-full transition-all duration-500 ${
-          score >= 85 ? 'bg-green-500' : score >= 70 ? 'bg-yellow-500' : score >= 50 ? 'bg-orange-500' : 'bg-red-500'
-        }`}
-        style={{ width: `${Math.min(score, 100)}%` }}
-      />
-    </div>
-  );
+  const hasSignal = sig.action && !['WAIT', 'LOADING'].includes(sig.action);
   
   return (
-    <div className="bg-zinc-900 rounded-xl p-6 border border-zinc-800">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+    <div className="bg-zinc-900 rounded-xl p-5 border border-zinc-800">
+      <div className="flex items-center justify-between mb-4">
         <div>
-          <h2 className="text-xl font-bold text-white">{asset.name}</h2>
+          <h3 className="text-lg font-bold text-white flex items-center gap-2">
+            {asset.emoji} {asset.name}
+          </h3>
           <p className="text-zinc-500 text-sm">{asset.symbol} • {asset.type}</p>
         </div>
-        <div className={`
-          px-4 py-2 rounded-lg font-bold text-lg
-          ${signal.action === 'LONG' ? 'bg-green-500/20 text-green-400' : 
-            signal.action === 'SHORT' ? 'bg-red-500/20 text-red-400' : 
-            'bg-zinc-800 text-zinc-400'}
-        `}>
-          {signal.action || 'WAIT'}
+        <div className={`px-4 py-2 rounded-lg font-bold ${
+          sig.action === 'LONG' ? 'bg-green-500/20 text-green-400' :
+          sig.action === 'SHORT' ? 'bg-red-500/20 text-red-400' :
+          'bg-zinc-800 text-zinc-400'
+        }`}>
+          {sig.action || 'WAIT'}
         </div>
       </div>
       
-      {/* Score */}
-      <div className="mb-6">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-zinc-400">Score</span>
-          <span className="text-white font-bold">{signal.score || 0}/100</span>
+      {/* Score Bar */}
+      <div className="mb-4">
+        <div className="flex justify-between text-sm mb-1">
+          <span className="text-zinc-400">Score SMC</span>
+          <span className="text-white font-bold">{sig.score || 0}/100</span>
         </div>
-        <ScoreBar score={signal.score || 0} />
-        {signal.confidence && (
-          <p className="text-xs text-zinc-500 mt-1">Confianza: {signal.confidence}</p>
-        )}
+        <div className="h-2 bg-zinc-800 rounded-full overflow-hidden">
+          <div 
+            className={`h-full rounded-full ${sig.score >= 70 ? 'bg-green-500' : sig.score >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}
+            style={{ width: `${sig.score || 0}%` }}
+          />
+        </div>
+        <p className="text-xs text-zinc-500 mt-1">Confianza: {sig.confidence || 'BAJA'}</p>
       </div>
+      
+      {/* Entry/SL/TP */}
+      {hasSignal && (
+        <div className="grid grid-cols-3 gap-3 mb-4">
+          <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 text-center">
+            <p className="text-blue-400 text-xs mb-1">📍 Entry</p>
+            <p className="text-white font-bold font-mono">{sig.entry}</p>
+          </div>
+          <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-center">
+            <p className="text-red-400 text-xs mb-1">🛑 Stop Loss</p>
+            <p className="text-white font-bold font-mono">{sig.stop}</p>
+          </div>
+          <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3 text-center">
+            <p className="text-green-400 text-xs mb-1">🎯 Take Profit</p>
+            <p className="text-white font-bold font-mono">{sig.tp}</p>
+          </div>
+        </div>
+      )}
+      
+      {/* Modelo */}
+      <div className="mb-4">
+        <span className={`inline-block px-3 py-1 rounded-lg text-sm ${
+          sig.model === 'REVERSAL' ? 'bg-purple-500/20 text-purple-400' :
+          sig.model === 'CONTINUATION' ? 'bg-blue-500/20 text-blue-400' :
+          'bg-zinc-800 text-zinc-400'
+        }`}>
+          {sig.model?.replace('_', ' ') || 'NO SETUP'}
+        </span>
+      </div>
+      
+      {/* Análisis SMC */}
+      {sig.analysis && (
+        <div className="space-y-2 text-sm">
+          <div className="flex justify-between"><span className="text-zinc-500">EQH</span><span className="text-white">{sig.analysis.eqh}</span></div>
+          <div className="flex justify-between"><span className="text-zinc-500">EQL</span><span className="text-white">{sig.analysis.eql}</span></div>
+          {sig.analysis.sweep && <div className="flex justify-between"><span className="text-zinc-500">Sweep</span><span className="text-yellow-400">{sig.analysis.sweep}</span></div>}
+          {sig.analysis.displacement && <div className="flex justify-between"><span className="text-zinc-500">Displacement</span><span className="text-blue-400">{sig.analysis.displacement}</span></div>}
+          {sig.analysis.ob && <div className="flex justify-between"><span className="text-zinc-500">Order Block</span><span className="text-purple-400">{sig.analysis.ob}</span></div>}
+          <div className="flex justify-between"><span className="text-zinc-500">Estructura</span><span className="text-white">{sig.analysis.structure}</span></div>
+        </div>
+      )}
       
       {/* Breakdown */}
-      {signal.breakdown && signal.breakdown.length > 0 && (
-        <div className="mb-6">
-          <h4 className="text-zinc-400 text-sm mb-2">Breakdown</h4>
-          <div className="flex flex-wrap gap-2">
-            {signal.breakdown.map((item, i) => (
-              <span key={i} className="px-2 py-1 bg-zinc-800 rounded text-xs text-zinc-300">
-                {item}
-              </span>
+      {sig.breakdown?.length > 0 && (
+        <div className="mt-4 pt-4 border-t border-zinc-800">
+          <p className="text-zinc-500 text-xs mb-2">Breakdown:</p>
+          <div className="flex flex-wrap gap-1">
+            {sig.breakdown.map((b, i) => (
+              <span key={i} className="px-2 py-1 bg-zinc-800 rounded text-xs text-zinc-300">{b}</span>
             ))}
           </div>
         </div>
       )}
-      
-      {/* Entry Details */}
-      {isActive && (
-        <div className="grid grid-cols-3 gap-4 mb-6">
-          <div className="bg-zinc-800/50 rounded-lg p-3 text-center">
-            <p className="text-zinc-500 text-xs mb-1">Entry</p>
-            <p className="text-blue-400 font-bold">{signal.entry?.toFixed(2) || '-'}</p>
-          </div>
-          <div className="bg-zinc-800/50 rounded-lg p-3 text-center">
-            <p className="text-zinc-500 text-xs mb-1">Stop Loss</p>
-            <p className="text-red-400 font-bold">{signal.stop?.toFixed(2) || '-'}</p>
-          </div>
-          <div className="bg-zinc-800/50 rounded-lg p-3 text-center">
-            <p className="text-zinc-500 text-xs mb-1">Take Profit</p>
-            <p className="text-green-400 font-bold">
-              {typeof signal.tp1 === 'number' ? signal.tp1.toFixed(2) : signal.tp1 || '-'}
-            </p>
-          </div>
+    </div>
+  );
+};
+
+// =============================================
+// COACH DE TRADING
+// =============================================
+const TradingCoach = ({ onClose }) => {
+  const [checklist, setChecklist] = useState([]);
+  const [answers, setAnswers] = useState({});
+  const [result, setResult] = useState(null);
+  
+  useEffect(() => {
+    fetch(`${API_URL}/api/coach/checklist`)
+      .then(r => r.json())
+      .then(d => setChecklist(d.checklist || []))
+      .catch(() => {});
+  }, []);
+  
+  const evaluate = async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/coach/evaluate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ answers })
+      });
+      const data = await res.json();
+      setResult(data);
+    } catch (err) {}
+  };
+  
+  const categories = [...new Set(checklist.map(c => c.category))];
+  
+  return (
+    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+      <div className="bg-zinc-900 rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+        <div className="p-6 border-b border-zinc-800 flex items-center justify-between">
+          <h2 className="text-xl font-bold text-white">🧠 Coach de Trading</h2>
+          <button onClick={onClose} className="text-zinc-400 hover:text-white">✕</button>
         </div>
-      )}
-      
-      {/* Risk/Reward */}
-      {signal.riskReward && (
-        <div className="bg-zinc-800/30 rounded-lg p-3 mb-6">
-          <p className="text-zinc-500 text-xs mb-1">Risk : Reward</p>
-          <p className="text-white font-bold">1 : {signal.riskReward.ratio}</p>
-        </div>
-      )}
-      
-      {/* Model Info */}
-      <div className="mb-6">
-        <h4 className="text-zinc-400 text-sm mb-2">Modelo</h4>
-        <div className={`
-          inline-block px-3 py-1 rounded-lg text-sm font-medium
-          ${signal.model === 'REVERSAL_OB' ? 'bg-purple-500/20 text-purple-400' :
-            signal.model === 'CONTINUATION' ? 'bg-blue-500/20 text-blue-400' :
-            signal.model === 'POST_DISPLACEMENT' ? 'bg-orange-500/20 text-orange-400' :
-            'bg-zinc-800 text-zinc-400'}
-        `}>
-          {signal.model?.replace('_', ' ') || 'NO SETUP'}
+        
+        <div className="p-6 space-y-6">
+          {categories.map(cat => (
+            <div key={cat}>
+              <h3 className="text-sm font-semibold text-zinc-400 mb-3">{cat}</h3>
+              <div className="space-y-2">
+                {checklist.filter(c => c.category === cat).map(item => (
+                  <label key={item.id} className="flex items-center gap-3 p-3 bg-zinc-800/50 rounded-lg cursor-pointer hover:bg-zinc-800">
+                    <input 
+                      type="checkbox"
+                      checked={answers[item.id] || false}
+                      onChange={(e) => setAnswers({ ...answers, [item.id]: e.target.checked })}
+                      className="w-5 h-5 rounded"
+                    />
+                    <span className="text-white text-sm">{item.question}</span>
+                    {item.required && <span className="text-red-400 text-xs">*</span>}
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))}
+          
+          <button
+            onClick={evaluate}
+            className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg"
+          >
+            Evaluar
+          </button>
+          
+          {result && (
+            <div className={`p-4 rounded-lg ${result.canTrade ? 'bg-green-500/20 border border-green-500/50' : 'bg-red-500/20 border border-red-500/50'}`}>
+              <p className="text-2xl font-bold text-center mb-2">{result.score}%</p>
+              <p className={`text-center ${result.canTrade ? 'text-green-400' : 'text-red-400'}`}>
+                {result.recommendation}
+              </p>
+            </div>
+          )}
         </div>
       </div>
+    </div>
+  );
+};
+
+// =============================================
+// SEGUIMIENTO DE OPERACIÓN
+// =============================================
+const OperationTracker = ({ operations, onUpdate }) => {
+  return (
+    <div className="bg-zinc-900 rounded-xl p-4 border border-zinc-800">
+      <h3 className="text-white font-semibold mb-3">📋 Operaciones Activas</h3>
       
-      {/* Analysis Details */}
-      {signal.details && (
+      {operations.length === 0 ? (
+        <p className="text-zinc-500 text-sm">Sin operaciones activas</p>
+      ) : (
         <div className="space-y-2">
-          <h4 className="text-zinc-400 text-sm">Análisis</h4>
-          {Object.entries(signal.details).map(([key, value]) => (
-            <div key={key} className="flex items-center justify-between text-sm">
-              <span className="text-zinc-500 capitalize">{key.replace('_', ' ')}</span>
-              <span className="text-zinc-300">{value}</span>
+          {operations.filter(o => o.status === 'OPEN').map(op => (
+            <div key={op.id} className="p-3 bg-zinc-800/50 rounded-lg">
+              <div className="flex items-center justify-between mb-2">
+                <span className="font-semibold text-white">{op.assetName}</span>
+                <span className={`px-2 py-1 rounded text-xs font-bold ${op.action === 'LONG' ? 'bg-green-500' : 'bg-red-500'}`}>
+                  {op.action}
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-xs mb-2">
+                <div><span className="text-zinc-500">Entry:</span> <span className="text-white">{op.entry}</span></div>
+                <div><span className="text-zinc-500">SL:</span> <span className="text-red-400">{op.stop}</span></div>
+                <div><span className="text-zinc-500">TP:</span> <span className="text-green-400">{op.tp}</span></div>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className={`font-bold ${parseFloat(op.pnl) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {op.pnl}%
+                </span>
+                <div className="flex gap-2">
+                  <button 
+                    onClick={() => onUpdate(op.id, 'TP')}
+                    className="px-2 py-1 bg-green-600 text-white text-xs rounded"
+                  >TP Hit</button>
+                  <button 
+                    onClick={() => onUpdate(op.id, 'SL')}
+                    className="px-2 py-1 bg-red-600 text-white text-xs rounded"
+                  >SL Hit</button>
+                </div>
+              </div>
             </div>
           ))}
         </div>
       )}
-      
-      {/* Waiting */}
-      {signal.waiting && signal.waiting.length > 0 && (
-        <div className="mt-4 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
-          <p className="text-yellow-400 text-sm font-medium mb-1">⏳ Esperando:</p>
-          <ul className="text-yellow-300/70 text-xs">
-            {signal.waiting.map((item, i) => (
-              <li key={i}>• {item}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-      
-      {/* Suggestion */}
-      {signal.suggestion && (
-        <div className="mt-4 p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
-          <p className="text-blue-300 text-sm">{signal.suggestion}</p>
-        </div>
-      )}
     </div>
   );
 };
 
 // =============================================
-// COMPONENTE: Lista de Señales Recientes
+// SEÑALES RECIENTES
 // =============================================
-const RecentSignals = ({ signals }) => {
-  if (!signals || signals.length === 0) {
-    return (
-      <div className="bg-zinc-900 rounded-xl p-4 border border-zinc-800">
-        <h3 className="text-white font-semibold mb-3">📡 Señales Recientes</h3>
-        <p className="text-zinc-500 text-sm">Sin señales recientes</p>
-      </div>
-    );
-  }
-  
-  return (
-    <div className="bg-zinc-900 rounded-xl p-4 border border-zinc-800">
-      <h3 className="text-white font-semibold mb-3">📡 Señales Recientes</h3>
-      <div className="space-y-2 max-h-64 overflow-y-auto">
-        {signals.slice(0, 10).map((sig, i) => (
-          <div key={i} className="flex items-center justify-between p-2 bg-zinc-800/50 rounded-lg">
+const RecentSignals = ({ signals }) => (
+  <div className="bg-zinc-900 rounded-xl p-4 border border-zinc-800">
+    <h3 className="text-white font-semibold mb-3">📡 Señales Recientes</h3>
+    {!signals?.length ? (
+      <p className="text-zinc-500 text-sm">Sin señales</p>
+    ) : (
+      <div className="space-y-2 max-h-48 overflow-y-auto">
+        {signals.slice(0, 8).map((s, i) => (
+          <div key={i} className="flex items-center justify-between p-2 bg-zinc-800/50 rounded">
             <div className="flex items-center gap-2">
-              <span className={`w-2 h-2 rounded-full ${
-                sig.action === 'LONG' ? 'bg-green-500' : 'bg-red-500'
-              }`} />
-              <span className="text-white text-sm">{sig.assetName || sig.asset}</span>
+              <span>{s.emoji}</span>
+              <span className="text-white text-sm">{s.assetName}</span>
             </div>
             <div className="flex items-center gap-2">
-              <span className={`text-xs font-medium ${
-                sig.action === 'LONG' ? 'text-green-400' : 'text-red-400'
-              }`}>
-                {sig.action}
-              </span>
-              <span className="text-zinc-500 text-xs">{sig.score}%</span>
+              <span className={`text-xs font-bold ${s.action === 'LONG' ? 'text-green-400' : 'text-red-400'}`}>{s.action}</span>
+              <span className="text-zinc-500 text-xs">{s.score}%</span>
             </div>
           </div>
         ))}
       </div>
-    </div>
-  );
-};
+    )}
+  </div>
+);
 
 // =============================================
-// COMPONENTE: Flujo SMC
-// =============================================
-const SMCFlow = ({ analysis }) => {
-  const steps = [
-    { key: 'sweep', label: 'Liquidez', icon: '💰' },
-    { key: 'sweep', label: 'Sweep', icon: '🔄' },
-    { key: 'displacement', label: 'Displacement', icon: '➡️' },
-    { key: 'choch', label: 'CHoCH', icon: '🔀' },
-    { key: 'ob', label: 'OB', icon: '📦' },
-    { key: 'entry', label: 'Entrada', icon: '🎯' },
-  ];
-  
-  const isStepComplete = (key) => {
-    if (!analysis) return false;
-    const value = analysis[key];
-    if (typeof value === 'string') return !value.includes('❌') && !value.includes('Sin');
-    return !!value;
-  };
-  
-  const completedSteps = steps.filter(s => isStepComplete(s.key)).length;
-  const progress = (completedSteps / steps.length) * 100;
-  
-  return (
-    <div className="bg-zinc-900 rounded-xl p-4 border border-zinc-800">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-white font-semibold">Flujo SMC</h3>
-        <span className="text-zinc-400 text-sm">{Math.round(progress)}%</span>
-      </div>
-      
-      {/* Progress bar */}
-      <div className="w-full bg-zinc-800 rounded-full h-2 mb-4">
-        <div 
-          className="h-full rounded-full bg-gradient-to-r from-green-500 to-emerald-400 transition-all duration-500"
-          style={{ width: `${progress}%` }}
-        />
-      </div>
-      
-      {/* Steps */}
-      <div className="grid grid-cols-6 gap-1">
-        {steps.map((step, i) => (
-          <div 
-            key={i}
-            className={`
-              flex flex-col items-center p-2 rounded-lg text-center
-              ${isStepComplete(step.key) ? 'bg-green-500/20' : 'bg-zinc-800/50'}
-            `}
-          >
-            <span className="text-lg mb-1">{step.icon}</span>
-            <span className={`text-xs ${isStepComplete(step.key) ? 'text-green-400' : 'text-zinc-500'}`}>
-              {step.label}
-            </span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-};
-
-// =============================================
-// COMPONENTE PRINCIPAL: Dashboard
+// DASHBOARD PRINCIPAL
 // =============================================
 const Dashboard = () => {
-  const [dashboardData, setDashboardData] = useState(null);
-  const [selectedAsset, setSelectedAsset] = useState(null);
-  const [assetDetail, setAssetDetail] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [lastUpdate, setLastUpdate] = useState(null);
+  const [data, setData] = useState(null);
+  const [selected, setSelected] = useState(null);
+  const [detail, setDetail] = useState(null);
+  const [operations, setOperations] = useState([]);
+  const [showCoach, setShowCoach] = useState(false);
+  const [tab, setTab] = useState('trading'); // trading, coach, plan
   
-  // Fetch dashboard data
-  const fetchDashboard = useCallback(async () => {
+  const fetchData = useCallback(async () => {
     try {
       const res = await fetch(`${API_URL}/api/dashboard`);
-      if (!res.ok) throw new Error('Error al conectar con el servidor');
-      const data = await res.json();
-      setDashboardData(data);
-      setLastUpdate(new Date());
-      setError(null);
+      const json = await res.json();
+      setData(json);
+      setOperations(json.activeOperations || []);
       
-      // Auto-select first asset with signal
-      if (!selectedAsset && data.assets) {
-        const withSignal = data.assets.find(a => a.analysis?.action && a.analysis.action !== 'WAIT');
-        setSelectedAsset(withSignal || data.assets[0]);
+      if (!selected && json.assets?.length) {
+        const withSignal = json.assets.find(a => a.signal?.action && !['WAIT','LOADING'].includes(a.signal.action));
+        setSelected(withSignal || json.assets[0]);
       }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedAsset]);
+    } catch (err) {}
+  }, [selected]);
   
-  // Fetch asset detail
-  const fetchAssetDetail = useCallback(async (symbol) => {
+  const fetchDetail = useCallback(async (symbol) => {
     try {
       const res = await fetch(`${API_URL}/api/analyze/${symbol}`);
-      if (!res.ok) return;
-      const data = await res.json();
-      setAssetDetail(data);
-    } catch (err) {
-      console.error('Error fetching asset detail:', err);
-    }
+      const json = await res.json();
+      setDetail(json);
+    } catch (err) {}
   }, []);
   
-  // Initial fetch and polling
   useEffect(() => {
-    fetchDashboard();
-    const interval = setInterval(fetchDashboard, 5000); // Every 5 seconds
+    fetchData();
+    const interval = setInterval(fetchData, 3000);
     return () => clearInterval(interval);
-  }, [fetchDashboard]);
+  }, [fetchData]);
   
-  // Fetch detail when asset selected
   useEffect(() => {
-    if (selectedAsset?.symbol) {
-      fetchAssetDetail(selectedAsset.symbol);
-    }
-  }, [selectedAsset, fetchAssetDetail]);
+    if (selected?.symbol) fetchDetail(selected.symbol);
+  }, [selected, fetchDetail]);
   
-  if (loading) {
+  const openOperation = async () => {
+    if (!selected?.signal || selected.signal.action === 'WAIT') return;
+    const sig = selected.signal;
+    
+    try {
+      await fetch(`${API_URL}/api/operations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symbol: selected.symbol,
+          action: sig.action,
+          entry: sig.entry,
+          stop: sig.stop,
+          tp: sig.tp
+        })
+      });
+      fetchData();
+    } catch (err) {}
+  };
+  
+  const updateOperation = async (id, result) => {
+    try {
+      await fetch(`${API_URL}/api/operations/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'CLOSED', result })
+      });
+      fetchData();
+    } catch (err) {}
+  };
+  
+  if (!data) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center">
         <div className="text-center">
           <div className="w-16 h-16 border-4 border-zinc-700 border-t-green-500 rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-zinc-400">Conectando con Trading Master Pro v8.0...</p>
+          <p className="text-zinc-400">Conectando a Trading Master Pro...</p>
         </div>
       </div>
     );
@@ -535,87 +557,86 @@ const Dashboard = () => {
       <header className="border-b border-zinc-800 px-6 py-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <h1 className="text-xl font-bold">
-              Trading<span className="text-green-500">Pro</span>
-            </h1>
-            <span className="px-2 py-0.5 bg-green-500/20 text-green-400 text-xs rounded-full font-medium">
-              v8.0
-            </span>
-            <span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 text-xs rounded-full">
-              SMC INSTITUCIONAL
-            </span>
+            <h1 className="text-xl font-bold">Trading<span className="text-green-500">Pro</span></h1>
+            <span className="px-2 py-0.5 bg-green-500/20 text-green-400 text-xs rounded-full">v9.0</span>
           </div>
           
           <div className="flex items-center gap-4">
-            <div className={`flex items-center gap-2 ${dashboardData?.connected ? 'text-green-400' : 'text-red-400'}`}>
-              <span className={`w-2 h-2 rounded-full ${dashboardData?.connected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
-              <span className="text-sm">{dashboardData?.connected ? 'Conectado' : 'Desconectado'}</span>
+            <button 
+              onClick={() => setShowCoach(true)}
+              className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-sm rounded-lg"
+            >
+              🧠 Coach
+            </button>
+            <div className={`flex items-center gap-2 ${data.connected ? 'text-green-400' : 'text-red-400'}`}>
+              <span className={`w-2 h-2 rounded-full ${data.connected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+              <span className="text-sm">{data.connected ? 'Conectado' : 'Desconectado'}</span>
             </div>
-            {lastUpdate && (
-              <span className="text-zinc-500 text-xs">
-                {lastUpdate.toLocaleTimeString()}
-              </span>
-            )}
           </div>
         </div>
       </header>
       
-      {error && (
-        <div className="mx-6 mt-4 p-3 bg-red-500/20 border border-red-500/50 rounded-lg">
-          <p className="text-red-400 text-sm">⚠️ {error}</p>
-        </div>
-      )}
-      
+      {/* Main */}
       <main className="p-6">
         <div className="grid grid-cols-12 gap-6">
-          {/* Left: Asset List */}
-          <div className="col-span-12 lg:col-span-3 space-y-4">
+          {/* Activos */}
+          <div className="col-span-12 lg:col-span-3 space-y-3">
             <h2 className="text-lg font-semibold text-zinc-300">Activos</h2>
-            <div className="space-y-2">
-              {dashboardData?.assets?.map((asset) => (
-                <AssetCard 
-                  key={asset.symbol}
-                  asset={asset}
-                  onSelect={setSelectedAsset}
-                  isSelected={selectedAsset?.symbol === asset.symbol}
-                />
-              ))}
-            </div>
+            {data.assets?.map(asset => (
+              <AssetCard 
+                key={asset.symbol}
+                asset={asset}
+                selected={selected?.symbol === asset.symbol}
+                onClick={setSelected}
+              />
+            ))}
           </div>
           
-          {/* Center: Chart */}
+          {/* Gráfico */}
           <div className="col-span-12 lg:col-span-6 space-y-4">
-            {selectedAsset && (
+            {selected && (
               <>
                 <div className="bg-zinc-900 rounded-xl p-4 border border-zinc-800">
                   <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-lg font-semibold">{selectedAsset.name}</h2>
-                    <span className="text-zinc-400">{selectedAsset.price?.toFixed(selectedAsset.type === 'forex' ? 5 : 2)}</span>
+                    <h2 className="text-lg font-semibold flex items-center gap-2">
+                      {selected.emoji} {selected.name}
+                    </h2>
+                    <span className="text-xl font-mono text-white">{selected.price?.toFixed(selected.decimals)}</span>
                   </div>
                   <CandleChart 
-                    candles={assetDetail?.candles || []} 
-                    signal={assetDetail?.signal}
+                    candles={detail?.candles || []}
+                    signal={detail?.signal}
                     height={350}
+                    decimals={selected.decimals}
                   />
                 </div>
                 
-                <SMCFlow analysis={assetDetail?.signal?.analysis || assetDetail?.analysis} />
+                {/* Botón abrir operación */}
+                {selected.signal?.action && !['WAIT','LOADING'].includes(selected.signal.action) && (
+                  <button 
+                    onClick={openOperation}
+                    className={`w-full py-3 rounded-xl font-bold text-white ${
+                      selected.signal.action === 'LONG' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'
+                    }`}
+                  >
+                    Abrir {selected.signal.action} @ {selected.signal.entry}
+                  </button>
+                )}
               </>
             )}
           </div>
           
-          {/* Right: Signal Panel & Recent */}
+          {/* Panel derecho */}
           <div className="col-span-12 lg:col-span-3 space-y-4">
-            {assetDetail && (
-              <SignalPanel 
-                asset={selectedAsset} 
-                signal={assetDetail.signal}
-              />
-            )}
-            <RecentSignals signals={dashboardData?.recentSignals} />
+            <SignalPanel asset={selected} />
+            <OperationTracker operations={operations} onUpdate={updateOperation} />
+            <RecentSignals signals={data.recentSignals} />
           </div>
         </div>
       </main>
+      
+      {/* Coach Modal */}
+      {showCoach && <TradingCoach onClose={() => setShowCoach(false)} />}
     </div>
   );
 };

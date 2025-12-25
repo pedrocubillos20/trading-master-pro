@@ -8,7 +8,6 @@ export default defineConfig({
     host: true
   },
   build: {
-    outDir: 'dist',
-    sourcemap: false
+    outDir: 'dist'
   }
 });
