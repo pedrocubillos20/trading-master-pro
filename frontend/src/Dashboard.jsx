@@ -1,6 +1,7 @@
 // =============================================
-// TRADING MASTER PRO v9.1 - DASHBOARD
-// Gráfico de Velas Japonesas Profesional
+// TRADING MASTER PRO v10.0
+// Minimalista • Profesional • SMC
+// Temporalidad: M5 (5 minutos)
 // =============================================
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -8,210 +9,181 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 const API_URL = import.meta.env.VITE_API_URL || 'https://trading-master-pro-production.up.railway.app';
 
 // =============================================
-// GRÁFICO DE VELAS JAPONESAS PROFESIONAL
+// GRÁFICO DE VELAS JAPONESAS - ESTILO TRADINGVIEW
 // =============================================
-const CandlestickChart = ({ candles = [], signal, height = 400, decimals = 2 }) => {
+const CandlestickChart = ({ candles = [], signal, height = 450, decimals = 2 }) => {
   const canvasRef = useRef(null);
   
   useEffect(() => {
-    if (!canvasRef.current || !candles.length) return;
+    if (!canvasRef.current) return;
     
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
     const rect = canvas.getBoundingClientRect();
     
-    // Alta resolución
-    const dpr = window.devicePixelRatio || 2;
+    // Resolución alta para pantallas retina
+    const dpr = window.devicePixelRatio || 1;
     canvas.width = rect.width * dpr;
     canvas.height = height * dpr;
     ctx.scale(dpr, dpr);
     
-    const w = rect.width;
-    const h = height;
+    const W = rect.width;
+    const H = height;
     
-    // Limpiar canvas
-    ctx.clearRect(0, 0, w, h);
+    // Limpiar
+    ctx.fillStyle = '#0a0a0a';
+    ctx.fillRect(0, 0, W, H);
     
-    // Fondo oscuro
-    ctx.fillStyle = '#0d0d0d';
-    ctx.fillRect(0, 0, w, h);
-    
-    const data = candles.slice(-60);
-    if (!data.length) return;
-    
-    // Padding
-    const padding = { top: 30, right: 80, bottom: 40, left: 15 };
-    const chartW = w - padding.left - padding.right;
-    const chartH = h - padding.top - padding.bottom;
-    
-    // Calcular rango de precios con margen
-    const allHighs = data.map(c => c.high);
-    const allLows = data.map(c => c.low);
-    let maxPrice = Math.max(...allHighs);
-    let minPrice = Math.min(...allLows);
-    
-    // Agregar líneas de señal al rango si existen
-    if (signal?.entry) maxPrice = Math.max(maxPrice, signal.entry, signal.stop || 0, signal.tp || 0);
-    if (signal?.stop) minPrice = Math.min(minPrice, signal.stop);
-    if (signal?.tp) maxPrice = Math.max(maxPrice, signal.tp);
-    
-    const priceMargin = (maxPrice - minPrice) * 0.1;
-    maxPrice += priceMargin;
-    minPrice -= priceMargin;
-    const priceRange = maxPrice - minPrice || 1;
-    
-    // Funciones de conversión
-    const priceToY = (price) => padding.top + ((maxPrice - price) / priceRange) * chartH;
-    const candleWidth = Math.max(4, (chartW / data.length) * 0.65);
-    const candleGap = (chartW / data.length) * 0.35;
-    const indexToX = (i) => padding.left + i * (candleWidth + candleGap) + candleGap / 2;
-    
-    // ===== GRID =====
-    ctx.strokeStyle = '#1f1f1f';
-    ctx.lineWidth = 1;
-    
-    // Líneas horizontales y precios
-    const priceSteps = 6;
-    ctx.font = '11px monospace';
-    ctx.fillStyle = '#555';
-    ctx.textAlign = 'left';
-    
-    for (let i = 0; i <= priceSteps; i++) {
-      const y = padding.top + (chartH / priceSteps) * i;
-      const price = maxPrice - (priceRange / priceSteps) * i;
-      
-      ctx.beginPath();
-      ctx.moveTo(padding.left, y);
-      ctx.lineTo(w - padding.right, y);
-      ctx.stroke();
-      
-      ctx.fillText(price.toFixed(decimals), w - padding.right + 8, y + 4);
+    if (!candles.length) {
+      ctx.fillStyle = '#333';
+      ctx.font = '14px -apple-system, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Cargando datos...', W / 2, H / 2);
+      return;
     }
     
-    // ===== ZONAS DE SEÑAL (fondo) =====
-    if (signal?.entry && signal?.stop && signal.action && !['WAIT', 'LOADING'].includes(signal.action)) {
-      const entryY = priceToY(signal.entry);
-      const stopY = priceToY(signal.stop);
+    // Configuración
+    const PADDING = { top: 20, right: 70, bottom: 30, left: 10 };
+    const chartW = W - PADDING.left - PADDING.right;
+    const chartH = H - PADDING.top - PADDING.bottom;
+    
+    // Datos
+    const data = candles.slice(-50);
+    const highs = data.map(c => c.high);
+    const lows = data.map(c => c.low);
+    
+    // Rango de precios
+    let maxP = Math.max(...highs);
+    let minP = Math.min(...lows);
+    
+    // Incluir líneas de señal en el rango
+    if (signal?.entry) {
+      maxP = Math.max(maxP, signal.entry, signal.stop || 0, signal.tp || 0);
+      minP = Math.min(minP, signal.entry, signal.stop || maxP, signal.tp || maxP);
+    }
+    
+    // Margen del 5%
+    const margin = (maxP - minP) * 0.05;
+    maxP += margin;
+    minP -= margin;
+    const range = maxP - minP || 1;
+    
+    // Funciones de conversión
+    const toY = (price) => PADDING.top + ((maxP - price) / range) * chartH;
+    const toX = (i) => PADDING.left + (i + 0.5) * (chartW / data.length);
+    const candleW = Math.max(1, (chartW / data.length) * 0.6);
+    
+    // ===== GRID =====
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.lineWidth = 1;
+    
+    // Líneas horizontales
+    const steps = 5;
+    ctx.font = '10px -apple-system, monospace';
+    ctx.fillStyle = '#444';
+    ctx.textAlign = 'left';
+    
+    for (let i = 0; i <= steps; i++) {
+      const y = PADDING.top + (chartH / steps) * i;
+      const price = maxP - (range / steps) * i;
       
-      // Zona de riesgo
-      ctx.fillStyle = 'rgba(239, 68, 68, 0.1)';
-      ctx.fillRect(padding.left, Math.min(entryY, stopY), chartW, Math.abs(stopY - entryY));
+      ctx.beginPath();
+      ctx.moveTo(PADDING.left, y);
+      ctx.lineTo(W - PADDING.right, y);
+      ctx.stroke();
       
-      // Zona de profit
-      if (signal.tp) {
-        const tpY = priceToY(signal.tp);
-        ctx.fillStyle = 'rgba(34, 197, 94, 0.1)';
-        ctx.fillRect(padding.left, Math.min(entryY, tpY), chartW, Math.abs(tpY - entryY));
-      }
+      ctx.fillText(price.toFixed(decimals), W - PADDING.right + 5, y + 3);
     }
     
     // ===== VELAS JAPONESAS =====
     data.forEach((candle, i) => {
-      const x = indexToX(i);
-      const centerX = x + candleWidth / 2;
+      const x = toX(i);
+      const isUp = candle.close >= candle.open;
       
-      const isGreen = candle.close >= candle.open;
-      const bodyColor = isGreen ? '#26a69a' : '#ef5350';
-      const wickColor = isGreen ? '#26a69a' : '#ef5350';
+      const highY = toY(candle.high);
+      const lowY = toY(candle.low);
+      const openY = toY(candle.open);
+      const closeY = toY(candle.close);
       
-      const openY = priceToY(candle.open);
-      const closeY = priceToY(candle.close);
-      const highY = priceToY(candle.high);
-      const lowY = priceToY(candle.low);
+      const bodyTop = Math.min(openY, closeY);
+      const bodyBottom = Math.max(openY, closeY);
+      const bodyH = Math.max(1, bodyBottom - bodyTop);
       
-      // MECHA (línea vertical completa)
-      ctx.strokeStyle = wickColor;
-      ctx.lineWidth = 1.5;
+      // Colores estilo TradingView
+      const upColor = '#26a69a';
+      const downColor = '#ef5350';
+      const color = isUp ? upColor : downColor;
+      
+      // MECHA (wick/shadow)
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.moveTo(centerX, highY);
-      ctx.lineTo(centerX, lowY);
+      ctx.moveTo(x, highY);
+      ctx.lineTo(x, bodyTop);
+      ctx.moveTo(x, bodyBottom);
+      ctx.lineTo(x, lowY);
       ctx.stroke();
       
-      // CUERPO DE LA VELA
-      const bodyTop = Math.min(openY, closeY);
-      const bodyHeight = Math.abs(closeY - openY) || 2;
-      
-      // Relleno del cuerpo
-      ctx.fillStyle = bodyColor;
-      ctx.fillRect(x, bodyTop, candleWidth, bodyHeight);
-      
-      // Si es vela hueca (algunas personas prefieren verde hueco)
-      // ctx.strokeStyle = bodyColor;
-      // ctx.lineWidth = 1.5;
-      // ctx.strokeRect(x, bodyTop, candleWidth, bodyHeight);
+      // CUERPO
+      ctx.fillStyle = color;
+      ctx.fillRect(x - candleW / 2, bodyTop, candleW, bodyH);
     });
     
     // ===== LÍNEAS DE SEÑAL =====
     if (signal?.action && !['WAIT', 'LOADING'].includes(signal.action)) {
-      
-      const drawSignalLine = (price, color, label, dashed = false) => {
-        if (!price || price < minPrice || price > maxPrice) return;
+      const drawLine = (price, color, label) => {
+        if (!price) return;
+        const y = toY(price);
+        if (y < PADDING.top || y > H - PADDING.bottom) return;
         
-        const y = priceToY(price);
-        
-        // Línea
+        // Línea punteada
         ctx.strokeStyle = color;
-        ctx.lineWidth = 2;
-        if (dashed) ctx.setLineDash([6, 4]);
-        else ctx.setLineDash([]);
-        
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
         ctx.beginPath();
-        ctx.moveTo(padding.left, y);
-        ctx.lineTo(w - padding.right, y);
+        ctx.moveTo(PADDING.left, y);
+        ctx.lineTo(W - PADDING.right, y);
         ctx.stroke();
         ctx.setLineDash([]);
         
-        // Badge con precio
-        const badgeW = 75;
-        const badgeH = 22;
-        const badgeX = w - padding.right - badgeW - 5;
-        const badgeY = y - badgeH / 2;
-        
-        // Fondo del badge
+        // Etiqueta
         ctx.fillStyle = color;
-        ctx.beginPath();
-        ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 4);
-        ctx.fill();
-        
-        // Texto del badge
-        ctx.fillStyle = '#fff';
-        ctx.font = 'bold 10px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText(`${label} ${price.toFixed(decimals)}`, badgeX + badgeW / 2, y + 4);
+        ctx.font = 'bold 9px -apple-system, sans-serif';
+        ctx.textAlign = 'right';
+        ctx.fillText(`${label} ${price.toFixed(decimals)}`, W - PADDING.right - 5, y - 4);
       };
       
-      // Dibujar líneas
-      drawSignalLine(signal.entry, '#2196f3', 'ENTRY', false);
-      drawSignalLine(signal.stop, '#f44336', 'STOP', true);
-      drawSignalLine(signal.tp, '#4caf50', 'TP', true);
+      drawLine(signal.entry, '#2196f3', '▶ ENTRY');
+      drawLine(signal.stop, '#ef5350', '✕ STOP');
+      drawLine(signal.tp, '#26a69a', '◎ TP');
     }
     
     // ===== PRECIO ACTUAL =====
-    const lastCandle = data[data.length - 1];
-    if (lastCandle) {
-      const currentPrice = lastCandle.close;
-      const y = priceToY(currentPrice);
-      const isUp = lastCandle.close >= lastCandle.open;
+    const last = data[data.length - 1];
+    if (last) {
+      const y = toY(last.close);
+      const isUp = last.close >= last.open;
+      const color = isUp ? '#26a69a' : '#ef5350';
       
-      // Línea punteada del precio actual
-      ctx.strokeStyle = isUp ? '#26a69a' : '#ef5350';
+      // Línea del precio actual
+      ctx.strokeStyle = color;
       ctx.lineWidth = 1;
       ctx.setLineDash([2, 2]);
       ctx.beginPath();
-      ctx.moveTo(padding.left, y);
-      ctx.lineTo(w - padding.right, y);
+      ctx.moveTo(PADDING.left, y);
+      ctx.lineTo(W - PADDING.right, y);
       ctx.stroke();
       ctx.setLineDash([]);
       
-      // Badge precio actual
-      const priceText = currentPrice.toFixed(decimals);
-      ctx.fillStyle = isUp ? '#26a69a' : '#ef5350';
-      ctx.fillRect(w - padding.right + 2, y - 11, padding.right - 4, 22);
+      // Badge del precio
+      ctx.fillStyle = color;
+      const badgeW = 60;
+      ctx.fillRect(W - PADDING.right, y - 10, badgeW, 20);
       
       ctx.fillStyle = '#fff';
-      ctx.font = 'bold 11px monospace';
+      ctx.font = 'bold 11px -apple-system, monospace';
       ctx.textAlign = 'center';
-      ctx.fillText(priceText, w - padding.right / 2 + 1, y + 4);
+      ctx.fillText(last.close.toFixed(decimals), W - PADDING.right + badgeW / 2, y + 4);
     }
     
   }, [candles, signal, height, decimals]);
@@ -219,14 +191,21 @@ const CandlestickChart = ({ candles = [], signal, height = 400, decimals = 2 }) 
   return (
     <canvas 
       ref={canvasRef} 
-      style={{ width: '100%', height: `${height}px`, borderRadius: '12px' }}
+      style={{ 
+        width: '100%', 
+        height: `${height}px`,
+        borderRadius: '8px',
+        display: 'block'
+      }}
     />
   );
 };
 
 // =============================================
-// TARJETA DE ACTIVO
+// COMPONENTES MINIMALISTAS
 // =============================================
+
+// Tarjeta de activo
 const AssetCard = ({ asset, selected, onClick }) => {
   const sig = asset.signal;
   const hasSignal = sig?.action && !['WAIT', 'LOADING'].includes(sig.action);
@@ -234,343 +213,127 @@ const AssetCard = ({ asset, selected, onClick }) => {
   return (
     <div 
       onClick={() => onClick(asset)}
-      className={`p-4 rounded-xl border cursor-pointer transition-all duration-200 ${
+      className={`p-3 rounded-lg cursor-pointer transition-all border ${
         selected 
-          ? 'border-blue-500 bg-blue-500/10' 
-          : hasSignal
-            ? sig.action === 'LONG' 
-              ? 'border-green-500/50 bg-green-900/20 hover:bg-green-900/30'
-              : 'border-red-500/50 bg-red-900/20 hover:bg-red-900/30'
-            : 'border-zinc-800 bg-zinc-900/50 hover:border-zinc-700'
+          ? 'bg-zinc-800 border-zinc-600' 
+          : 'bg-zinc-900/50 border-transparent hover:bg-zinc-800/50'
       }`}
     >
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className="text-xl">{asset.emoji}</span>
-          <span className="font-semibold text-white">{asset.name}</span>
+          <span>{asset.emoji}</span>
+          <span className="text-white font-medium text-sm">{asset.name}</span>
         </div>
         {hasSignal && (
-          <span className={`px-2 py-1 rounded text-xs font-bold text-white ${
-            sig.action === 'LONG' ? 'bg-green-600' : 'bg-red-600'
+          <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${
+            sig.action === 'LONG' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
           }`}>
             {sig.action}
           </span>
         )}
       </div>
-      
-      <div className="flex items-center justify-between text-sm">
-        <span className="text-white font-mono text-lg">
+      <div className="flex items-center justify-between mt-1">
+        <span className="text-zinc-400 font-mono text-sm">
           {asset.price?.toFixed(asset.decimals) || '---'}
         </span>
         {sig?.score > 0 && (
-          <span className={`font-bold ${
-            sig.score >= 70 ? 'text-green-400' : sig.score >= 50 ? 'text-yellow-400' : 'text-zinc-500'
-          }`}>
+          <span className={`text-xs ${sig.score >= 70 ? 'text-green-400' : 'text-zinc-500'}`}>
             {sig.score}%
           </span>
         )}
       </div>
-      
-      {/* Entry/SL/TP en tarjeta */}
-      {hasSignal && sig.entry && (
-        <div className="mt-3 pt-3 border-t border-zinc-700/50 grid grid-cols-3 gap-2 text-xs">
-          <div className="text-center">
-            <p className="text-blue-400 font-semibold">Entry</p>
-            <p className="text-white font-mono">{sig.entry}</p>
-          </div>
-          <div className="text-center">
-            <p className="text-red-400 font-semibold">SL</p>
-            <p className="text-white font-mono">{sig.stop}</p>
-          </div>
-          <div className="text-center">
-            <p className="text-green-400 font-semibold">TP</p>
-            <p className="text-white font-mono">{sig.tp}</p>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
 
-// =============================================
-// PANEL DE SEÑAL DETALLADO
-// =============================================
-const SignalPanel = ({ asset }) => {
+// Panel de señal
+const SignalCard = ({ asset }) => {
   const sig = asset?.signal;
   if (!sig) return null;
   
   const hasSignal = sig.action && !['WAIT', 'LOADING'].includes(sig.action);
   
   return (
-    <div className="bg-zinc-900 rounded-xl p-5 border border-zinc-800">
+    <div className="bg-zinc-900/80 backdrop-blur rounded-lg p-4 border border-zinc-800">
       {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h3 className="text-lg font-bold text-white flex items-center gap-2">
-            {asset.emoji} {asset.name}
-          </h3>
-          <p className="text-zinc-500 text-sm">{asset.type}</p>
-        </div>
-        <div className={`px-4 py-2 rounded-lg font-bold text-lg ${
-          sig.action === 'LONG' ? 'bg-green-600 text-white' :
-          sig.action === 'SHORT' ? 'bg-red-600 text-white' :
-          'bg-zinc-800 text-zinc-400'
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-zinc-400 text-sm">Señal</span>
+        <span className={`text-lg font-bold ${
+          sig.action === 'LONG' ? 'text-green-400' :
+          sig.action === 'SHORT' ? 'text-red-400' :
+          'text-zinc-500'
         }`}>
           {sig.action || 'WAIT'}
-        </div>
+        </span>
       </div>
       
       {/* Score */}
-      <div className="mb-4">
-        <div className="flex justify-between text-sm mb-2">
-          <span className="text-zinc-400">Score SMC</span>
-          <span className={`font-bold ${
-            sig.score >= 70 ? 'text-green-400' : sig.score >= 50 ? 'text-yellow-400' : 'text-red-400'
-          }`}>{sig.score || 0}/100</span>
+      <div className="mb-3">
+        <div className="flex justify-between text-xs mb-1">
+          <span className="text-zinc-500">Score</span>
+          <span className="text-white">{sig.score || 0}%</span>
         </div>
-        <div className="h-3 bg-zinc-800 rounded-full overflow-hidden">
+        <div className="h-1 bg-zinc-800 rounded-full overflow-hidden">
           <div 
-            className={`h-full rounded-full transition-all duration-500 ${
-              sig.score >= 70 ? 'bg-gradient-to-r from-green-600 to-green-400' : 
-              sig.score >= 50 ? 'bg-gradient-to-r from-yellow-600 to-yellow-400' : 
-              'bg-gradient-to-r from-red-600 to-red-400'
+            className={`h-full transition-all ${
+              sig.score >= 70 ? 'bg-green-500' : sig.score >= 50 ? 'bg-yellow-500' : 'bg-zinc-600'
             }`}
             style={{ width: `${sig.score || 0}%` }}
           />
         </div>
       </div>
       
-      {/* Entry/SL/TP Grande */}
+      {/* Entry/SL/TP */}
       {hasSignal && (
-        <div className="grid grid-cols-3 gap-3 mb-4">
-          <div className="bg-blue-500/10 border border-blue-500/40 rounded-xl p-3 text-center">
-            <p className="text-blue-400 text-xs font-semibold mb-1">📍 ENTRY</p>
-            <p className="text-white font-bold text-lg font-mono">{sig.entry}</p>
+        <div className="space-y-2 text-sm">
+          <div className="flex justify-between">
+            <span className="text-zinc-500">Entry</span>
+            <span className="text-blue-400 font-mono">{sig.entry}</span>
           </div>
-          <div className="bg-red-500/10 border border-red-500/40 rounded-xl p-3 text-center">
-            <p className="text-red-400 text-xs font-semibold mb-1">🛑 STOP</p>
-            <p className="text-white font-bold text-lg font-mono">{sig.stop}</p>
+          <div className="flex justify-between">
+            <span className="text-zinc-500">Stop Loss</span>
+            <span className="text-red-400 font-mono">{sig.stop}</span>
           </div>
-          <div className="bg-green-500/10 border border-green-500/40 rounded-xl p-3 text-center">
-            <p className="text-green-400 text-xs font-semibold mb-1">🎯 TP</p>
-            <p className="text-white font-bold text-lg font-mono">{sig.tp}</p>
+          <div className="flex justify-between">
+            <span className="text-zinc-500">Take Profit</span>
+            <span className="text-green-400 font-mono">{sig.tp}</span>
           </div>
         </div>
       )}
       
       {/* Modelo */}
-      <div className="mb-4">
-        <span className={`inline-block px-3 py-1.5 rounded-lg text-sm font-semibold ${
-          sig.model === 'REVERSAL' ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' :
-          sig.model === 'CONTINUATION' ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' :
-          'bg-zinc-800 text-zinc-400'
-        }`}>
-          {sig.model || 'NO SETUP'}
+      <div className="mt-3 pt-3 border-t border-zinc-800">
+        <span className="text-xs text-zinc-500">
+          Modelo: <span className="text-zinc-300">{sig.model || 'NO_SETUP'}</span>
         </span>
       </div>
-      
-      {/* Análisis SMC */}
-      {sig.analysis && (
-        <div className="space-y-2 text-sm border-t border-zinc-800 pt-4">
-          <p className="text-zinc-500 font-semibold mb-2">📊 Análisis SMC</p>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="flex justify-between">
-              <span className="text-zinc-500">EQH</span>
-              <span className="text-white font-mono">{sig.analysis.eqh}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-zinc-500">EQL</span>
-              <span className="text-white font-mono">{sig.analysis.eql}</span>
-            </div>
-          </div>
-          {sig.analysis.sweep && (
-            <div className="flex justify-between">
-              <span className="text-zinc-500">Sweep</span>
-              <span className="text-yellow-400">{sig.analysis.sweep}</span>
-            </div>
-          )}
-          {sig.analysis.displacement && (
-            <div className="flex justify-between">
-              <span className="text-zinc-500">Displacement</span>
-              <span className="text-cyan-400">{sig.analysis.displacement}</span>
-            </div>
-          )}
-          {sig.analysis.ob && (
-            <div className="flex justify-between">
-              <span className="text-zinc-500">Order Block</span>
-              <span className="text-purple-400">{sig.analysis.ob}</span>
-            </div>
-          )}
-          <div className="flex justify-between">
-            <span className="text-zinc-500">Estructura</span>
-            <span className="text-white">{sig.analysis.structure}</span>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
 
-// =============================================
-// COACH DE TRADING
-// =============================================
-const TradingCoach = ({ onClose }) => {
-  const [checklist, setChecklist] = useState([]);
-  const [answers, setAnswers] = useState({});
-  const [result, setResult] = useState(null);
-  
-  useEffect(() => {
-    fetch(`${API_URL}/api/coach/checklist`)
-      .then(r => r.json())
-      .then(d => setChecklist(d.checklist || []))
-      .catch(() => {});
-  }, []);
-  
-  const evaluate = async () => {
-    try {
-      const res = await fetch(`${API_URL}/api/coach/evaluate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ answers })
-      });
-      const data = await res.json();
-      setResult(data);
-    } catch (err) {}
-  };
-  
-  const categories = [...new Set(checklist.map(c => c.category))];
-  
-  return (
-    <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4">
-      <div className="bg-zinc-900 rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto border border-zinc-700">
-        <div className="p-6 border-b border-zinc-800 flex items-center justify-between sticky top-0 bg-zinc-900">
-          <h2 className="text-xl font-bold text-white">🧠 Coach de Trading SMC</h2>
-          <button onClick={onClose} className="text-zinc-400 hover:text-white text-2xl">×</button>
-        </div>
-        
-        <div className="p-6 space-y-6">
-          {categories.map(cat => (
-            <div key={cat}>
-              <h3 className="text-sm font-bold text-zinc-400 mb-3 uppercase tracking-wide">{cat}</h3>
-              <div className="space-y-2">
-                {checklist.filter(c => c.category === cat).map(item => (
-                  <label key={item.id} className="flex items-center gap-3 p-3 bg-zinc-800/50 rounded-lg cursor-pointer hover:bg-zinc-800 transition-colors">
-                    <input 
-                      type="checkbox"
-                      checked={answers[item.id] || false}
-                      onChange={(e) => setAnswers({ ...answers, [item.id]: e.target.checked })}
-                      className="w-5 h-5 rounded accent-green-500"
-                    />
-                    <span className="text-white text-sm flex-1">{item.question}</span>
-                    {item.required && <span className="text-red-400 text-xs">*</span>}
-                  </label>
-                ))}
-              </div>
-            </div>
-          ))}
-          
-          <button
-            onClick={evaluate}
-            className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition-colors"
-          >
-            EVALUAR CHECKLIST
-          </button>
-          
-          {result && (
-            <div className={`p-5 rounded-xl text-center ${
-              result.canTrade 
-                ? 'bg-green-500/20 border-2 border-green-500' 
-                : 'bg-red-500/20 border-2 border-red-500'
-            }`}>
-              <p className="text-4xl font-bold mb-2">{result.score}%</p>
-              <p className={`font-semibold ${result.canTrade ? 'text-green-400' : 'text-red-400'}`}>
-                {result.canTrade ? '✅ PUEDES OPERAR' : '❌ NO OPERAR'}
-              </p>
-              {result.requiredFailed?.length > 0 && (
-                <p className="text-red-300 text-sm mt-2">
-                  Falta: {result.requiredFailed.slice(0, 2).join(', ')}
-                </p>
-              )}
-            </div>
-          )}
-        </div>
+// Información de metodología
+const MethodologyInfo = () => (
+  <div className="bg-zinc-900/50 rounded-lg p-4 border border-zinc-800/50">
+    <h3 className="text-zinc-400 text-xs font-semibold mb-2 uppercase tracking-wide">Metodología SMC</h3>
+    <div className="space-y-1 text-xs">
+      <div className="flex items-center gap-2">
+        <span className="w-2 h-2 rounded-full bg-yellow-500"></span>
+        <span className="text-zinc-400">Liquidez (EQH/EQL)</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="w-2 h-2 rounded-full bg-orange-500"></span>
+        <span className="text-zinc-400">Sweep de liquidez</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+        <span className="text-zinc-400">Displacement</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="w-2 h-2 rounded-full bg-purple-500"></span>
+        <span className="text-zinc-400">Order Block</span>
       </div>
     </div>
-  );
-};
-
-// =============================================
-// OPERACIONES ACTIVAS
-// =============================================
-const ActiveOperations = ({ operations, onUpdate }) => {
-  if (!operations?.length) return null;
-  
-  const activeOps = operations.filter(o => o.status === 'OPEN');
-  if (!activeOps.length) return null;
-  
-  return (
-    <div className="bg-zinc-900 rounded-xl p-4 border border-zinc-800">
-      <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
-        📋 Operaciones Activas <span className="text-xs bg-blue-600 px-2 py-0.5 rounded-full">{activeOps.length}</span>
-      </h3>
-      <div className="space-y-2">
-        {activeOps.map(op => (
-          <div key={op.id} className="p-3 bg-zinc-800/50 rounded-lg border border-zinc-700">
-            <div className="flex items-center justify-between mb-2">
-              <span className="font-semibold text-white">{op.assetName}</span>
-              <span className={`px-2 py-1 rounded text-xs font-bold text-white ${
-                op.action === 'LONG' ? 'bg-green-600' : 'bg-red-600'
-              }`}>
-                {op.action}
-              </span>
-            </div>
-            <div className="grid grid-cols-4 gap-2 text-xs mb-2">
-              <div><span className="text-zinc-500">Entry:</span><br/><span className="text-white">{op.entry}</span></div>
-              <div><span className="text-zinc-500">SL:</span><br/><span className="text-red-400">{op.stop}</span></div>
-              <div><span className="text-zinc-500">TP:</span><br/><span className="text-green-400">{op.tp}</span></div>
-              <div><span className="text-zinc-500">PnL:</span><br/><span className={parseFloat(op.pnl) >= 0 ? 'text-green-400' : 'text-red-400'}>{op.pnl}%</span></div>
-            </div>
-            <div className="flex gap-2">
-              <button onClick={() => onUpdate(op.id, 'TP')} className="flex-1 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-bold rounded">
-                ✅ TP HIT
-              </button>
-              <button onClick={() => onUpdate(op.id, 'SL')} className="flex-1 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded">
-                ❌ SL HIT
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-};
-
-// =============================================
-// SEÑALES RECIENTES
-// =============================================
-const RecentSignals = ({ signals }) => (
-  <div className="bg-zinc-900 rounded-xl p-4 border border-zinc-800">
-    <h3 className="text-white font-semibold mb-3">📡 Señales Recientes</h3>
-    {!signals?.length ? (
-      <p className="text-zinc-500 text-sm">Sin señales</p>
-    ) : (
-      <div className="space-y-2 max-h-48 overflow-y-auto">
-        {signals.slice(0, 8).map((s, i) => (
-          <div key={i} className="flex items-center justify-between p-2 bg-zinc-800/50 rounded-lg">
-            <div className="flex items-center gap-2">
-              <span>{s.emoji}</span>
-              <span className="text-white text-sm">{s.assetName}</span>
-            </div>
-            <div className="flex items-center gap-3">
-              <span className={`text-xs font-bold px-2 py-0.5 rounded ${
-                s.action === 'LONG' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'
-              }`}>{s.action}</span>
-              <span className="text-zinc-400 text-xs">{s.score}%</span>
-            </div>
-          </div>
-        ))}
-      </div>
-    )}
+    <p className="text-zinc-600 text-xs mt-2">Timeframe: M5</p>
   </div>
 );
 
@@ -581,23 +344,23 @@ const Dashboard = () => {
   const [data, setData] = useState(null);
   const [selected, setSelected] = useState(null);
   const [detail, setDetail] = useState(null);
-  const [operations, setOperations] = useState([]);
-  const [showCoach, setShowCoach] = useState(false);
   
+  // Fetch dashboard
   const fetchData = useCallback(async () => {
     try {
       const res = await fetch(`${API_URL}/api/dashboard`);
       const json = await res.json();
       setData(json);
-      setOperations(json.activeOperations || []);
       
       if (!selected && json.assets?.length) {
-        const withSignal = json.assets.find(a => a.signal?.action && !['WAIT','LOADING'].includes(a.signal.action));
-        setSelected(withSignal || json.assets[0]);
+        setSelected(json.assets[0]);
       }
-    } catch (err) {}
+    } catch (err) {
+      console.error('Error:', err);
+    }
   }, [selected]);
   
+  // Fetch detalle del activo
   const fetchDetail = useCallback(async (symbol) => {
     try {
       const res = await fetch(`${API_URL}/api/analyze/${symbol}`);
@@ -606,54 +369,29 @@ const Dashboard = () => {
     } catch (err) {}
   }, []);
   
+  // Polling
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 3000);
+    const interval = setInterval(fetchData, 2000);
     return () => clearInterval(interval);
   }, [fetchData]);
   
+  // Actualizar detalle cuando cambia selección
   useEffect(() => {
-    if (selected?.symbol) fetchDetail(selected.symbol);
+    if (selected?.symbol) {
+      fetchDetail(selected.symbol);
+      const interval = setInterval(() => fetchDetail(selected.symbol), 2000);
+      return () => clearInterval(interval);
+    }
   }, [selected, fetchDetail]);
   
-  const openOperation = async () => {
-    if (!selected?.signal || selected.signal.action === 'WAIT') return;
-    const sig = selected.signal;
-    
-    try {
-      await fetch(`${API_URL}/api/operations`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          symbol: selected.symbol,
-          action: sig.action,
-          entry: sig.entry,
-          stop: sig.stop,
-          tp: sig.tp
-        })
-      });
-      fetchData();
-    } catch (err) {}
-  };
-  
-  const updateOperation = async (id, result) => {
-    try {
-      await fetch(`${API_URL}/api/operations/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'CLOSED', result })
-      });
-      fetchData();
-    } catch (err) {}
-  };
-  
+  // Loading
   if (!data) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center">
         <div className="text-center">
-          <div className="w-20 h-20 border-4 border-zinc-700 border-t-green-500 rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-zinc-400 text-lg">Conectando...</p>
-          <p className="text-zinc-600 text-sm mt-2">Trading Master Pro v9.1</p>
+          <div className="w-8 h-8 border-2 border-zinc-700 border-t-white rounded-full animate-spin mx-auto mb-3" />
+          <p className="text-zinc-500 text-sm">Conectando...</p>
         </div>
       </div>
     );
@@ -661,104 +399,133 @@ const Dashboard = () => {
   
   return (
     <div className="min-h-screen bg-black text-white">
-      {/* Header */}
-      <header className="border-b border-zinc-800 px-6 py-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <h1 className="text-2xl font-bold">
-              Trading<span className="text-green-500">Pro</span>
+      {/* Header minimalista */}
+      <header className="px-4 py-3 border-b border-zinc-900">
+        <div className="flex items-center justify-between max-w-7xl mx-auto">
+          <div className="flex items-center gap-3">
+            <h1 className="text-lg font-semibold tracking-tight">
+              TradingPro
             </h1>
-            <span className="px-2 py-1 bg-green-500/20 text-green-400 text-xs rounded-full font-semibold">v9.1</span>
-            <span className="px-2 py-1 bg-purple-500/20 text-purple-400 text-xs rounded-full">SMC</span>
+            <span className="text-xs text-zinc-600">v10</span>
           </div>
-          
-          <div className="flex items-center gap-4">
-            <button 
-              onClick={() => setShowCoach(true)}
-              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold rounded-lg transition-colors"
-            >
-              🧠 Coach
-            </button>
-            <div className={`flex items-center gap-2 ${data.connected ? 'text-green-400' : 'text-red-400'}`}>
-              <span className={`w-3 h-3 rounded-full ${data.connected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
-              <span className="text-sm font-medium">{data.connected ? 'Conectado' : 'Desconectado'}</span>
-            </div>
+          <div className="flex items-center gap-2">
+            <span className={`w-2 h-2 rounded-full ${data.connected ? 'bg-green-500' : 'bg-red-500'}`} />
+            <span className="text-xs text-zinc-500">
+              {data.connected ? 'Live' : 'Offline'}
+            </span>
           </div>
         </div>
       </header>
       
       {/* Main */}
-      <main className="p-6">
-        <div className="grid grid-cols-12 gap-6">
-          {/* Lista de Activos */}
-          <div className="col-span-12 lg:col-span-3 space-y-3">
-            <h2 className="text-lg font-semibold text-zinc-300 mb-2">📊 Activos</h2>
+      <main className="max-w-7xl mx-auto p-4">
+        <div className="grid grid-cols-12 gap-4">
+          
+          {/* Sidebar - Activos */}
+          <aside className="col-span-12 md:col-span-2 space-y-2">
+            <p className="text-zinc-600 text-xs uppercase tracking-wide mb-2">Activos</p>
             {data.assets?.map(asset => (
-              <AssetCard 
+              <AssetCard
                 key={asset.symbol}
                 asset={asset}
                 selected={selected?.symbol === asset.symbol}
                 onClick={setSelected}
               />
             ))}
-          </div>
+            <MethodologyInfo />
+          </aside>
           
-          {/* Gráfico Central */}
-          <div className="col-span-12 lg:col-span-6 space-y-4">
+          {/* Centro - Gráfico */}
+          <section className="col-span-12 md:col-span-7">
             {selected && (
-              <>
-                <div className="bg-zinc-900 rounded-xl p-4 border border-zinc-800">
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center gap-3">
-                      <span className="text-2xl">{selected.emoji}</span>
-                      <div>
-                        <h2 className="text-lg font-bold">{selected.name}</h2>
-                        <p className="text-zinc-500 text-sm">{selected.type}</p>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-2xl font-bold font-mono text-white">
-                        {selected.price?.toFixed(selected.decimals)}
-                      </p>
+              <div className="bg-zinc-900/30 rounded-lg border border-zinc-800/50 overflow-hidden">
+                {/* Header del gráfico */}
+                <div className="px-4 py-3 border-b border-zinc-800/50 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">{selected.emoji}</span>
+                    <div>
+                      <h2 className="text-white font-medium">{selected.name}</h2>
+                      <p className="text-zinc-600 text-xs">M5 • {selected.type}</p>
                     </div>
                   </div>
-                  
-                  <CandlestickChart 
+                  <div className="text-right">
+                    <p className="text-xl font-mono text-white">
+                      {selected.price?.toFixed(selected.decimals)}
+                    </p>
+                  </div>
+                </div>
+                
+                {/* Gráfico */}
+                <div className="p-2">
+                  <CandlestickChart
                     candles={detail?.candles || []}
                     signal={detail?.signal}
-                    height={400}
+                    height={450}
                     decimals={selected.decimals}
                   />
                 </div>
-                
-                {/* Botón Operar */}
-                {selected.signal?.action && !['WAIT','LOADING'].includes(selected.signal.action) && (
-                  <button 
-                    onClick={openOperation}
-                    className={`w-full py-4 rounded-xl font-bold text-lg text-white transition-all ${
-                      selected.signal.action === 'LONG' 
-                        ? 'bg-gradient-to-r from-green-600 to-green-500 hover:from-green-700 hover:to-green-600' 
-                        : 'bg-gradient-to-r from-red-600 to-red-500 hover:from-red-700 hover:to-red-600'
-                    }`}
-                  >
-                    {selected.signal.action === 'LONG' ? '🚀' : '📉'} ABRIR {selected.signal.action} @ {selected.signal.entry}
-                  </button>
-                )}
-              </>
+              </div>
             )}
-          </div>
+          </section>
           
-          {/* Panel Derecho */}
-          <div className="col-span-12 lg:col-span-3 space-y-4">
-            <SignalPanel asset={selected} />
-            <ActiveOperations operations={operations} onUpdate={updateOperation} />
-            <RecentSignals signals={data.recentSignals} />
-          </div>
+          {/* Sidebar derecho - Señal */}
+          <aside className="col-span-12 md:col-span-3 space-y-4">
+            <SignalCard asset={selected} />
+            
+            {/* Análisis SMC */}
+            {detail?.signal?.analysis && (
+              <div className="bg-zinc-900/50 rounded-lg p-4 border border-zinc-800/50">
+                <h3 className="text-zinc-400 text-xs font-semibold mb-3 uppercase tracking-wide">Análisis</h3>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-zinc-500">EQH</span>
+                    <span className="text-white font-mono">{detail.signal.analysis.eqh}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-500">EQL</span>
+                    <span className="text-white font-mono">{detail.signal.analysis.eql}</span>
+                  </div>
+                  {detail.signal.analysis.sweep && (
+                    <div className="flex justify-between">
+                      <span className="text-zinc-500">Sweep</span>
+                      <span className="text-yellow-400 text-xs">{detail.signal.analysis.sweep}</span>
+                    </div>
+                  )}
+                  {detail.signal.analysis.displacement && (
+                    <div className="flex justify-between">
+                      <span className="text-zinc-500">Displacement</span>
+                      <span className="text-blue-400 text-xs">{detail.signal.analysis.displacement}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between">
+                    <span className="text-zinc-500">Estructura</span>
+                    <span className="text-zinc-300 text-xs">{detail.signal.analysis.structure}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            {/* Señales recientes */}
+            {data.recentSignals?.length > 0 && (
+              <div className="bg-zinc-900/50 rounded-lg p-4 border border-zinc-800/50">
+                <h3 className="text-zinc-400 text-xs font-semibold mb-3 uppercase tracking-wide">Recientes</h3>
+                <div className="space-y-2">
+                  {data.recentSignals.slice(0, 5).map((s, i) => (
+                    <div key={i} className="flex items-center justify-between text-sm">
+                      <span className="text-zinc-400">{s.assetName}</span>
+                      <span className={`text-xs font-medium ${
+                        s.action === 'LONG' ? 'text-green-400' : 'text-red-400'
+                      }`}>
+                        {s.action} {s.score}%
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </aside>
         </div>
       </main>
-      
-      {/* Coach Modal */}
-      {showCoach && <TradingCoach onClose={() => setShowCoach(false)} />}
     </div>
   );
 };
