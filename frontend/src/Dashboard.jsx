@@ -1,6 +1,7 @@
 // =============================================
-// TRADING MASTER PRO v10.4
-// Diseño Profesional + IA Expresiva
+// TRADING MASTER PRO v10.6
+// + Pullback to Order Block Pattern
+// + Zonas de Demanda/Oferta visibles
 // =============================================
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -8,9 +9,9 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 const API_URL = import.meta.env.VITE_API_URL || 'https://trading-master-pro-production.up.railway.app';
 
 // =============================================
-// GRÁFICO PROFESIONAL
+// GRÁFICO CON ZONAS DE DEMANDA/OFERTA
 // =============================================
-const Chart = ({ candles = [], signal, decimals = 2 }) => {
+const Chart = ({ candles = [], signal, decimals = 2, demandZones = [], supplyZones = [] }) => {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
   
@@ -31,7 +32,6 @@ const Chart = ({ candles = [], signal, decimals = 2 }) => {
     canvas.style.height = H + 'px';
     ctx.scale(dpr, dpr);
     
-    // Fondo
     ctx.fillStyle = '#0d0d0d';
     ctx.fillRect(0, 0, W, H);
     
@@ -52,6 +52,10 @@ const Chart = ({ candles = [], signal, decimals = 2 }) => {
     let minP = Math.min(...data.map(c => c.low));
     let maxP = Math.max(...data.map(c => c.high));
     
+    // Incluir zonas en el rango
+    demandZones.forEach(z => { minP = Math.min(minP, z.low); });
+    supplyZones.forEach(z => { maxP = Math.max(maxP, z.high); });
+    
     if (signal?.entry) {
       minP = Math.min(minP, signal.stop || minP);
       maxP = Math.max(maxP, signal.tp3 || maxP);
@@ -67,7 +71,7 @@ const Chart = ({ candles = [], signal, decimals = 2 }) => {
     const bodyW = candleW * 0.65;
     const gap = candleW * 0.175;
     
-    // Grid horizontal
+    // Grid
     ctx.strokeStyle = '#1a1a1a';
     ctx.lineWidth = 1;
     for (let i = 0; i <= 6; i++) {
@@ -84,6 +88,72 @@ const Chart = ({ candles = [], signal, decimals = 2 }) => {
       ctx.fillText(p.toFixed(decimals), W - MARGIN.right + 8, y + 3);
     }
     
+    // =============================================
+    // DIBUJAR ZONAS DE DEMANDA (verde transparente)
+    // =============================================
+    demandZones.forEach(zone => {
+      const y1 = toY(zone.high);
+      const y2 = toY(zone.low);
+      const height = y2 - y1;
+      
+      // Zona sombreada
+      ctx.fillStyle = 'rgba(0, 200, 83, 0.15)';
+      ctx.fillRect(MARGIN.left, y1, chartW, height);
+      
+      // Borde superior
+      ctx.strokeStyle = 'rgba(0, 200, 83, 0.5)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(MARGIN.left, y1);
+      ctx.lineTo(W - MARGIN.right, y1);
+      ctx.stroke();
+      
+      // Borde inferior
+      ctx.beginPath();
+      ctx.moveTo(MARGIN.left, y2);
+      ctx.lineTo(W - MARGIN.right, y2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      
+      // Label
+      ctx.fillStyle = 'rgba(0, 200, 83, 0.8)';
+      ctx.font = 'bold 9px -apple-system, system-ui, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText('DEMAND', MARGIN.left + 5, y1 + 12);
+    });
+    
+    // =============================================
+    // DIBUJAR ZONAS DE OFERTA (rojo transparente)
+    // =============================================
+    supplyZones.forEach(zone => {
+      const y1 = toY(zone.high);
+      const y2 = toY(zone.low);
+      const height = y2 - y1;
+      
+      ctx.fillStyle = 'rgba(255, 23, 68, 0.15)';
+      ctx.fillRect(MARGIN.left, y1, chartW, height);
+      
+      ctx.strokeStyle = 'rgba(255, 23, 68, 0.5)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(MARGIN.left, y1);
+      ctx.lineTo(W - MARGIN.right, y1);
+      ctx.stroke();
+      
+      ctx.beginPath();
+      ctx.moveTo(MARGIN.left, y2);
+      ctx.lineTo(W - MARGIN.right, y2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      
+      ctx.fillStyle = 'rgba(255, 23, 68, 0.8)';
+      ctx.font = 'bold 9px -apple-system, system-ui, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText('SUPPLY', MARGIN.left + 5, y2 - 5);
+    });
+    
     // Velas
     data.forEach((c, i) => {
       const x = MARGIN.left + gap + (i * candleW);
@@ -99,7 +169,6 @@ const Chart = ({ candles = [], signal, decimals = 2 }) => {
       const bot = Math.max(oY, cY);
       const h = Math.max(1, bot - top);
       
-      // Mecha
       ctx.strokeStyle = color;
       ctx.lineWidth = 1;
       ctx.beginPath();
@@ -109,7 +178,6 @@ const Chart = ({ candles = [], signal, decimals = 2 }) => {
       ctx.lineTo(cx, lY);
       ctx.stroke();
       
-      // Cuerpo
       ctx.fillStyle = color;
       ctx.fillRect(x, top, bodyW, h);
     });
@@ -121,7 +189,7 @@ const Chart = ({ candles = [], signal, decimals = 2 }) => {
       if (y < MARGIN.top - 5 || y > H - MARGIN.bottom + 5) return;
       
       ctx.strokeStyle = color;
-      ctx.lineWidth = 1;
+      ctx.lineWidth = 1.5;
       if (dash) ctx.setLineDash([6, 4]);
       ctx.beginPath();
       ctx.moveTo(MARGIN.left, y);
@@ -129,7 +197,6 @@ const Chart = ({ candles = [], signal, decimals = 2 }) => {
       ctx.stroke();
       ctx.setLineDash([]);
       
-      // Label
       ctx.font = '9px -apple-system, system-ui, sans-serif';
       ctx.fillStyle = color;
       ctx.textAlign = 'right';
@@ -151,7 +218,6 @@ const Chart = ({ candles = [], signal, decimals = 2 }) => {
       const up = last.close >= last.open;
       const color = up ? '#00c853' : '#ff1744';
       
-      // Línea punteada
       ctx.strokeStyle = color + '60';
       ctx.lineWidth = 1;
       ctx.setLineDash([3, 3]);
@@ -161,7 +227,6 @@ const Chart = ({ candles = [], signal, decimals = 2 }) => {
       ctx.stroke();
       ctx.setLineDash([]);
       
-      // Badge precio
       ctx.fillStyle = color;
       const badgeW = 65;
       const badgeH = 20;
@@ -175,7 +240,7 @@ const Chart = ({ candles = [], signal, decimals = 2 }) => {
       ctx.fillText(last.close.toFixed(decimals), W - MARGIN.right + 2 + badgeW/2, y + 4);
     }
     
-  }, [candles, signal, decimals]);
+  }, [candles, signal, decimals, demandZones, supplyZones]);
   
   return (
     <div ref={containerRef} className="w-full bg-[#0d0d0d] rounded-xl overflow-hidden">
@@ -185,22 +250,21 @@ const Chart = ({ candles = [], signal, decimals = 2 }) => {
 };
 
 // =============================================
-// ASSET SELECTOR (Minimalista)
+// ASSET LIST
 // =============================================
 const AssetList = ({ assets, selected, onSelect }) => (
   <div className="space-y-1">
     {assets?.map(asset => {
       const active = selected?.symbol === asset.symbol;
       const hasSignal = asset.signal?.action && !['WAIT', 'LOADING'].includes(asset.signal.action);
+      const isPullback = asset.signal?.model === 'PULLBACK_OB' || asset.signal?.model === 'CHOCH_PULLBACK';
       
       return (
         <div
           key={asset.symbol}
           onClick={() => onSelect(asset)}
           className={`flex items-center justify-between px-3 py-2.5 rounded-lg cursor-pointer transition-all ${
-            active 
-              ? 'bg-white/10' 
-              : 'hover:bg-white/5'
+            active ? 'bg-white/10' : 'hover:bg-white/5'
           }`}
         >
           <div className="flex items-center gap-2.5">
@@ -218,15 +282,16 @@ const AssetList = ({ assets, selected, onSelect }) => (
           <div className="flex items-center gap-2">
             {hasSignal && (
               <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
-                asset.signal.action === 'LONG' 
-                  ? 'bg-emerald-500/20 text-emerald-400' 
-                  : 'bg-red-500/20 text-red-400'
+                isPullback ? 'bg-purple-500/20 text-purple-400' :
+                asset.signal.action === 'LONG' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'
               }`}>
-                {asset.signal.action}
+                {isPullback ? (asset.signal?.model === 'CHOCH_PULLBACK' ? 'CP' : 'PB') : asset.signal.action}
               </span>
             )}
-            {asset.signal?.score > 0 && (
-              <span className="text-[10px] text-gray-500">{asset.signal.score}%</span>
+            {(asset.demandZones > 0 || asset.supplyZones > 0) && (
+              <span className="text-[10px] text-gray-500">
+                {asset.demandZones}D/{asset.supplyZones}S
+              </span>
             )}
           </div>
         </div>
@@ -236,27 +301,27 @@ const AssetList = ({ assets, selected, onSelect }) => (
 );
 
 // =============================================
-// SIGNAL CARD (Compacto)
+// SIGNAL CARD
 // =============================================
 const SignalCard = ({ signal }) => {
   if (!signal) return null;
   
   const hasSignal = signal.action && !['WAIT', 'LOADING'].includes(signal.action);
   const isLong = signal.action === 'LONG';
+  const isPullback = signal.model === 'PULLBACK_OB';
   
   return (
     <div className="bg-[#111] rounded-xl p-4 border border-white/5">
       <div className="flex items-center justify-between mb-4">
         <span className="text-gray-500 text-xs uppercase tracking-wider">Signal</span>
         <span className={`text-lg font-bold ${
-          isLong ? 'text-emerald-400' : 
-          signal.action === 'SHORT' ? 'text-red-400' : 'text-gray-500'
+          isLong ? 'text-emerald-400' : signal.action === 'SHORT' ? 'text-red-400' : 'text-gray-500'
         }`}>
           {signal.action || 'WAIT'}
         </span>
       </div>
       
-      {/* Score bar */}
+      {/* Score */}
       <div className="mb-4">
         <div className="flex justify-between text-xs mb-1.5">
           <span className="text-gray-500">Score</span>
@@ -265,7 +330,7 @@ const SignalCard = ({ signal }) => {
         <div className="h-1 bg-white/10 rounded-full overflow-hidden">
           <div 
             className={`h-full rounded-full transition-all ${
-              signal.score >= 70 ? 'bg-emerald-500' : 'bg-gray-600'
+              signal.score >= 55 ? 'bg-emerald-500' : 'bg-gray-600'
             }`}
             style={{ width: `${signal.score || 0}%` }}
           />
@@ -276,11 +341,13 @@ const SignalCard = ({ signal }) => {
       {signal.model && signal.model !== 'NO_SETUP' && (
         <div className="mb-4">
           <span className={`text-[10px] font-bold px-2 py-1 rounded ${
-            signal.model === 'CHOCH' ? 'bg-purple-500/20 text-purple-400' :
-            signal.model === 'REVERSAL' ? 'bg-orange-500/20 text-orange-400' :
+            signal.model === 'CHOCH_PULLBACK' ? 'bg-gradient-to-r from-purple-500/20 to-pink-500/20 text-purple-400' :
+            signal.model === 'PULLBACK_OB' ? 'bg-purple-500/20 text-purple-400' :
+            signal.model === 'CHOCH' ? 'bg-orange-500/20 text-orange-400' :
+            signal.model === 'REVERSAL' ? 'bg-yellow-500/20 text-yellow-400' :
             'bg-blue-500/20 text-blue-400'
           }`}>
-            {signal.model}
+            {signal.model === 'CHOCH_PULLBACK' ? '💎 CHoCH+PB' : signal.model === 'PULLBACK_OB' ? '📦 PULLBACK' : signal.model}
           </span>
         </div>
       )}
@@ -317,7 +384,7 @@ const SignalCard = ({ signal }) => {
 };
 
 // =============================================
-// STATS MINI
+// STATS
 // =============================================
 const StatsMini = ({ stats }) => {
   if (!stats) return null;
@@ -329,9 +396,7 @@ const StatsMini = ({ stats }) => {
     <div className="bg-[#111] rounded-xl p-4 border border-white/5">
       <div className="flex items-center justify-between mb-3">
         <span className="text-gray-500 text-xs uppercase tracking-wider">Stats</span>
-        <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded">
-          Auto-track
-        </span>
+        <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded">Auto</span>
       </div>
       
       <div className="grid grid-cols-4 gap-2 mb-3">
@@ -355,9 +420,7 @@ const StatsMini = ({ stats }) => {
       
       <div className="flex items-center justify-between pt-3 border-t border-white/5">
         <span className="text-gray-500 text-xs">Win Rate</span>
-        <span className={`text-xl font-bold ${
-          winRate >= 60 ? 'text-emerald-400' : winRate >= 40 ? 'text-yellow-400' : 'text-red-400'
-        }`}>
+        <span className={`text-xl font-bold ${winRate >= 60 ? 'text-emerald-400' : winRate >= 40 ? 'text-yellow-400' : 'text-red-400'}`}>
           {winRate}%
         </span>
       </div>
@@ -366,29 +429,22 @@ const StatsMini = ({ stats }) => {
 };
 
 // =============================================
-// AI NARRATION (Mejorada)
+// AI NARRATION
 // =============================================
 const AINarration = ({ symbol, assetName }) => {
   const [narration, setNarration] = useState(null);
-  const [loading, setLoading] = useState(true);
   
   useEffect(() => {
     if (!symbol) return;
-    
     const fetch_ = async () => {
       try {
         const res = await fetch(`${API_URL}/api/ai/narrate/${symbol}`);
-        const data = await res.json();
-        setNarration(data);
-        setLoading(false);
-      } catch (err) {
-        setLoading(false);
-      }
+        setNarration(await res.json());
+      } catch {}
     };
-    
     fetch_();
-    const interval = setInterval(fetch_, 8000);
-    return () => clearInterval(interval);
+    const i = setInterval(fetch_, 8000);
+    return () => clearInterval(i);
   }, [symbol]);
   
   return (
@@ -401,7 +457,6 @@ const AINarration = ({ symbol, assetName }) => {
           <p className="text-white text-sm font-medium">AI Analysis</p>
           <p className="text-indigo-400 text-[10px]">{assetName} • En vivo</p>
         </div>
-        {loading && <div className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse ml-auto" />}
       </div>
       
       {narration ? (
@@ -409,14 +464,14 @@ const AINarration = ({ symbol, assetName }) => {
           {narration.text}
         </div>
       ) : (
-        <p className="text-gray-500 text-sm">Analizando mercado...</p>
+        <p className="text-gray-500 text-sm">Analizando...</p>
       )}
     </div>
   );
 };
 
 // =============================================
-// AI CHAT (Mejorado y Expresivo)
+// AI CHAT
 // =============================================
 const AIChat = ({ symbol, assetName }) => {
   const [messages, setMessages] = useState([]);
@@ -424,20 +479,17 @@ const AIChat = ({ symbol, assetName }) => {
   const [loading, setLoading] = useState(false);
   const endRef = useRef(null);
   
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
   
   useEffect(() => {
     setMessages([{
       role: 'ai',
-      content: `👋 Hola! Soy tu asistente de trading para **${assetName}**.\n\nPuedo ayudarte con:\n• Análisis de tendencia y momentum\n• Señales y niveles de entrada\n• Zonas de liquidez (EQH/EQL)\n• Metodología SMC\n• Estadísticas de rendimiento\n\n¿Qué quieres saber?`
+      content: `👋 Analizando **${assetName}**.\n\nPregunta sobre: señales, zonas, pullback, tendencia...`
     }]);
   }, [symbol, assetName]);
   
   const send = async () => {
     if (!input.trim() || loading) return;
-    
     const q = input.trim();
     setInput('');
     setMessages(prev => [...prev, { role: 'user', content: q }]);
@@ -452,67 +504,44 @@ const AIChat = ({ symbol, assetName }) => {
       const data = await res.json();
       setMessages(prev => [...prev, { role: 'ai', content: data.answer }]);
     } catch {
-      setMessages(prev => [...prev, { role: 'ai', content: '❌ Error de conexión. Intenta de nuevo.' }]);
+      setMessages(prev => [...prev, { role: 'ai', content: '❌ Error de conexión' }]);
     }
-    
     setLoading(false);
   };
   
-  const suggestions = ['¿Hay señal?', '¿Tendencia?', '¿Qué hacer?', 'Estadísticas'];
+  const suggestions = ['¿Señal?', '¿Zonas?', '¿Pullback?', '¿Qué hacer?'];
   
   return (
-    <div className="bg-[#111] rounded-xl border border-white/5 flex flex-col h-[380px]">
-      {/* Header */}
+    <div className="bg-[#111] rounded-xl border border-white/5 flex flex-col h-[350px]">
       <div className="px-4 py-3 border-b border-white/5 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className="text-base">💬</span>
+          <span>💬</span>
           <span className="text-white text-sm font-medium">Chat AI</span>
         </div>
-        <span className="text-[10px] text-gray-500">{assetName}</span>
       </div>
       
-      {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {messages.map((msg, i) => (
           <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div className={`max-w-[90%] rounded-xl px-3.5 py-2.5 ${
-              msg.role === 'user' 
-                ? 'bg-indigo-600 text-white' 
-                : 'bg-white/5 text-gray-200'
+              msg.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-white/5 text-gray-200'
             }`}>
               <p className="text-sm whitespace-pre-line leading-relaxed">{msg.content}</p>
             </div>
           </div>
         ))}
-        
-        {loading && (
-          <div className="flex justify-start">
-            <div className="bg-white/5 rounded-xl px-4 py-3">
-              <div className="flex gap-1.5">
-                <span className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                <span className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                <span className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-              </div>
-            </div>
-          </div>
-        )}
+        {loading && <div className="text-gray-500 text-sm">Pensando...</div>}
         <div ref={endRef} />
       </div>
       
-      {/* Suggestions */}
-      <div className="px-4 py-2 flex gap-2 overflow-x-auto border-t border-white/5">
+      <div className="px-4 py-2 flex gap-2 border-t border-white/5">
         {suggestions.map((s, i) => (
-          <button
-            key={i}
-            onClick={() => setInput(s)}
-            className="px-3 py-1.5 text-[11px] bg-white/5 hover:bg-white/10 text-gray-400 rounded-full whitespace-nowrap transition-colors"
-          >
+          <button key={i} onClick={() => setInput(s)} className="px-3 py-1.5 text-[11px] bg-white/5 hover:bg-white/10 text-gray-400 rounded-full">
             {s}
           </button>
         ))}
       </div>
       
-      {/* Input */}
       <div className="p-3 border-t border-white/5">
         <div className="flex gap-2">
           <input
@@ -520,14 +549,10 @@ const AIChat = ({ symbol, assetName }) => {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyPress={(e) => e.key === 'Enter' && send()}
-            placeholder="Escribe tu pregunta..."
+            placeholder="Pregunta..."
             className="flex-1 bg-white/5 border-0 rounded-xl px-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500/50"
           />
-          <button
-            onClick={send}
-            disabled={loading || !input.trim()}
-            className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white rounded-xl text-sm font-medium transition-colors"
-          >
+          <button onClick={send} disabled={loading} className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-700 text-white rounded-xl text-sm font-medium">
             →
           </button>
         </div>
@@ -537,16 +562,10 @@ const AIChat = ({ symbol, assetName }) => {
 };
 
 // =============================================
-// SIGNAL HISTORY (Compacto)
+// SIGNAL HISTORY
 // =============================================
 const SignalHistory = ({ signals, onUpdate }) => {
-  if (!signals?.length) {
-    return (
-      <div className="bg-[#111] rounded-xl p-4 border border-white/5">
-        <p className="text-gray-500 text-sm text-center py-6">No hay señales aún</p>
-      </div>
-    );
-  }
+  if (!signals?.length) return null;
   
   return (
     <div className="bg-[#111] rounded-xl border border-white/5 overflow-hidden">
@@ -554,29 +573,23 @@ const SignalHistory = ({ signals, onUpdate }) => {
         <span className="text-gray-500 text-xs uppercase tracking-wider">Historial</span>
       </div>
       
-      <div className="max-h-[300px] overflow-y-auto divide-y divide-white/5">
-        {signals.slice(0, 10).map((sig) => (
+      <div className="max-h-[250px] overflow-y-auto divide-y divide-white/5">
+        {signals.slice(0, 8).map((sig) => (
           <div key={sig.id} className={`p-3 ${
-            sig.status === 'WIN' ? 'bg-emerald-500/5' :
-            sig.status === 'LOSS' ? 'bg-red-500/5' : ''
+            sig.status === 'WIN' ? 'bg-emerald-500/5' : sig.status === 'LOSS' ? 'bg-red-500/5' : ''
           }`}>
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
                 <span className="text-sm">{sig.emoji}</span>
-                <span className="text-white text-xs font-medium">{sig.assetName}</span>
+                <span className="text-white text-xs">{sig.assetName}</span>
                 <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                  sig.model === 'CHOCH_PULLBACK' ? 'bg-gradient-to-r from-purple-500/20 to-pink-500/20 text-purple-400' :
+                  sig.model === 'PULLBACK_OB' ? 'bg-purple-500/20 text-purple-400' :
                   sig.action === 'LONG' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'
                 }`}>
-                  {sig.action}
+                  {sig.model === 'CHOCH_PULLBACK' ? 'CP' : sig.model === 'PULLBACK_OB' ? 'PB' : sig.action}
                 </span>
               </div>
-              <span className="text-gray-600 text-[10px]">#{sig.id}</span>
-            </div>
-            
-            <div className="flex gap-3 text-[10px] mb-2">
-              <span><span className="text-gray-500">E:</span> <span className="text-white">{sig.entry}</span></span>
-              <span><span className="text-gray-500">SL:</span> <span className="text-white">{sig.stop}</span></span>
-              <span><span className="text-gray-500">TP1:</span> <span className="text-white">{sig.tp1}</span></span>
             </div>
             
             {sig.status === 'PENDING' ? (
@@ -588,13 +601,9 @@ const SignalHistory = ({ signals, onUpdate }) => {
             ) : (
               <div className={`text-center py-1.5 rounded-lg text-[10px] font-bold ${
                 sig.status === 'WIN' ? 'bg-emerald-500/20 text-emerald-400' :
-                sig.status === 'LOSS' ? 'bg-red-500/20 text-red-400' :
-                'bg-gray-500/20 text-gray-400'
+                sig.status === 'LOSS' ? 'bg-red-500/20 text-red-400' : 'bg-gray-500/20 text-gray-400'
               }`}>
-                {sig.status === 'WIN' && `✓ WIN${sig.tpLevel ? ` (TP${sig.tpLevel})` : ''}`}
-                {sig.status === 'LOSS' && '✗ LOSS'}
-                {sig.status === 'NOT_TAKEN' && 'SKIP'}
-                {sig.closedBy?.startsWith('AUTO') && <span className="text-gray-500 ml-1">auto</span>}
+                {sig.status} {sig.closedBy?.startsWith('AUTO') && '(auto)'}
               </div>
             )}
           </div>
@@ -605,7 +614,7 @@ const SignalHistory = ({ signals, onUpdate }) => {
 };
 
 // =============================================
-// DASHBOARD PRINCIPAL
+// DASHBOARD
 // =============================================
 const Dashboard = () => {
   const [data, setData] = useState(null);
@@ -666,28 +675,21 @@ const Dashboard = () => {
   
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white">
-      {/* Header */}
       <header className="h-14 px-6 flex items-center justify-between border-b border-white/5">
         <div className="flex items-center gap-4">
           <h1 className="text-lg font-semibold tracking-tight">TradingPro</h1>
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] text-gray-500 bg-white/5 px-2 py-1 rounded">v10.4</span>
-            <span className="text-[10px] text-purple-400 bg-purple-500/10 px-2 py-1 rounded">SMC</span>
-          </div>
+          <span className="text-[10px] text-gray-500 bg-white/5 px-2 py-1 rounded">v10.6</span>
+          <span className="text-[10px] text-purple-400 bg-purple-500/10 px-2 py-1 rounded">💎 CHoCH+Pullback</span>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${data.connected ? 'bg-emerald-500' : 'bg-red-500'}`} />
-            <span className="text-xs text-gray-500">{data.connected ? 'Live' : 'Offline'}</span>
-          </div>
+        <div className="flex items-center gap-2">
+          <div className={`w-2 h-2 rounded-full ${data.connected ? 'bg-emerald-500' : 'bg-red-500'}`} />
+          <span className="text-xs text-gray-500">{data.connected ? 'Live' : 'Offline'}</span>
         </div>
       </header>
       
-      {/* Main */}
       <main className="p-4 max-w-[1800px] mx-auto">
         <div className="grid grid-cols-12 gap-4">
-          
-          {/* Sidebar - Assets */}
+          {/* Assets */}
           <aside className="col-span-12 lg:col-span-2">
             <div className="bg-[#111] rounded-xl p-3 border border-white/5">
               <p className="text-[10px] text-gray-500 uppercase tracking-wider px-3 mb-2">Assets</p>
@@ -695,11 +697,10 @@ const Dashboard = () => {
             </div>
           </aside>
           
-          {/* Main - Chart + AI */}
+          {/* Chart */}
           <section className="col-span-12 lg:col-span-6 space-y-4">
             {selected && (
               <>
-                {/* Chart Header */}
                 <div className="bg-[#111] rounded-xl border border-white/5 overflow-hidden">
                   <div className="px-5 py-3 flex items-center justify-between border-b border-white/5">
                     <div className="flex items-center gap-3">
@@ -710,29 +711,34 @@ const Dashboard = () => {
                       </div>
                     </div>
                     <div className="text-right">
-                      <p className="text-2xl font-mono font-bold text-white">
-                        {selected.price?.toFixed(selected.decimals) || '---'}
+                      <p className="text-2xl font-mono font-bold">{selected.price?.toFixed(selected.decimals) || '---'}</p>
+                      <p className="text-[10px] text-gray-500">
+                        {detail?.demandZones?.length || 0} demanda • {detail?.supplyZones?.length || 0} oferta
                       </p>
                     </div>
                   </div>
                   <div className="p-2">
-                    <Chart candles={detail?.candles} signal={detail?.signal} decimals={selected.decimals} />
+                    <Chart 
+                      candles={detail?.candles} 
+                      signal={detail?.signal} 
+                      decimals={selected.decimals}
+                      demandZones={detail?.demandZones || []}
+                      supplyZones={detail?.supplyZones || []}
+                    />
                   </div>
                 </div>
-                
-                {/* AI Narration */}
                 <AINarration symbol={selected.symbol} assetName={selected.name} />
               </>
             )}
           </section>
           
-          {/* Right - Signal + Chat */}
+          {/* Signal + Stats */}
           <aside className="col-span-12 lg:col-span-2 space-y-4">
             <SignalCard signal={selected?.signal} />
             <StatsMini stats={data.stats} />
           </aside>
           
-          {/* Far Right - Chat + History */}
+          {/* Chat + History */}
           <aside className="col-span-12 lg:col-span-2 space-y-4">
             {selected && <AIChat symbol={selected.symbol} assetName={selected.name} />}
             <SignalHistory signals={data.recentSignals} onUpdate={updateSignal} />
