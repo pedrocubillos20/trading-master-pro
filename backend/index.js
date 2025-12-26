@@ -1,6 +1,6 @@
 // =============================================
-// TRADING MASTER PRO v10.8
-// Detección de Pullback MEJORADA
+// TRADING MASTER PRO v10.9
+// FIX: SL debajo de zona + TPs con ratio correcto
 // =============================================
 
 import express from 'express';
@@ -17,15 +17,51 @@ app.use(cors());
 app.use(express.json());
 
 // =============================================
-// CONFIGURACIÓN
+// CONFIGURACIÓN - Valores específicos por activo
 // =============================================
 const ASSETS = {
-  'stpRNG': { name: 'Step Index', emoji: '📊', type: 'synthetic', decimals: 2, pipValue: 0.01 },
-  '1HZ75V': { name: 'Volatility 75', emoji: '📈', type: 'synthetic', decimals: 2, pipValue: 0.01 },
-  '1HZ100V': { name: 'Volatility 100', emoji: '📉', type: 'synthetic', decimals: 2, pipValue: 0.01 },
-  'frxXAUUSD': { name: 'Oro (XAU/USD)', emoji: '🥇', type: 'commodity', decimals: 2, pipValue: 0.01 },
-  'frxGBPUSD': { name: 'GBP/USD', emoji: '💷', type: 'forex', decimals: 5, pipValue: 0.0001 },
-  'cryBTCUSD': { name: 'Bitcoin (BTC/USD)', emoji: '₿', type: 'crypto', decimals: 2, pipValue: 1 }
+  'stpRNG': { 
+    name: 'Step Index', 
+    emoji: '📊', 
+    type: 'synthetic', 
+    decimals: 2, 
+    slBuffer: 2.0      // Buffer adicional para SL (2 puntos)
+  },
+  '1HZ75V': { 
+    name: 'Volatility 75', 
+    emoji: '📈', 
+    type: 'synthetic', 
+    decimals: 2, 
+    slBuffer: 5.0      // V75 es más volátil
+  },
+  '1HZ100V': { 
+    name: 'Volatility 100', 
+    emoji: '📉', 
+    type: 'synthetic', 
+    decimals: 2, 
+    slBuffer: 8.0      // V100 aún más volátil
+  },
+  'frxXAUUSD': { 
+    name: 'Oro (XAU/USD)', 
+    emoji: '🥇', 
+    type: 'commodity', 
+    decimals: 2, 
+    slBuffer: 1.0
+  },
+  'frxGBPUSD': { 
+    name: 'GBP/USD', 
+    emoji: '💷', 
+    type: 'forex', 
+    decimals: 5, 
+    slBuffer: 0.0003   // 3 pips en forex
+  },
+  'cryBTCUSD': { 
+    name: 'Bitcoin (BTC/USD)', 
+    emoji: '₿', 
+    type: 'crypto', 
+    decimals: 2, 
+    slBuffer: 50       // BTC necesita más espacio
+  }
 };
 
 // =============================================
@@ -63,10 +99,9 @@ for (const symbol of Object.keys(ASSETS)) {
 }
 
 // =============================================
-// MOTOR SMC v10.8 - PULLBACK MEJORADO
+// MOTOR SMC v10.9
 // =============================================
 const SMC = {
-  // Encontrar swings
   findSwings(candles, lookback = 2) {
     const swings = [];
     
@@ -89,7 +124,6 @@ const SMC = {
     return swings;
   },
 
-  // Encontrar zonas de demanda/oferta
   findAllZones(candles) {
     const demandZones = [];
     const supplyZones = [];
@@ -166,7 +200,6 @@ const SMC = {
     };
   },
 
-  // Analizar estructura
   analyzeStructure(swings) {
     const highs = swings.filter(s => s.type === 'high').slice(-6);
     const lows = swings.filter(s => s.type === 'low').slice(-6);
@@ -187,7 +220,6 @@ const SMC = {
     if (lastHH || lastHL) trend = 'BULLISH';
     if (lastLH || lastLL) trend = 'BEARISH';
     if ((lastHH || lastHL) && (lastLH || lastLL)) {
-      // Mixto - usar el más reciente
       const bullishIdx = Math.max(lastHH?.index || 0, lastHL?.index || 0);
       const bearishIdx = Math.max(lastLH?.index || 0, lastLL?.index || 0);
       trend = bullishIdx > bearishIdx ? 'BULLISH' : 'BEARISH';
@@ -196,7 +228,6 @@ const SMC = {
     return { trend, lastHH, lastHL, lastLH, lastLL, highs, lows };
   },
 
-  // Detectar CHoCH
   detectCHoCH(candles, swings) {
     if (swings.length < 4) return null;
     
@@ -239,15 +270,13 @@ const SMC = {
   },
 
   // =============================================
-  // NUEVO: Detectar pullback MEJORADO
-  // Busca en las últimas N velas si hubo pullback
+  // DETECTAR PULLBACK CON CÁLCULO CORRECTO DE NIVELES
   // =============================================
   detectPullback(candles, demandZones, supplyZones, structure, config) {
     if (candles.length < 10) return null;
     
     const currentPrice = candles[candles.length - 1].close;
     const last10Candles = candles.slice(-10);
-    const pips20 = 20 * config.pipValue;
     
     // =============================================
     // PULLBACK A DEMANDA (COMPRA)
@@ -255,23 +284,16 @@ const SMC = {
     for (const zone of demandZones) {
       if (!zone.valid) continue;
       
-      // Verificar si ALGUNA de las últimas 10 velas tocó la zona
       let touchedZone = false;
       let reactionCandle = null;
       
       for (let i = 0; i < last10Candles.length; i++) {
         const candle = last10Candles[i];
-        
-        // La vela tocó la zona (su low entró en la zona)
         const candleTouchedZone = candle.low <= zone.high * 1.002 && candle.low >= zone.low * 0.995;
-        
-        // O la vela cerró dentro/cerca de la zona
         const candleNearZone = candle.close >= zone.low * 0.998 && candle.close <= zone.high * 1.005;
         
         if (candleTouchedZone || candleNearZone) {
           touchedZone = true;
-          
-          // Buscar reacción alcista después del toque
           for (let j = i; j < last10Candles.length; j++) {
             const nextCandle = last10Candles[j];
             if (nextCandle.close > nextCandle.open && nextCandle.close > zone.mid) {
@@ -283,30 +305,43 @@ const SMC = {
         }
       }
       
-      // También verificar si el precio actual está cerca de la zona y subiendo
       const priceNearZone = currentPrice >= zone.low * 0.995 && currentPrice <= zone.high * 1.02;
       const priceAboveZone = currentPrice > zone.high;
       const lastCandleBullish = candles[candles.length - 1].close > candles[candles.length - 1].open;
       
-      // CONDICIÓN PRINCIPAL: Tocó zona + hay reacción O está cerca y subiendo
       if ((touchedZone && reactionCandle) || (priceNearZone && lastCandleBullish) || (touchedZone && priceAboveZone)) {
         
-        // Buscar el high más reciente como TP
-        const recentHighs = structure.highs.filter(h => h.price > zone.high);
-        const targetHigh = recentHighs.length > 0 ? 
-          Math.max(...recentHighs.map(h => h.price)) : 
-          zone.high + (zone.high - zone.low) * 4;
+        // =============================================
+        // CÁLCULO CORRECTO DE NIVELES PARA LONG
+        // =============================================
+        
+        // ENTRY: Precio actual o borde de zona (el mayor)
+        const entry = Math.max(currentPrice, zone.high);
+        
+        // STOP LOSS: Debajo de TODA la zona + buffer
+        // El SL va debajo del LOW de la zona, no solo unos pips
+        const stop = zone.low - config.slBuffer;
+        
+        // RIESGO: Diferencia entre entry y stop
+        const risk = entry - stop;
+        
+        // TPs con ratios 1:1, 1:2, 1:3 del RIESGO
+        // TP siempre ARRIBA del entry para LONG
+        const tp1 = entry + (risk * 1);   // 1:1
+        const tp2 = entry + (risk * 2);   // 1:2  
+        const tp3 = entry + (risk * 3);   // 1:3
         
         return {
           type: 'PULLBACK_DEMAND',
           side: 'BUY',
           zone: zone,
-          entry: Math.max(zone.high, currentPrice), // Entry en zona o precio actual si ya subió
-          stop: zone.low - pips20,
-          tp1: targetHigh,
-          tp2: targetHigh + (targetHigh - zone.high) * 0.5,
-          tp3: targetHigh + (targetHigh - zone.high),
-          description: `Pullback a Demanda → TP: ${targetHigh.toFixed(config.decimals)}`,
+          entry: entry,
+          stop: stop,
+          tp1: tp1,
+          tp2: tp2,
+          tp3: tp3,
+          risk: risk,
+          description: `Long desde zona ${zone.low.toFixed(config.decimals)}-${zone.high.toFixed(config.decimals)}`,
           strength: zone.strength,
           touchedRecently: touchedZone,
           hasReaction: !!reactionCandle
@@ -325,13 +360,11 @@ const SMC = {
       
       for (let i = 0; i < last10Candles.length; i++) {
         const candle = last10Candles[i];
-        
         const candleTouchedZone = candle.high >= zone.low * 0.998 && candle.high <= zone.high * 1.005;
         const candleNearZone = candle.close <= zone.high * 1.002 && candle.close >= zone.low * 0.995;
         
         if (candleTouchedZone || candleNearZone) {
           touchedZone = true;
-          
           for (let j = i; j < last10Candles.length; j++) {
             const nextCandle = last10Candles[j];
             if (nextCandle.close < nextCandle.open && nextCandle.close < zone.mid) {
@@ -349,21 +382,36 @@ const SMC = {
       
       if ((touchedZone && reactionCandle) || (priceNearZone && lastCandleBearish) || (touchedZone && priceBelowZone)) {
         
-        const recentLows = structure.lows.filter(l => l.price < zone.low);
-        const targetLow = recentLows.length > 0 ?
-          Math.min(...recentLows.map(l => l.price)) :
-          zone.low - (zone.high - zone.low) * 4;
+        // =============================================
+        // CÁLCULO CORRECTO DE NIVELES PARA SHORT
+        // =============================================
+        
+        // ENTRY: Precio actual o borde de zona (el menor)
+        const entry = Math.min(currentPrice, zone.low);
+        
+        // STOP LOSS: Arriba de TODA la zona + buffer
+        const stop = zone.high + config.slBuffer;
+        
+        // RIESGO: Diferencia entre stop y entry
+        const risk = stop - entry;
+        
+        // TPs con ratios 1:1, 1:2, 1:3 del RIESGO
+        // TP siempre ABAJO del entry para SHORT
+        const tp1 = entry - (risk * 1);   // 1:1
+        const tp2 = entry - (risk * 2);   // 1:2
+        const tp3 = entry - (risk * 3);   // 1:3
         
         return {
           type: 'PULLBACK_SUPPLY',
           side: 'SELL',
           zone: zone,
-          entry: Math.min(zone.low, currentPrice),
-          stop: zone.high + pips20,
-          tp1: targetLow,
-          tp2: targetLow - (zone.low - targetLow) * 0.5,
-          tp3: targetLow - (zone.low - targetLow),
-          description: `Pullback a Oferta → TP: ${targetLow.toFixed(config.decimals)}`,
+          entry: entry,
+          stop: stop,
+          tp1: tp1,
+          tp2: tp2,
+          tp3: tp3,
+          risk: risk,
+          description: `Short desde zona ${zone.low.toFixed(config.decimals)}-${zone.high.toFixed(config.decimals)}`,
           strength: zone.strength,
           touchedRecently: touchedZone,
           hasReaction: !!reactionCandle
@@ -374,23 +422,53 @@ const SMC = {
     return null;
   },
 
-  // Detectar sweep
-  detectSweep(candles, eqh, eql) {
+  detectSweep(candles, eqh, eql, config) {
     const last3 = candles.slice(-3);
+    const currentPrice = candles[candles.length - 1].close;
     
     for (const candle of last3) {
+      // Sweep de EQH (para venta)
       if (candle.high > eqh * 1.001 && candle.close < eqh) {
-        return { type: 'EQH_SWEEP', side: 'SELL', level: eqh };
+        const entry = currentPrice;
+        const stop = eqh + config.slBuffer;
+        const risk = stop - entry;
+        
+        return { 
+          type: 'EQH_SWEEP', 
+          side: 'SELL', 
+          level: eqh,
+          entry: entry,
+          stop: stop,
+          tp1: entry - (risk * 1),
+          tp2: entry - (risk * 2),
+          tp3: entry - (risk * 3),
+          risk: risk
+        };
       }
+      
+      // Sweep de EQL (para compra)
       if (candle.low < eql * 0.999 && candle.close > eql) {
-        return { type: 'EQL_SWEEP', side: 'BUY', level: eql };
+        const entry = currentPrice;
+        const stop = eql - config.slBuffer;
+        const risk = entry - stop;
+        
+        return { 
+          type: 'EQL_SWEEP', 
+          side: 'BUY', 
+          level: eql,
+          entry: entry,
+          stop: stop,
+          tp1: entry + (risk * 1),
+          tp2: entry + (risk * 2),
+          tp3: entry + (risk * 3),
+          risk: risk
+        };
       }
     }
     
     return null;
   },
 
-  // Encontrar liquidez
   findLiquidity(candles) {
     const recent = candles.slice(-25);
     return {
@@ -409,7 +487,6 @@ const SMC = {
     
     const currentPrice = candles[candles.length - 1].close;
     
-    // Obtener datos
     const swings = this.findSwings(candles);
     const structure = this.analyzeStructure(swings);
     const { eqh, eql } = this.findLiquidity(candles);
@@ -419,10 +496,9 @@ const SMC = {
     assetState.supplyZones = supplyZones;
     assetState.swings = swings.slice(-10);
     
-    // Detectar patrones
     const choch = this.detectCHoCH(candles, swings);
     const pullback = this.detectPullback(candles, demandZones, supplyZones, structure, config);
-    const sweep = this.detectSweep(candles, eqh, eql);
+    const sweep = this.detectSweep(candles, eqh, eql, config);
     
     let score = 0;
     let breakdown = [];
@@ -431,17 +507,12 @@ const SMC = {
     let model = 'NO_SETUP';
     let direction = null;
     
-    // =============================================
-    // SCORING MEJORADO
-    // =============================================
-    
-    // CHoCH detectado
+    // SCORING
     if (choch) {
       score += 35;
       breakdown.push(`${choch.type}`);
     }
     
-    // Estructura alineada
     if (structure.trend === 'BULLISH' && pullback?.side === 'BUY') {
       score += 15;
       breakdown.push('Estructura BULLISH');
@@ -450,7 +521,6 @@ const SMC = {
       breakdown.push('Estructura BEARISH');
     }
     
-    // Pullback detectado
     if (pullback) {
       score += 30;
       breakdown.push(pullback.description);
@@ -462,57 +532,56 @@ const SMC = {
       tp2 = pullback.tp2;
       tp3 = pullback.tp3;
       
-      // Bonus por zona fuerte
       if (pullback.strength === 'STRONG') {
         score += 10;
         breakdown.push('Zona STRONG');
       }
       
-      // Bonus por reacción clara
       if (pullback.hasReaction) {
         score += 10;
         breakdown.push('Reacción confirmada');
       }
       
-      // Determinar modelo
-      if (choch && choch.side === pullback.side) {
-        model = 'CHOCH_PULLBACK';
-      } else if (choch) {
-        model = 'CHOCH_PULLBACK'; // Aunque no coincida exactamente
-        score -= 5; // Pequeña penalización
-      } else {
-        model = 'STRUCTURE_PULLBACK';
-      }
+      model = choch ? 'CHOCH_PULLBACK' : 'STRUCTURE_PULLBACK';
     }
-    
-    // Sweep (si no hay pullback)
     else if (sweep) {
-      score += 40;
+      score += 45;
       breakdown.push(`Sweep ${sweep.type}`);
       direction = sweep.side;
       model = 'REVERSAL';
-      
-      const pips20 = 20 * config.pipValue;
-      if (sweep.side === 'BUY') {
-        entry = currentPrice;
-        stop = eql - pips20;
-        const risk = entry - stop;
-        tp1 = entry + risk;
-        tp2 = entry + risk * 2;
-        tp3 = entry + risk * 3;
-      } else {
-        entry = currentPrice;
-        stop = eqh + pips20;
-        const risk = stop - entry;
-        tp1 = entry - risk;
-        tp2 = entry - risk * 2;
-        tp3 = entry - risk * 3;
+      entry = sweep.entry;
+      stop = sweep.stop;
+      tp1 = sweep.tp1;
+      tp2 = sweep.tp2;
+      tp3 = sweep.tp3;
+    }
+    
+    // VALIDACIÓN FINAL DE NIVELES
+    if (direction && entry && stop && tp1) {
+      // Para LONG: TP debe ser MAYOR que entry, SL debe ser MENOR
+      if (direction === 'BUY') {
+        if (tp1 <= entry || stop >= entry) {
+          // Algo está mal, recalcular
+          const risk = Math.abs(entry - stop);
+          if (stop >= entry) stop = entry - risk;
+          tp1 = entry + risk;
+          tp2 = entry + risk * 2;
+          tp3 = entry + risk * 3;
+        }
+      }
+      // Para SHORT: TP debe ser MENOR que entry, SL debe ser MAYOR
+      else {
+        if (tp1 >= entry || stop <= entry) {
+          const risk = Math.abs(stop - entry);
+          if (stop <= entry) stop = entry + risk;
+          tp1 = entry - risk;
+          tp2 = entry - risk * 2;
+          tp3 = entry - risk * 3;
+        }
       }
     }
     
-    // =============================================
-    // GENERAR SEÑAL SI SCORE >= 60
-    // =============================================
+    // Generar señal si score >= 60
     if (score >= 60 && direction && entry && stop && tp1) {
       action = direction === 'BUY' ? 'LONG' : 'SHORT';
     }
@@ -530,8 +599,7 @@ const SMC = {
         structure: structure.trend,
         choch: choch?.type || null,
         demandZones: demandZones.length,
-        supplyZones: supplyZones.length,
-        pullbackDetected: !!pullback
+        supplyZones: supplyZones.length
       }
     };
   }
@@ -593,13 +661,13 @@ const AI = {
       const sigEmoji = sig.action === 'LONG' ? '🚀' : '🔻';
       lines.push(`\n${sigEmoji} **SEÑAL ${sig.action}** (${sig.model})`);
       lines.push(`📊 Score: ${sig.score}%`);
-      lines.push(`🎯 Entry: ${sig.entry} | TP1: ${sig.tp1}`);
+      lines.push(`\n📍 Entry: ${sig.entry}`);
       lines.push(`🛑 SL: ${sig.stop}`);
-      if (sig.breakdown?.length) {
-        lines.push(`\n✅ ${sig.breakdown.join('\n✅ ')}`);
-      }
+      lines.push(`🎯 TP1: ${sig.tp1} (1:1)`);
+      lines.push(`🎯 TP2: ${sig.tp2} (1:2)`);
+      lines.push(`🎯 TP3: ${sig.tp3} (1:3)`);
     } else {
-      lines.push(`\n⏳ Score: ${ctx.signal?.score || 0}% - Esperando confirmación`);
+      lines.push(`\n⏳ Score: ${ctx.signal?.score || 0}%`);
     }
     
     return { text: lines.join('\n'), timestamp: new Date().toISOString() };
@@ -618,20 +686,16 @@ const AI = {
         answer = `🎯 **SEÑAL ${sig.action}** - ${ctx.asset}\n\n`;
         answer += `**Modelo:** ${sig.model}\n`;
         answer += `**Score:** ${sig.score}%\n\n`;
-        answer += `📍 Entry: ${sig.entry}\n`;
-        answer += `🎯 TP1: ${sig.tp1}\n`;
-        answer += `🎯 TP2: ${sig.tp2}\n`;
-        answer += `🎯 TP3: ${sig.tp3}\n`;
-        answer += `🛑 SL: ${sig.stop}\n\n`;
-        if (sig.breakdown?.length) {
-          answer += `**Razones:**\n`;
-          sig.breakdown.forEach(b => answer += `✅ ${b}\n`);
-        }
+        answer += `📍 **Entry:** ${sig.entry}\n`;
+        answer += `🛑 **Stop Loss:** ${sig.stop}\n\n`;
+        answer += `🎯 **TP1 (1:1):** ${sig.tp1}\n`;
+        answer += `🎯 **TP2 (1:2):** ${sig.tp2}\n`;
+        answer += `🎯 **TP3 (1:3):** ${sig.tp3}\n`;
       } else {
         answer = `⏳ Sin señal en ${ctx.asset}\n\n`;
-        answer += `Score actual: ${ctx.signal?.score || 0}%\n`;
+        answer += `Score: ${ctx.signal?.score || 0}%\n`;
         answer += `Estructura: ${ctx.structure || 'Neutral'}\n`;
-        answer += `CHoCH: ${ctx.choch || 'No detectado'}\n`;
+        answer += `CHoCH: ${ctx.choch || 'No'}\n`;
         answer += `Zonas: ${ctx.demandZones}D / ${ctx.supplyZones}S`;
       }
     }
@@ -641,9 +705,9 @@ const AI = {
       answer = `📦 **Zonas - ${ctx.asset}**\n\n`;
       
       if (data.demandZones?.length > 0) {
-        answer += `**🟢 Demanda:**\n`;
+        answer += `**🟢 Demanda (SL debajo):**\n`;
         data.demandZones.forEach((z, i) => {
-          answer += `${i+1}. ${z.low.toFixed(ctx.decimals)}-${z.high.toFixed(ctx.decimals)} ${z.strength === 'STRONG' ? '💪' : ''}\n`;
+          answer += `${i+1}. ${z.low.toFixed(ctx.decimals)} - ${z.high.toFixed(ctx.decimals)}\n`;
         });
       } else {
         answer += `Sin zonas de demanda\n`;
@@ -652,9 +716,9 @@ const AI = {
       answer += `\n`;
       
       if (data.supplyZones?.length > 0) {
-        answer += `**🔴 Oferta:**\n`;
+        answer += `**🔴 Oferta (SL arriba):**\n`;
         data.supplyZones.forEach((z, i) => {
-          answer += `${i+1}. ${z.low.toFixed(ctx.decimals)}-${z.high.toFixed(ctx.decimals)} ${z.strength === 'STRONG' ? '💪' : ''}\n`;
+          answer += `${i+1}. ${z.low.toFixed(ctx.decimals)} - ${z.high.toFixed(ctx.decimals)}\n`;
         });
       } else {
         answer += `Sin zonas de oferta`;
@@ -667,12 +731,7 @@ const AI = {
       answer += `📊 Estructura: ${ctx.structure || 'Analizando'}\n`;
       answer += `⚡ CHoCH: ${ctx.choch || 'No'}\n`;
       answer += `📦 Zonas: ${ctx.demandZones}D / ${ctx.supplyZones}S\n`;
-      answer += `📈 Score: ${ctx.signal?.score || 0}%\n\n`;
-      if (ctx.hasSignal) {
-        answer += `✅ Señal: ${ctx.signal.action}`;
-      } else {
-        answer += `⏳ Sin señal activa`;
-      }
+      answer += `📈 Score: ${ctx.signal?.score || 0}%`;
     }
     
     return { answer, timestamp: new Date().toISOString() };
@@ -692,19 +751,21 @@ function checkSignalHits() {
     const price = data.price;
     const isLong = signal.action === 'LONG';
     
+    // Check SL
     if ((isLong && price <= signal.stop) || (!isLong && price >= signal.stop)) {
-      markSignal(signal.id, 'LOSS', 'AUTO');
+      markSignal(signal.id, 'LOSS', 'AUTO-SL');
       continue;
     }
     
+    // Check TPs
     if (isLong) {
+      if (price >= signal.tp1 && !signal.tp1Hit) { signal.tp1Hit = true; stats.tp1Hits++; }
+      if (price >= signal.tp2 && !signal.tp2Hit) { signal.tp2Hit = true; stats.tp2Hits++; }
       if (price >= signal.tp3 && !signal.tp3Hit) { signal.tp3Hit = true; stats.tp3Hits++; markSignal(signal.id, 'WIN', 'AUTO-TP3'); }
-      else if (price >= signal.tp2 && !signal.tp2Hit) { signal.tp2Hit = true; stats.tp2Hits++; }
-      else if (price >= signal.tp1 && !signal.tp1Hit) { signal.tp1Hit = true; stats.tp1Hits++; }
     } else {
+      if (price <= signal.tp1 && !signal.tp1Hit) { signal.tp1Hit = true; stats.tp1Hits++; }
+      if (price <= signal.tp2 && !signal.tp2Hit) { signal.tp2Hit = true; stats.tp2Hits++; }
       if (price <= signal.tp3 && !signal.tp3Hit) { signal.tp3Hit = true; stats.tp3Hits++; markSignal(signal.id, 'WIN', 'AUTO-TP3'); }
-      else if (price <= signal.tp2 && !signal.tp2Hit) { signal.tp2Hit = true; stats.tp2Hits++; }
-      else if (price <= signal.tp1 && !signal.tp1Hit) { signal.tp1Hit = true; stats.tp1Hits++; }
     }
   }
 }
@@ -825,18 +886,17 @@ function analyzeAsset(symbol) {
   if (!data || !config || data.candles.length < 35) return;
   
   const now = Date.now();
-  if (now - data.lastAnalysis < 500) return; // Más frecuente
+  if (now - data.lastAnalysis < 500) return;
   data.lastAnalysis = now;
   
   const signal = SMC.analyze(data.candles, config, data);
   data.signal = signal;
   
-  // Crear señal si score >= 60
   if (signal.action !== 'WAIT' && signal.action !== 'LOADING' && signal.score >= 60) {
     const hasPending = signalHistory.some(s => 
       s.symbol === symbol && 
       s.status === 'PENDING' && 
-      now - new Date(s.timestamp).getTime() < 300000 // 5 min cooldown
+      now - new Date(s.timestamp).getTime() < 300000
     );
     
     if (!hasPending) {
@@ -856,8 +916,8 @@ function analyzeAsset(symbol) {
       
       console.log(`\n💎 SEÑAL #${newSignal.id}: ${signal.action} ${config.name}`);
       console.log(`   Model: ${signal.model} | Score: ${signal.score}%`);
-      console.log(`   ${signal.breakdown.join(' | ')}`);
-      console.log(`   Entry: ${signal.entry} | TP1: ${signal.tp1} | SL: ${signal.stop}\n`);
+      console.log(`   Entry: ${signal.entry} | SL: ${signal.stop}`);
+      console.log(`   TP1: ${signal.tp1} | TP2: ${signal.tp2} | TP3: ${signal.tp3}\n`);
     }
   }
 }
@@ -867,8 +927,8 @@ function analyzeAsset(symbol) {
 // =============================================
 app.get('/', (req, res) => res.json({ 
   name: 'Trading Master Pro', 
-  version: '10.8', 
-  features: ['Pullback Mejorado', 'Score 60%+'],
+  version: '10.9', 
+  features: ['SL debajo zona', 'TPs 1:1 1:2 1:3'],
   connected: isConnected 
 }));
 
@@ -925,13 +985,19 @@ app.post('/api/ai/chat', (req, res) => {
 app.listen(PORT, () => {
   console.log(`
 ╔══════════════════════════════════════════════════════════════╗
-║              TRADING MASTER PRO v10.8                        ║
-║              Pullback Detection MEJORADO                     ║
+║              TRADING MASTER PRO v10.9                        ║
 ╠══════════════════════════════════════════════════════════════╣
-║  🔧 FIX: Detecta pullback en últimas 10 velas               ║
-║  🔧 FIX: Score mínimo bajado a 60%                          ║
-║  🔧 FIX: Detecta reacción aunque ya haya pasado             ║
-║  💎 CHoCH + Pullback = 75%+ automático                      ║
+║  🔧 FIX: SL siempre DEBAJO de la zona de demanda            ║
+║  🔧 FIX: SL siempre ARRIBA de la zona de oferta             ║
+║  🔧 FIX: TPs calculados con ratio 1:1, 1:2, 1:3             ║
+║  🔧 FIX: Buffer de SL específico por activo                 ║
+╠══════════════════════════════════════════════════════════════╣
+║  Step Index:  SL buffer = 2 puntos                          ║
+║  V75:         SL buffer = 5 puntos                          ║
+║  V100:        SL buffer = 8 puntos                          ║
+║  XAU/USD:     SL buffer = 1 punto                           ║
+║  GBP/USD:     SL buffer = 3 pips                            ║
+║  BTC/USD:     SL buffer = 50 puntos                         ║
 ╚══════════════════════════════════════════════════════════════╝
   `);
   connectDeriv();
