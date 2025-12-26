@@ -1,6 +1,6 @@
 // =============================================
-// TRADING MASTER PRO v10.1
-// Dashboard con IA: Narración + Chat en Vivo
+// TRADING MASTER PRO v10.3
+// TP1/TP2/TP3 + Auto-tracking + CHoCH
 // =============================================
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -8,7 +8,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 const API_URL = import.meta.env.VITE_API_URL || 'https://trading-master-pro-production.up.railway.app';
 
 // =============================================
-// GRÁFICO DE VELAS JAPONESAS
+// GRÁFICO DE VELAS CON TP1/TP2/TP3
 // =============================================
 const CandlestickChart = ({ candles = [], signal, decimals = 2 }) => {
   const canvasRef = useRef(null);
@@ -22,7 +22,7 @@ const CandlestickChart = ({ candles = [], signal, decimals = 2 }) => {
     const ctx = canvas.getContext('2d');
     
     const W = container.clientWidth;
-    const H = 400;
+    const H = 380;
     
     const dpr = window.devicePixelRatio || 1;
     canvas.width = W * dpr;
@@ -42,7 +42,7 @@ const CandlestickChart = ({ candles = [], signal, decimals = 2 }) => {
       return;
     }
     
-    const MARGIN = { top: 20, right: 70, bottom: 25, left: 10 };
+    const MARGIN = { top: 15, right: 70, bottom: 20, left: 10 };
     const chartWidth = W - MARGIN.left - MARGIN.right;
     const chartHeight = H - MARGIN.top - MARGIN.bottom;
     
@@ -51,18 +51,18 @@ const CandlestickChart = ({ candles = [], signal, decimals = 2 }) => {
     let minPrice = Math.min(...data.map(c => c.low));
     let maxPrice = Math.max(...data.map(c => c.high));
     
+    // Incluir todos los TPs en el rango
     if (signal?.entry) {
       minPrice = Math.min(minPrice, signal.entry, signal.stop || minPrice);
-      maxPrice = Math.max(maxPrice, signal.entry, signal.tp || maxPrice);
+      maxPrice = Math.max(maxPrice, signal.entry, signal.tp3 || maxPrice);
     }
     
-    const priceMargin = (maxPrice - minPrice) * 0.03;
+    const priceMargin = (maxPrice - minPrice) * 0.05;
     minPrice -= priceMargin;
     maxPrice += priceMargin;
     const priceRange = maxPrice - minPrice;
     
     const priceToY = (price) => MARGIN.top + ((maxPrice - price) / priceRange) * chartHeight;
-    
     const candleFullWidth = chartWidth / data.length;
     const candleBodyWidth = candleFullWidth * 0.7;
     const candleGap = candleFullWidth * 0.15;
@@ -70,18 +70,18 @@ const CandlestickChart = ({ candles = [], signal, decimals = 2 }) => {
     // Grid
     ctx.strokeStyle = '#1a1a1a';
     ctx.lineWidth = 1;
-    ctx.font = '10px monospace';
+    ctx.font = '9px monospace';
     ctx.fillStyle = '#444';
     ctx.textAlign = 'left';
     
-    for (let i = 0; i <= 5; i++) {
-      const price = maxPrice - (priceRange / 5) * i;
+    for (let i = 0; i <= 4; i++) {
+      const price = maxPrice - (priceRange / 4) * i;
       const y = priceToY(price);
       ctx.beginPath();
       ctx.moveTo(MARGIN.left, y);
       ctx.lineTo(W - MARGIN.right, y);
       ctx.stroke();
-      ctx.fillText(price.toFixed(decimals), W - MARGIN.right + 5, y + 3);
+      ctx.fillText(price.toFixed(decimals), W - MARGIN.right + 4, y + 3);
     }
     
     // Velas
@@ -113,14 +113,14 @@ const CandlestickChart = ({ candles = [], signal, decimals = 2 }) => {
     });
     
     // Líneas de señal
-    const drawLine = (price, color, label) => {
+    const drawLine = (price, color, label, dashed = true) => {
       if (!price) return;
       const y = priceToY(price);
-      if (y < MARGIN.top || y > H - MARGIN.bottom) return;
+      if (y < MARGIN.top - 10 || y > H - MARGIN.bottom + 10) return;
       
       ctx.strokeStyle = color;
       ctx.lineWidth = 1.5;
-      ctx.setLineDash([5, 5]);
+      if (dashed) ctx.setLineDash([4, 4]);
       ctx.beginPath();
       ctx.moveTo(MARGIN.left, y);
       ctx.lineTo(W - MARGIN.right, y);
@@ -128,15 +128,17 @@ const CandlestickChart = ({ candles = [], signal, decimals = 2 }) => {
       ctx.setLineDash([]);
       
       ctx.fillStyle = color;
-      ctx.font = 'bold 9px system-ui';
+      ctx.font = 'bold 8px system-ui';
       ctx.textAlign = 'right';
-      ctx.fillText(`${label} ${price.toFixed(decimals)}`, W - MARGIN.right - 5, y - 4);
+      ctx.fillText(`${label} ${price.toFixed(decimals)}`, W - MARGIN.right - 3, y - 3);
     };
     
     if (signal?.action && !['WAIT', 'LOADING'].includes(signal.action)) {
-      drawLine(signal.entry, '#2196f3', 'ENTRY');
+      drawLine(signal.entry, '#2196f3', 'ENTRY', false);
       drawLine(signal.stop, '#ef5350', 'SL');
-      drawLine(signal.tp, '#26a69a', 'TP');
+      drawLine(signal.tp1, '#4caf50', 'TP1');
+      drawLine(signal.tp2, '#8bc34a', 'TP2');
+      drawLine(signal.tp3, '#cddc39', 'TP3');
     }
     
     // Precio actual
@@ -155,7 +157,7 @@ const CandlestickChart = ({ candles = [], signal, decimals = 2 }) => {
       ctx.setLineDash([]);
       
       ctx.fillStyle = color;
-      ctx.fillRect(W - MARGIN.right, y - 10, 60, 20);
+      ctx.fillRect(W - MARGIN.right, y - 9, 60, 18);
       ctx.fillStyle = '#fff';
       ctx.font = 'bold 10px monospace';
       ctx.textAlign = 'center';
@@ -213,7 +215,7 @@ const AssetCard = ({ asset, selected, onClick }) => {
 };
 
 // =============================================
-// PANEL DE SEÑAL
+// PANEL DE SEÑAL CON TP1/TP2/TP3
 // =============================================
 const SignalPanel = ({ asset }) => {
   if (!asset?.signal) return null;
@@ -232,6 +234,23 @@ const SignalPanel = ({ asset }) => {
         </span>
       </div>
       
+      {/* Modelo con badge CHoCH */}
+      {sig.model && sig.model !== 'NO_SETUP' && (
+        <div className="mb-3">
+          <span className={`text-xs font-bold px-2 py-1 rounded ${
+            sig.model === 'CHOCH' ? 'bg-purple-600 text-white' :
+            sig.model === 'REVERSAL' ? 'bg-orange-600 text-white' :
+            'bg-blue-600 text-white'
+          }`}>
+            {sig.model}
+          </span>
+          {sig.analysis?.choch && (
+            <span className="ml-2 text-xs text-purple-400">⚡ {sig.analysis.choch}</span>
+          )}
+        </div>
+      )}
+      
+      {/* Score */}
       <div className="mb-3">
         <div className="flex justify-between text-xs mb-1">
           <span className="text-zinc-500">Score</span>
@@ -245,81 +264,282 @@ const SignalPanel = ({ asset }) => {
         </div>
       </div>
       
+      {/* Entry/SL/TPs */}
       {hasSignal && (
         <div className="space-y-2 text-sm">
-          <div className="flex justify-between p-2 bg-blue-500/10 rounded">
+          <div className="flex justify-between p-2 bg-blue-500/10 rounded border-l-2 border-blue-500">
             <span className="text-blue-400">Entry</span>
             <span className="text-white font-mono">{sig.entry}</span>
           </div>
-          <div className="flex justify-between p-2 bg-red-500/10 rounded">
-            <span className="text-red-400">Stop</span>
+          <div className="flex justify-between p-2 bg-red-500/10 rounded border-l-2 border-red-500">
+            <span className="text-red-400">Stop Loss</span>
             <span className="text-white font-mono">{sig.stop}</span>
           </div>
-          <div className="flex justify-between p-2 bg-green-500/10 rounded">
-            <span className="text-green-400">TP</span>
-            <span className="text-white font-mono">{sig.tp}</span>
+          <div className="flex justify-between p-2 bg-green-500/10 rounded border-l-2 border-green-600">
+            <span className="text-green-400">TP1 <span className="text-zinc-500">(1:1)</span></span>
+            <span className="text-white font-mono">{sig.tp1}</span>
+          </div>
+          <div className="flex justify-between p-2 bg-green-500/10 rounded border-l-2 border-green-500">
+            <span className="text-green-400">TP2 <span className="text-zinc-500">(1:2)</span></span>
+            <span className="text-white font-mono">{sig.tp2}</span>
+          </div>
+          <div className="flex justify-between p-2 bg-green-500/10 rounded border-l-2 border-lime-500">
+            <span className="text-lime-400">TP3 <span className="text-zinc-500">(1:3)</span></span>
+            <span className="text-white font-mono">{sig.tp3}</span>
           </div>
         </div>
       )}
+    </div>
+  );
+};
+
+// =============================================
+// ESTADÍSTICAS MEJORADAS
+// =============================================
+const StatsPanel = ({ stats }) => {
+  if (!stats) return null;
+  
+  const totalDecided = stats.wins + stats.losses;
+  const winRate = totalDecided > 0 ? ((stats.wins / totalDecided) * 100).toFixed(0) : 0;
+  
+  return (
+    <div className="bg-gradient-to-br from-zinc-900 to-zinc-800 rounded-lg p-4 border border-zinc-700">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-white font-semibold text-sm">📊 Estadísticas</h3>
+        <span className="text-xs text-green-400 bg-green-500/10 px-2 py-0.5 rounded">
+          🤖 Auto-tracking
+        </span>
+      </div>
       
-      <div className="mt-3 pt-3 border-t border-zinc-800 text-xs text-zinc-500">
-        Modelo: <span className="text-zinc-300">{sig.model || 'NO_SETUP'}</span>
+      <div className="grid grid-cols-4 gap-2 mb-3">
+        <div className="text-center p-2 bg-green-500/10 rounded">
+          <p className="text-green-400 text-lg font-bold">{stats.wins}</p>
+          <p className="text-zinc-500 text-xs">Wins</p>
+        </div>
+        <div className="text-center p-2 bg-red-500/10 rounded">
+          <p className="text-red-400 text-lg font-bold">{stats.losses}</p>
+          <p className="text-zinc-500 text-xs">Losses</p>
+        </div>
+        <div className="text-center p-2 bg-zinc-700/50 rounded">
+          <p className="text-zinc-400 text-lg font-bold">{stats.notTaken}</p>
+          <p className="text-zinc-500 text-xs">Skip</p>
+        </div>
+        <div className="text-center p-2 bg-blue-500/10 rounded">
+          <p className="text-blue-400 text-lg font-bold">{stats.pending}</p>
+          <p className="text-zinc-500 text-xs">Pend</p>
+        </div>
+      </div>
+      
+      {/* Win Rate */}
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-zinc-400 text-sm">Win Rate</span>
+        <span className={`text-xl font-bold ${
+          winRate >= 60 ? 'text-green-400' : winRate >= 40 ? 'text-yellow-400' : 'text-red-400'
+        }`}>
+          {winRate}%
+        </span>
+      </div>
+      
+      {/* TPs alcanzados */}
+      <div className="pt-3 border-t border-zinc-700">
+        <p className="text-zinc-500 text-xs mb-2">TPs Alcanzados:</p>
+        <div className="flex gap-2">
+          <span className="text-xs bg-green-600/20 text-green-400 px-2 py-1 rounded">
+            TP1: {stats.tp1Hits || 0}
+          </span>
+          <span className="text-xs bg-green-500/20 text-green-300 px-2 py-1 rounded">
+            TP2: {stats.tp2Hits || 0}
+          </span>
+          <span className="text-xs bg-lime-500/20 text-lime-300 px-2 py-1 rounded">
+            TP3: {stats.tp3Hits || 0}
+          </span>
+        </div>
+      </div>
+      
+      {/* Por modelo */}
+      {stats.byModel && (
+        <div className="pt-3 mt-3 border-t border-zinc-700">
+          <p className="text-zinc-500 text-xs mb-2">Por Modelo:</p>
+          <div className="space-y-1 text-xs">
+            {Object.entries(stats.byModel).map(([model, data]) => {
+              if (data.wins + data.losses === 0) return null;
+              const wr = ((data.wins / (data.wins + data.losses)) * 100).toFixed(0);
+              return (
+                <div key={model} className="flex justify-between">
+                  <span className={`${
+                    model === 'CHOCH' ? 'text-purple-400' :
+                    model === 'REVERSAL' ? 'text-orange-400' : 'text-blue-400'
+                  }`}>{model}</span>
+                  <span className="text-zinc-300">{data.wins}W/{data.losses}L ({wr}%)</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// =============================================
+// HISTORIAL DE SEÑALES
+// =============================================
+const SignalHistory = ({ signals, onUpdateSignal }) => {
+  if (!signals || signals.length === 0) {
+    return (
+      <div className="bg-zinc-900 rounded-lg p-4 border border-zinc-800">
+        <h3 className="text-white font-semibold text-sm mb-2">📋 Historial</h3>
+        <p className="text-zinc-500 text-sm">Sin señales</p>
+      </div>
+    );
+  }
+  
+  return (
+    <div className="bg-zinc-900 rounded-lg border border-zinc-800 overflow-hidden">
+      <div className="px-4 py-3 border-b border-zinc-800">
+        <h3 className="text-white font-semibold text-sm">📋 Historial</h3>
+      </div>
+      
+      <div className="max-h-[350px] overflow-y-auto">
+        {signals.map((signal) => (
+          <div 
+            key={signal.id} 
+            className={`p-3 border-b border-zinc-800/50 ${
+              signal.status === 'WIN' ? 'bg-green-900/10' :
+              signal.status === 'LOSS' ? 'bg-red-900/10' :
+              signal.status === 'NOT_TAKEN' ? 'bg-zinc-800/30' : ''
+            }`}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <span>{signal.emoji}</span>
+                <span className="text-white text-sm">{signal.assetName}</span>
+                <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${
+                  signal.action === 'LONG' ? 'bg-green-600' : 'bg-red-600'
+                }`}>
+                  {signal.action}
+                </span>
+                <span className={`text-xs px-1.5 py-0.5 rounded ${
+                  signal.model === 'CHOCH' ? 'bg-purple-600/50 text-purple-300' :
+                  signal.model === 'REVERSAL' ? 'bg-orange-600/50 text-orange-300' :
+                  'bg-blue-600/50 text-blue-300'
+                }`}>
+                  {signal.model}
+                </span>
+              </div>
+              <span className="text-zinc-500 text-xs">#{signal.id}</span>
+            </div>
+            
+            {/* Entry/SL/TPs */}
+            <div className="grid grid-cols-5 gap-1 text-xs mb-2">
+              <div>
+                <span className="text-blue-400">E:</span>
+                <span className="text-white ml-1">{signal.entry}</span>
+              </div>
+              <div>
+                <span className="text-red-400">SL:</span>
+                <span className="text-white ml-1">{signal.stop}</span>
+              </div>
+              <div className={signal.tp1Hit ? 'text-green-400' : ''}>
+                <span>T1:</span>
+                <span className="ml-1">{signal.tp1}</span>
+                {signal.tp1Hit && <span className="ml-1">✓</span>}
+              </div>
+              <div className={signal.tp2Hit ? 'text-green-400' : ''}>
+                <span>T2:</span>
+                <span className="ml-1">{signal.tp2}</span>
+                {signal.tp2Hit && <span className="ml-1">✓</span>}
+              </div>
+              <div className={signal.tp3Hit ? 'text-lime-400' : ''}>
+                <span>T3:</span>
+                <span className="ml-1">{signal.tp3}</span>
+                {signal.tp3Hit && <span className="ml-1">✓</span>}
+              </div>
+            </div>
+            
+            {/* Status o Botones */}
+            {signal.status === 'PENDING' ? (
+              <div className="flex gap-2">
+                <button
+                  onClick={() => onUpdateSignal(signal.id, 'WIN')}
+                  className="flex-1 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-bold rounded"
+                >
+                  ✅ WIN
+                </button>
+                <button
+                  onClick={() => onUpdateSignal(signal.id, 'LOSS')}
+                  className="flex-1 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded"
+                >
+                  ❌ LOSS
+                </button>
+                <button
+                  onClick={() => onUpdateSignal(signal.id, 'NOT_TAKEN')}
+                  className="flex-1 py-1.5 bg-zinc-600 hover:bg-zinc-700 text-white text-xs font-bold rounded"
+                >
+                  ⏭️
+                </button>
+              </div>
+            ) : (
+              <div className={`text-center py-1.5 rounded text-xs font-bold ${
+                signal.status === 'WIN' ? 'bg-green-500/20 text-green-400' :
+                signal.status === 'LOSS' ? 'bg-red-500/20 text-red-400' :
+                'bg-zinc-700/50 text-zinc-400'
+              }`}>
+                {signal.status === 'WIN' && `✅ WIN ${signal.tpLevel ? `(TP${signal.tpLevel})` : ''}`}
+                {signal.status === 'LOSS' && '❌ LOSS'}
+                {signal.status === 'NOT_TAKEN' && '⏭️ SKIP'}
+                {signal.closedBy === 'AUTO' || signal.closedBy?.startsWith('AUTO') ? (
+                  <span className="ml-1 text-zinc-500">(auto)</span>
+                ) : null}
+              </div>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );
 };
 
 // =============================================
-// NARRACIÓN IA EN VIVO
+// NARRACIÓN IA
 // =============================================
 const AINarration = ({ symbol }) => {
   const [narration, setNarration] = useState(null);
-  const [loading, setLoading] = useState(false);
-  
-  const fetchNarration = useCallback(async () => {
-    if (!symbol) return;
-    setLoading(true);
-    try {
-      const res = await fetch(`${API_URL}/api/ai/narrate/${symbol}`);
-      const data = await res.json();
-      setNarration(data);
-    } catch (err) {
-      console.error('Error fetching narration:', err);
-    }
-    setLoading(false);
-  }, [symbol]);
   
   useEffect(() => {
+    if (!symbol) return;
+    
+    const fetchNarration = async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/ai/narrate/${symbol}`);
+        const data = await res.json();
+        setNarration(data);
+      } catch (err) {}
+    };
+    
     fetchNarration();
-    const interval = setInterval(fetchNarration, 10000); // Actualizar cada 10s
+    const interval = setInterval(fetchNarration, 8000);
     return () => clearInterval(interval);
-  }, [fetchNarration]);
+  }, [symbol]);
+  
+  if (!narration) return null;
   
   return (
-    <div className="bg-gradient-to-br from-purple-900/20 to-blue-900/20 rounded-lg p-4 border border-purple-500/30">
-      <div className="flex items-center gap-2 mb-3">
-        <span className="text-lg">🤖</span>
-        <h3 className="text-white font-semibold text-sm">Narración IA</h3>
-        {loading && <span className="w-2 h-2 bg-purple-500 rounded-full animate-pulse" />}
+    <div className="bg-gradient-to-br from-purple-900/20 to-blue-900/20 rounded-lg p-3 border border-purple-500/30">
+      <div className="flex items-center gap-2 mb-2">
+        <span>🤖</span>
+        <span className="text-white text-sm font-medium">IA</span>
       </div>
-      
-      {narration ? (
-        <div className="text-sm text-zinc-300 whitespace-pre-line leading-relaxed">
-          {narration.text}
-        </div>
-      ) : (
-        <p className="text-zinc-500 text-sm">Analizando mercado...</p>
-      )}
-      
-      <p className="text-zinc-600 text-xs mt-3">
-        Actualizado: {narration?.timestamp ? new Date(narration.timestamp).toLocaleTimeString() : '--'}
+      <p className="text-zinc-300 text-sm whitespace-pre-line leading-relaxed">
+        {narration.text}
       </p>
     </div>
   );
 };
 
 // =============================================
-// CHAT CON IA
+// CHAT IA
 // =============================================
 const AIChat = ({ symbol, assetName }) => {
   const [messages, setMessages] = useState([]);
@@ -327,131 +547,76 @@ const AIChat = ({ symbol, assetName }) => {
   const [loading, setLoading] = useState(false);
   const messagesEndRef = useRef(null);
   
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
-  
   useEffect(() => {
-    scrollToBottom();
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
   
-  // Limpiar chat cuando cambia el activo
   useEffect(() => {
     setMessages([{
       role: 'assistant',
-      content: `¡Hola! 👋 Soy tu asistente de trading. Estoy analizando **${assetName}** en tiempo real.\n\nPuedes preguntarme:\n• ¿Hay señal?\n• ¿Cuál es la tendencia?\n• ¿Dónde está la liquidez?\n• ¿Qué me recomiendas?\n• ¿Cómo funciona SMC?`
+      content: `👋 Analizando **${assetName}**.\n\nPregunta: señal, CHoCH, estadísticas, tendencia...`
     }]);
   }, [symbol, assetName]);
   
   const sendMessage = async () => {
     if (!input.trim() || loading) return;
     
-    const userMessage = input.trim();
+    const userMsg = input.trim();
     setInput('');
-    setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
+    setMessages(prev => [...prev, { role: 'user', content: userMsg }]);
     setLoading(true);
     
     try {
       const res = await fetch(`${API_URL}/api/ai/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: userMessage, symbol })
+        body: JSON.stringify({ question: userMsg, symbol })
       });
-      
       const data = await res.json();
       setMessages(prev => [...prev, { role: 'assistant', content: data.answer }]);
     } catch (err) {
-      setMessages(prev => [...prev, { 
-        role: 'assistant', 
-        content: '❌ Error al conectar. Intenta de nuevo.' 
-      }]);
+      setMessages(prev => [...prev, { role: 'assistant', content: '❌ Error' }]);
     }
     
     setLoading(false);
   };
   
-  const handleKeyPress = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
-  };
-  
-  // Preguntas sugeridas
-  const suggestions = [
-    '¿Hay señal?',
-    '¿Tendencia?',
-    '¿Qué hacer?',
-    '¿Liquidez?'
-  ];
-  
   return (
-    <div className="bg-zinc-900 rounded-lg border border-zinc-800 flex flex-col h-[400px]">
-      {/* Header */}
-      <div className="px-4 py-3 border-b border-zinc-800 flex items-center gap-2">
-        <span className="text-lg">💬</span>
-        <h3 className="text-white font-semibold text-sm">Chat con IA</h3>
-        <span className="text-xs text-zinc-500">• {assetName}</span>
+    <div className="bg-zinc-900 rounded-lg border border-zinc-800 flex flex-col h-[220px]">
+      <div className="px-3 py-2 border-b border-zinc-800 flex items-center gap-2">
+        <span>💬</span>
+        <span className="text-white text-sm font-medium">Chat</span>
       </div>
       
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+      <div className="flex-1 overflow-y-auto p-3 space-y-2">
         {messages.map((msg, i) => (
           <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
-              msg.role === 'user' 
-                ? 'bg-blue-600 text-white' 
-                : 'bg-zinc-800 text-zinc-200'
+            <div className={`max-w-[90%] rounded-lg px-3 py-2 text-xs ${
+              msg.role === 'user' ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-zinc-200'
             }`}>
-              <div className="whitespace-pre-line">{msg.content}</div>
+              {msg.content}
             </div>
           </div>
         ))}
-        {loading && (
-          <div className="flex justify-start">
-            <div className="bg-zinc-800 rounded-lg px-4 py-2">
-              <div className="flex gap-1">
-                <span className="w-2 h-2 bg-zinc-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                <span className="w-2 h-2 bg-zinc-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                <span className="w-2 h-2 bg-zinc-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-              </div>
-            </div>
-          </div>
-        )}
+        {loading && <div className="text-zinc-500 text-xs">Pensando...</div>}
         <div ref={messagesEndRef} />
       </div>
       
-      {/* Suggestions */}
-      <div className="px-4 py-2 border-t border-zinc-800/50 flex gap-2 overflow-x-auto">
-        {suggestions.map((s, i) => (
-          <button
-            key={i}
-            onClick={() => { setInput(s); }}
-            className="px-2 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-400 rounded-full whitespace-nowrap"
-          >
-            {s}
-          </button>
-        ))}
-      </div>
-      
-      {/* Input */}
-      <div className="p-3 border-t border-zinc-800">
+      <div className="p-2 border-t border-zinc-800">
         <div className="flex gap-2">
           <input
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            onKeyPress={handleKeyPress}
-            placeholder="Pregunta sobre el mercado..."
-            className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500"
-            disabled={loading}
+            onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
+            placeholder="Pregunta..."
+            className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-none"
           />
           <button
             onClick={sendMessage}
-            disabled={loading || !input.trim()}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-zinc-700 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium"
+            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs"
           >
-            Enviar
+            →
           </button>
         </div>
       </div>
@@ -487,6 +652,17 @@ const Dashboard = () => {
     } catch (err) {}
   }, []);
   
+  const updateSignal = async (id, status) => {
+    try {
+      await fetch(`${API_URL}/api/signals/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      });
+      fetchDashboard();
+    } catch (err) {}
+  };
+  
   useEffect(() => {
     fetchDashboard();
     const interval = setInterval(fetchDashboard, 2000);
@@ -516,11 +692,12 @@ const Dashboard = () => {
     <div className="min-h-screen bg-black text-white">
       {/* Header */}
       <header className="px-4 py-3 border-b border-zinc-900">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
+        <div className="max-w-[1600px] mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
             <h1 className="text-lg font-bold">TradingPro</h1>
-            <span className="text-xs text-zinc-600 bg-zinc-900 px-2 py-0.5 rounded">v10.1</span>
-            <span className="text-xs text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded">🤖 IA</span>
+            <span className="text-xs text-zinc-600 bg-zinc-900 px-2 py-0.5 rounded">v10.3</span>
+            <span className="text-xs text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded">⚡ CHoCH</span>
+            <span className="text-xs text-green-400 bg-green-500/10 px-2 py-0.5 rounded">🤖 Auto</span>
           </div>
           <div className="flex items-center gap-2">
             <span className={`w-2 h-2 rounded-full ${data.connected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
@@ -530,10 +707,10 @@ const Dashboard = () => {
       </header>
       
       {/* Main */}
-      <main className="max-w-7xl mx-auto p-4">
+      <main className="max-w-[1600px] mx-auto p-4">
         <div className="grid grid-cols-12 gap-4">
           
-          {/* Sidebar - Activos */}
+          {/* Col 1 - Activos */}
           <aside className="col-span-12 lg:col-span-2 space-y-2">
             <p className="text-zinc-600 text-xs uppercase mb-2">Activos</p>
             {data.assets?.map(asset => (
@@ -546,12 +723,12 @@ const Dashboard = () => {
             ))}
           </aside>
           
-          {/* Centro - Gráfico */}
-          <section className="col-span-12 lg:col-span-6 space-y-4">
+          {/* Col 2 - Gráfico */}
+          <section className="col-span-12 lg:col-span-5 space-y-4">
             {selected && (
               <>
                 <div className="bg-zinc-900/30 rounded-lg border border-zinc-800/50 overflow-hidden">
-                  <div className="px-4 py-3 border-b border-zinc-800/50 flex items-center justify-between">
+                  <div className="px-4 py-2 border-b border-zinc-800/50 flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <span className="text-xl">{selected.emoji}</span>
                       <div>
@@ -573,20 +750,21 @@ const Dashboard = () => {
                   </div>
                 </div>
                 
-                {/* Narración IA */}
                 <AINarration symbol={selected.symbol} />
               </>
             )}
           </section>
           
-          {/* Sidebar derecho */}
-          <aside className="col-span-12 lg:col-span-4 space-y-4">
+          {/* Col 3 - Señal + Chat */}
+          <aside className="col-span-12 lg:col-span-2 space-y-4">
             <SignalPanel asset={selected} />
-            
-            {/* Chat IA */}
-            {selected && (
-              <AIChat symbol={selected.symbol} assetName={selected.name} />
-            )}
+            {selected && <AIChat symbol={selected.symbol} assetName={selected.name} />}
+          </aside>
+          
+          {/* Col 4 - Stats + Historial */}
+          <aside className="col-span-12 lg:col-span-3 space-y-4">
+            <StatsPanel stats={data.stats} />
+            <SignalHistory signals={data.recentSignals} onUpdateSignal={updateSignal} />
           </aside>
         </div>
       </main>
