@@ -21,6 +21,7 @@ export default function Dashboard() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [candles, setCandles] = useState([]);
+  const [isLoadingCandles, setIsLoadingCandles] = useState(true);
   const chatEndRef = useRef(null);
 
   // Fetch dashboard data
@@ -40,14 +41,19 @@ export default function Dashboard() {
   // Fetch candles for selected asset
   const fetchCandles = useCallback(async () => {
     if (!selectedAsset) return;
+    setIsLoadingCandles(true);
     try {
       const res = await fetch(`${API_URL}/api/analyze/${selectedAsset}`);
+      if (!res.ok) throw new Error('Failed to fetch');
       const json = await res.json();
-      if (json.candles) {
+      console.log(`[TradingPro] Candles for ${selectedAsset}:`, json.candles?.length || 0);
+      if (json.candles && json.candles.length > 0) {
         setCandles(json.candles);
       }
     } catch (err) {
-      console.error('Error fetching candles:', err);
+      console.error('[TradingPro] Error fetching candles:', err);
+    } finally {
+      setIsLoadingCandles(false);
     }
   }, [selectedAsset]);
 
@@ -58,10 +64,12 @@ export default function Dashboard() {
   }, [fetchData]);
 
   useEffect(() => {
-    fetchCandles();
-    const interval = setInterval(fetchCandles, 5000);
-    return () => clearInterval(interval);
-  }, [fetchCandles]);
+    if (selectedAsset) {
+      fetchCandles();
+      const interval = setInterval(fetchCandles, 3000);
+      return () => clearInterval(interval);
+    }
+  }, [selectedAsset, fetchCandles]);
 
   // Scroll chat to bottom
   useEffect(() => {
@@ -162,62 +170,93 @@ export default function Dashboard() {
   // =============================================
   // CANDLESTICK CHART COMPONENT
   // =============================================
-  const CandlestickChart = ({ candles, height = 300, zones = [] }) => {
+  const CandlestickChart = ({ candles: chartCandles, height = 280 }) => {
     const containerRef = useRef(null);
-    const [dimensions, setDimensions] = useState({ width: 600, height });
+    const [dimensions, setDimensions] = useState({ width: 700, height });
 
+    // Handle resize
     useEffect(() => {
-      if (containerRef.current) {
-        setDimensions({
-          width: containerRef.current.offsetWidth,
-          height: height
-        });
-      }
-    }, [containerRef, height]);
+      const updateDimensions = () => {
+        if (containerRef.current) {
+          const rect = containerRef.current.getBoundingClientRect();
+          setDimensions({ width: rect.width || 700, height });
+        }
+      };
+      
+      updateDimensions();
+      window.addEventListener('resize', updateDimensions);
+      
+      // Small delay to ensure container is rendered
+      const timeout = setTimeout(updateDimensions, 100);
+      
+      return () => {
+        window.removeEventListener('resize', updateDimensions);
+        clearTimeout(timeout);
+      };
+    }, [height]);
 
-    if (!candles || candles.length === 0) {
+    // Loading state
+    if (isLoadingCandles && (!chartCandles || chartCandles.length === 0)) {
       return (
         <div ref={containerRef} className="w-full flex items-center justify-center" style={{ height }}>
           <div className="text-center">
-            <svg className="w-12 h-12 text-white/10 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+            <div className="w-10 h-10 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin mx-auto mb-3"></div>
+            <p className="text-sm" style={{ color: colors.textDim }}>Conectando con mercado...</p>
+          </div>
+        </div>
+      );
+    }
+
+    // No data state
+    if (!chartCandles || chartCandles.length === 0) {
+      return (
+        <div ref={containerRef} className="w-full flex items-center justify-center" style={{ height }}>
+          <div className="text-center">
+            <svg className="w-16 h-16 mx-auto mb-3" style={{ color: colors.textDim }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
             </svg>
-            <p className={`text-sm ${theme === 'dark' ? 'text-white/30' : 'text-black/30'}`}>Cargando gráfico...</p>
+            <p className="text-sm font-medium" style={{ color: colors.textMuted }}>Sin datos de mercado</p>
+            <p className="text-xs mt-1" style={{ color: colors.textDim }}>Esperando conexión con Deriv...</p>
           </div>
         </div>
       );
     }
 
     const { width } = dimensions;
-    const padding = { top: 20, right: 60, bottom: 30, left: 10 };
-    const chartWidth = width - padding.left - padding.right;
-    const chartHeight = height - padding.top - padding.bottom;
+    const padding = { top: 20, right: 65, bottom: 25, left: 10 };
+    const chartWidth = Math.max(100, width - padding.left - padding.right);
+    const chartHeight = Math.max(100, height - padding.top - padding.bottom);
 
-    const displayCandles = candles.slice(-50);
-    const candleWidth = Math.max(4, (chartWidth / displayCandles.length) * 0.7);
-    const gap = (chartWidth / displayCandles.length) * 0.3;
+    const displayCandles = chartCandles.slice(-50);
+    const candleWidth = Math.max(3, Math.min(12, (chartWidth / displayCandles.length) * 0.7));
+    const gap = (chartWidth / displayCandles.length) - candleWidth;
 
     const allPrices = displayCandles.flatMap(c => [c.high, c.low]);
     const minPrice = Math.min(...allPrices);
     const maxPrice = Math.max(...allPrices);
-    const priceRange = maxPrice - minPrice || 1;
-    const priceScale = chartHeight / priceRange;
+    const priceRange = (maxPrice - minPrice) || 1;
+    const pricePadding = priceRange * 0.05;
+    const adjustedMin = minPrice - pricePadding;
+    const adjustedMax = maxPrice + pricePadding;
+    const adjustedRange = adjustedMax - adjustedMin;
+    const priceScale = chartHeight / adjustedRange;
 
-    const getY = (price) => padding.top + (maxPrice - price) * priceScale;
+    const getY = (price) => padding.top + (adjustedMax - price) * priceScale;
+    const currentPrice = displayCandles[displayCandles.length - 1]?.close;
 
-    // Get demand/supply zones from current asset
-    const demandZones = currentAsset?.signal?.analysis?.demandZones ? 
-      data?.assets?.find(a => a.symbol === selectedAsset)?.demandZones || [] : [];
-    const supplyZones = currentAsset?.signal?.analysis?.supplyZones ?
-      data?.assets?.find(a => a.symbol === selectedAsset)?.supplyZones || [] : [];
+    // Price levels for grid
+    const priceLevels = [];
+    const step = adjustedRange / 4;
+    for (let i = 0; i <= 4; i++) {
+      priceLevels.push(adjustedMin + step * i);
+    }
 
     return (
       <div ref={containerRef} className="w-full">
         <svg width={width} height={height} className="overflow-visible">
           {/* Grid lines */}
-          {[0, 0.25, 0.5, 0.75, 1].map((pct, i) => {
-            const y = padding.top + chartHeight * pct;
-            const price = maxPrice - (priceRange * pct);
+          {priceLevels.map((price, i) => {
+            const y = getY(price);
             return (
               <g key={i}>
                 <line
@@ -653,12 +692,20 @@ export default function Dashboard() {
               </div>
               <div>
                 <h3 className="text-xl font-bold" style={{ color: colors.text }}>{currentAsset.name}</h3>
-                <p className="text-sm" style={{ color: colors.textMuted }}>{currentAsset.type} • M5</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm" style={{ color: colors.textMuted }}>{currentAsset.type} • M5</p>
+                  {candles.length > 0 && (
+                    <span className="flex items-center gap-1 text-xs text-emerald-400">
+                      <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse"></span>
+                      Live
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
             <div className="text-right">
               <p className="text-3xl font-bold font-mono" style={{ color: colors.text }}>
-                {currentAsset.price?.toFixed(currentAsset.decimals)}
+                {currentAsset.price?.toFixed(currentAsset.decimals) || '---'}
               </p>
               <p className="text-sm" style={{ color: colors.textMuted }}>
                 {currentAsset.demandZones || 0} demanda • {currentAsset.supplyZones || 0} oferta
@@ -668,7 +715,7 @@ export default function Dashboard() {
         </div>
 
         {/* Chart */}
-        <div className="p-2">
+        <div className="p-2" style={{ minHeight: 280 }}>
           <CandlestickChart candles={candles} height={280} />
         </div>
 
