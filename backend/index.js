@@ -1,5 +1,5 @@
 // =============================================
-// TRADING MASTER PRO v11.2
+// TRADING MASTER PRO v10.9
 // FIX: SL debajo de zona + TPs con ratio correcto
 // =============================================
 
@@ -99,7 +99,7 @@ for (const symbol of Object.keys(ASSETS)) {
 }
 
 // =============================================
-// MOTOR SMC v11.2
+// MOTOR SMC v10.9
 // =============================================
 const SMC = {
   findSwings(candles, lookback = 2) {
@@ -833,7 +833,6 @@ function connectDeriv() {
             open: parseFloat(c.open), high: parseFloat(c.high),
             low: parseFloat(c.low), close: parseFloat(c.close)
           }));
-          console.log(`📊 ${symbol}: Recibidas ${msg.candles.length} velas históricas`);
           analyzeAsset(symbol);
         }
       }
@@ -856,9 +855,6 @@ function connectDeriv() {
               if (candles.length > 200) candles.shift();
               analyzeAsset(symbol);
             }
-          } else {
-            // Si no hay velas, agregar esta
-            candles.push(newCandle);
           }
           assetData[symbol].price = newCandle.close;
           checkSignalHits();
@@ -943,8 +939,7 @@ app.get('/api/dashboard', (req, res) => {
     assets: Object.entries(assetData).map(([symbol, data]) => ({
       symbol, ...ASSETS[symbol], price: data.price, signal: data.signal,
       demandZones: data.demandZones?.length || 0,
-      supplyZones: data.supplyZones?.length || 0,
-      candlesCount: data.candles?.length || 0
+      supplyZones: data.supplyZones?.length || 0
     })),
     recentSignals: signalHistory.slice(0, 20),
     stats
@@ -990,7 +985,7 @@ app.post('/api/ai/chat', (req, res) => {
 app.listen(PORT, () => {
   console.log(`
 ╔══════════════════════════════════════════════════════════════╗
-║              TRADING MASTER PRO v11.2                        ║
+║              TRADING MASTER PRO v10.9                        ║
 ╠══════════════════════════════════════════════════════════════╣
 ║  🔧 FIX: SL siempre DEBAJO de la zona de demanda            ║
 ║  🔧 FIX: SL siempre ARRIBA de la zona de oferta             ║
