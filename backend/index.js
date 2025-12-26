@@ -1,6 +1,6 @@
 // =============================================
-// TRADING MASTER PRO v10.0
-// Backend con manejo correcto de velas M5/M1
+// TRADING MASTER PRO v10.1
+// Con IA: Narración en vivo + Chat
 // =============================================
 
 import express from 'express';
@@ -17,7 +17,7 @@ app.use(cors());
 app.use(express.json());
 
 // =============================================
-// CONFIGURACIÓN DE ACTIVOS
+// CONFIGURACIÓN
 // =============================================
 const ASSETS = {
   'stpRNG': { name: 'Step Index', emoji: '📊', type: 'synthetic', decimals: 2 },
@@ -38,18 +38,20 @@ let reconnectAttempts = 0;
 const assetData = {};
 for (const symbol of Object.keys(ASSETS)) {
   assetData[symbol] = {
-    candles: [],      // Velas M5 completas
-    currentCandle: null, // Vela en formación
+    candles: [],
     price: null,
     signal: null,
-    lastAnalysis: 0
+    lastAnalysis: 0,
+    priceHistory: [] // Para tracking de movimiento
   };
 }
 
 let signalHistory = [];
+let aiNarrations = []; // Historial de narraciones
+let chatHistory = [];  // Historial de chat
 
 // =============================================
-// MOTOR SMC
+// MOTOR SMC (Sin cambios)
 // =============================================
 const SMC = {
   findSwings(candles, lookback = 5) {
@@ -101,8 +103,7 @@ const SMC = {
         return {
           valid: true,
           direction: c.close > c.open ? 'BULLISH' : 'BEARISH',
-          magnitude: (body / avgRange).toFixed(1),
-          candlesAgo: i - 1
+          magnitude: (body / avgRange).toFixed(1)
         };
       }
     }
@@ -143,12 +144,12 @@ const SMC = {
     
     if (sweep) {
       score += 30;
-      breakdown.push('Sweep +30');
+      breakdown.push('Sweep de liquidez detectado');
     }
     
     if (displacement?.valid) {
       score += 30;
-      breakdown.push(`Displacement ${displacement.magnitude}x +30`);
+      breakdown.push(`Displacement ${displacement.direction} (${displacement.magnitude}x)`);
     }
     
     const direction = sweep?.side || (displacement?.direction === 'BEARISH' ? 'SELL' : displacement?.direction === 'BULLISH' ? 'BUY' : null);
@@ -156,7 +157,7 @@ const SMC = {
     
     if (ob) {
       score += 25;
-      breakdown.push('Order Block +25');
+      breakdown.push(`Order Block ${ob.type} identificado`);
     }
     
     const lows = swings.filter(s => s.type === 'low').slice(-3);
@@ -166,10 +167,9 @@ const SMC = {
     
     if (higherLows || lowerHighs) {
       score += 15;
-      breakdown.push('Estructura +15');
+      breakdown.push(higherLows ? 'Estructura alcista (Higher Lows)' : 'Estructura bajista (Lower Highs)');
     }
     
-    // Generar señal si score >= 70
     if (score >= 70) {
       if (sweep?.side === 'BUY' || displacement?.direction === 'BULLISH') {
         action = 'LONG';
@@ -187,21 +187,16 @@ const SMC = {
     }
     
     return {
-      action,
-      model,
-      score,
-      confidence: score >= 85 ? 'ALTA' : score >= 70 ? 'MEDIA' : 'BAJA',
-      breakdown,
+      action, model, score, breakdown,
       entry: entry ? parseFloat(entry.toFixed(config.decimals)) : null,
       stop: stop ? parseFloat(stop.toFixed(config.decimals)) : null,
       tp: tp ? parseFloat(tp.toFixed(config.decimals)) : null,
       analysis: {
         eqh: eqh.toFixed(config.decimals),
         eql: eql.toFixed(config.decimals),
-        sweep: sweep ? `${sweep.type} @ ${sweep.level.toFixed(2)}` : null,
-        displacement: displacement?.valid ? `${displacement.direction} ${displacement.magnitude}x` : null,
-        ob: ob ? `${ob.type}` : null,
-        structure: higherLows ? 'Higher Lows 📈' : lowerHighs ? 'Lower Highs 📉' : 'Neutral ➡️'
+        sweep, displacement,
+        ob: ob ? ob.type : null,
+        structure: higherLows ? 'Higher Lows' : lowerHighs ? 'Lower Highs' : 'Neutral'
       },
       timestamp: new Date().toISOString()
     };
@@ -209,7 +204,263 @@ const SMC = {
 };
 
 // =============================================
-// CONEXIÓN DERIV - MANEJO CORRECTO DE VELAS
+// IA - GENERADOR DE NARRACIÓN Y RESPUESTAS
+// =============================================
+const AI = {
+  // Genera contexto del mercado para la IA
+  getMarketContext(symbol) {
+    const data = assetData[symbol];
+    const config = ASSETS[symbol];
+    if (!data || !config) return null;
+    
+    const candles = data.candles.slice(-20);
+    const signal = data.signal;
+    const price = data.price;
+    
+    // Calcular tendencia reciente
+    let trend = 'lateral';
+    if (candles.length >= 5) {
+      const recent5 = candles.slice(-5);
+      const firstClose = recent5[0].close;
+      const lastClose = recent5[recent5.length - 1].close;
+      const change = ((lastClose - firstClose) / firstClose) * 100;
+      
+      if (change > 0.1) trend = 'alcista';
+      else if (change < -0.1) trend = 'bajista';
+    }
+    
+    // Calcular volatilidad
+    const ranges = candles.map(c => c.high - c.low);
+    const avgRange = ranges.reduce((a, b) => a + b, 0) / ranges.length;
+    const volatility = avgRange > price * 0.002 ? 'alta' : avgRange > price * 0.001 ? 'media' : 'baja';
+    
+    // Última vela
+    const lastCandle = candles[candles.length - 1];
+    const lastCandleType = lastCandle?.close >= lastCandle?.open ? 'alcista' : 'bajista';
+    
+    return {
+      asset: config.name,
+      symbol,
+      price,
+      trend,
+      volatility,
+      lastCandleType,
+      signal: signal || { action: 'WAIT', score: 0 },
+      eqh: signal?.analysis?.eqh,
+      eql: signal?.analysis?.eql,
+      structure: signal?.analysis?.structure,
+      hasSignal: signal?.action && !['WAIT', 'LOADING'].includes(signal.action)
+    };
+  },
+  
+  // Genera narración automática del mercado
+  generateNarration(symbol) {
+    const ctx = this.getMarketContext(symbol);
+    if (!ctx) return null;
+    
+    const narratives = [];
+    
+    // Introducción
+    narratives.push(`📊 **${ctx.asset}** cotiza en ${ctx.price?.toFixed(ASSETS[symbol].decimals) || '---'}`);
+    
+    // Tendencia
+    if (ctx.trend === 'alcista') {
+      narratives.push(`📈 Tendencia alcista en las últimas velas. Los compradores mantienen el control.`);
+    } else if (ctx.trend === 'bajista') {
+      narratives.push(`📉 Tendencia bajista activa. Presión vendedora dominante.`);
+    } else {
+      narratives.push(`➡️ Movimiento lateral. El mercado está consolidando.`);
+    }
+    
+    // Volatilidad
+    if (ctx.volatility === 'alta') {
+      narratives.push(`⚡ Volatilidad ALTA - Movimientos amplios, precaución.`);
+    } else if (ctx.volatility === 'baja') {
+      narratives.push(`😴 Volatilidad baja - Mercado tranquilo.`);
+    }
+    
+    // Niveles clave
+    if (ctx.eqh && ctx.eql) {
+      narratives.push(`🎯 Liquidez: EQH en ${ctx.eqh} | EQL en ${ctx.eql}`);
+    }
+    
+    // Estructura
+    if (ctx.structure && ctx.structure !== 'Neutral') {
+      narratives.push(`🏗️ Estructura: ${ctx.structure}`);
+    }
+    
+    // Señal
+    if (ctx.hasSignal) {
+      const sig = ctx.signal;
+      if (sig.action === 'LONG') {
+        narratives.push(`\n🟢 **SEÑAL LONG ACTIVA** (Score: ${sig.score}%)`);
+        narratives.push(`Entry: ${sig.entry} | SL: ${sig.stop} | TP: ${sig.tp}`);
+        narratives.push(`Modelo: ${sig.model}`);
+      } else if (sig.action === 'SHORT') {
+        narratives.push(`\n🔴 **SEÑAL SHORT ACTIVA** (Score: ${sig.score}%)`);
+        narratives.push(`Entry: ${sig.entry} | SL: ${sig.stop} | TP: ${sig.tp}`);
+        narratives.push(`Modelo: ${sig.model}`);
+      }
+    } else {
+      narratives.push(`\n⏳ Sin señal activa. Esperando setup SMC válido.`);
+    }
+    
+    return {
+      text: narratives.join('\n'),
+      timestamp: new Date().toISOString(),
+      symbol,
+      asset: ctx.asset
+    };
+  },
+  
+  // Responde preguntas del usuario sobre el mercado
+  answerQuestion(question, symbol) {
+    const ctx = this.getMarketContext(symbol);
+    if (!ctx) {
+      return {
+        answer: "No tengo datos de ese activo en este momento.",
+        timestamp: new Date().toISOString()
+      };
+    }
+    
+    const q = question.toLowerCase();
+    let answer = '';
+    
+    // Detectar intención de la pregunta
+    if (q.includes('señal') || q.includes('signal') || q.includes('entrada') || q.includes('operar')) {
+      if (ctx.hasSignal) {
+        const sig = ctx.signal;
+        answer = `🎯 Sí, hay una señal ${sig.action} activa en ${ctx.asset}.\n\n`;
+        answer += `📍 **Entry:** ${sig.entry}\n`;
+        answer += `🛑 **Stop Loss:** ${sig.stop}\n`;
+        answer += `✅ **Take Profit:** ${sig.tp}\n`;
+        answer += `📊 **Score:** ${sig.score}%\n`;
+        answer += `🏷️ **Modelo:** ${sig.model}\n\n`;
+        
+        if (sig.score >= 85) {
+          answer += `💪 Es una señal de ALTA confianza. Los elementos SMC están alineados.`;
+        } else if (sig.score >= 70) {
+          answer += `👍 Señal válida pero no perfecta. Considera gestionar bien el riesgo.`;
+        }
+      } else {
+        answer = `⏳ No hay señal activa en ${ctx.asset} en este momento.\n\n`;
+        answer += `El score actual es ${ctx.signal?.score || 0}%. Necesitamos mínimo 70% para una señal válida.\n\n`;
+        answer += `📊 Estoy monitoreando:\n`;
+        answer += `- Sweep de liquidez en EQH (${ctx.eqh}) o EQL (${ctx.eql})\n`;
+        answer += `- Displacement (vela fuerte de confirmación)\n`;
+        answer += `- Order Block para entrada\n`;
+      }
+    }
+    else if (q.includes('tendencia') || q.includes('trend') || q.includes('dirección')) {
+      answer = `📈 **Tendencia actual de ${ctx.asset}:**\n\n`;
+      answer += `La tendencia en M5 es **${ctx.trend.toUpperCase()}**.\n\n`;
+      
+      if (ctx.trend === 'alcista') {
+        answer += `Los compradores están dominando. Las velas recientes cierran al alza.`;
+      } else if (ctx.trend === 'bajista') {
+        answer += `Los vendedores tienen el control. Velas cerrando a la baja.`;
+      } else {
+        answer += `El mercado está en consolidación. Sin dirección clara por ahora.`;
+      }
+      
+      if (ctx.structure !== 'Neutral') {
+        answer += `\n\n🏗️ Estructura: ${ctx.structure}`;
+      }
+    }
+    else if (q.includes('precio') || q.includes('price') || q.includes('cotiza') || q.includes('está')) {
+      answer = `💰 **${ctx.asset}** está en **${ctx.price?.toFixed(ASSETS[symbol].decimals)}**\n\n`;
+      answer += `📊 Niveles clave:\n`;
+      answer += `- Resistencia (EQH): ${ctx.eqh}\n`;
+      answer += `- Soporte (EQL): ${ctx.eql}\n\n`;
+      answer += `Volatilidad: ${ctx.volatility}`;
+    }
+    else if (q.includes('volatilidad') || q.includes('volatility') || q.includes('movimiento')) {
+      answer = `⚡ **Volatilidad de ${ctx.asset}:** ${ctx.volatility.toUpperCase()}\n\n`;
+      
+      if (ctx.volatility === 'alta') {
+        answer += `El mercado está muy activo. Las velas tienen rangos amplios. Ideal para scalping pero requiere stops más amplios.`;
+      } else if (ctx.volatility === 'media') {
+        answer += `Volatilidad normal. Buenos movimientos sin ser excesivos.`;
+      } else {
+        answer += `Mercado tranquilo. Poca acción. Puede que venga un movimiento fuerte pronto.`;
+      }
+    }
+    else if (q.includes('liquidez') || q.includes('liquidity') || q.includes('eqh') || q.includes('eql')) {
+      answer = `🎯 **Zonas de Liquidez en ${ctx.asset}:**\n\n`;
+      answer += `📈 **EQH (Equal Highs):** ${ctx.eqh}\n`;
+      answer += `Zona donde hay stops de vendedores y órdenes de compra pendientes.\n\n`;
+      answer += `📉 **EQL (Equal Lows):** ${ctx.eql}\n`;
+      answer += `Zona donde hay stops de compradores y órdenes de venta pendientes.\n\n`;
+      answer += `💡 El precio tiende a buscar estas zonas para "barrer" la liquidez antes de moverse.`;
+    }
+    else if (q.includes('qué hacer') || q.includes('recomend') || q.includes('consejo') || q.includes('debería')) {
+      if (ctx.hasSignal) {
+        const sig = ctx.signal;
+        answer = `🤔 **Mi análisis para ${ctx.asset}:**\n\n`;
+        answer += `Hay una señal ${sig.action} con score de ${sig.score}%.\n\n`;
+        
+        if (sig.score >= 85) {
+          answer += `✅ Es una buena oportunidad. Los elementos SMC están presentes:\n`;
+          sig.breakdown?.forEach(b => {
+            answer += `  • ${b}\n`;
+          });
+          answer += `\n⚠️ Recuerda: Siempre usa gestión de riesgo. No arriesgues más del 1-2% por operación.`;
+        } else {
+          answer += `⚠️ La señal es válida pero no es A+. Considera:\n`;
+          answer += `  • Esperar mejor confluencia\n`;
+          answer += `  • Reducir el tamaño de posición\n`;
+          answer += `  • O tomar la operación con precaución`;
+        }
+      } else {
+        answer = `⏳ **Recomendación para ${ctx.asset}:**\n\n`;
+        answer += `No hay señal en este momento. Lo mejor es **ESPERAR**.\n\n`;
+        answer += `📋 Checklist para entrar:\n`;
+        answer += `  ⬜ Sweep de liquidez\n`;
+        answer += `  ⬜ Displacement confirmando\n`;
+        answer += `  ⬜ Order Block identificado\n`;
+        answer += `  ⬜ Score >= 70%\n\n`;
+        answer += `La paciencia es clave en SMC. No fuerces operaciones.`;
+      }
+    }
+    else if (q.includes('smc') || q.includes('metodología') || q.includes('cómo funciona')) {
+      answer = `📚 **Metodología SMC (Smart Money Concepts):**\n\n`;
+      answer += `El SMC busca operar como las instituciones:\n\n`;
+      answer += `1️⃣ **Liquidez** - Identificar donde están los stops (EQH/EQL)\n`;
+      answer += `2️⃣ **Sweep** - Esperar que el precio barra esa liquidez\n`;
+      answer += `3️⃣ **Displacement** - Vela fuerte que confirma la dirección\n`;
+      answer += `4️⃣ **Order Block** - Zona de entrada óptima\n\n`;
+      answer += `📊 Timeframe: M5 (5 minutos)\n`;
+      answer += `🎯 Score mínimo: 70%`;
+    }
+    else {
+      // Respuesta genérica
+      answer = `📊 **Estado actual de ${ctx.asset}:**\n\n`;
+      answer += `💰 Precio: ${ctx.price?.toFixed(ASSETS[symbol].decimals)}\n`;
+      answer += `📈 Tendencia: ${ctx.trend}\n`;
+      answer += `⚡ Volatilidad: ${ctx.volatility}\n`;
+      answer += `🏗️ Estructura: ${ctx.structure || 'Neutral'}\n\n`;
+      
+      if (ctx.hasSignal) {
+        answer += `🎯 Señal: ${ctx.signal.action} (${ctx.signal.score}%)`;
+      } else {
+        answer += `⏳ Sin señal activa`;
+      }
+      
+      answer += `\n\n💡 Puedes preguntarme sobre: señales, tendencia, precio, liquidez, volatilidad, o qué hacer.`;
+    }
+    
+    return {
+      answer,
+      timestamp: new Date().toISOString(),
+      symbol,
+      asset: ctx.asset,
+      context: ctx
+    };
+  }
+};
+
+// =============================================
+// CONEXIÓN DERIV
 // =============================================
 function connectDeriv() {
   const appId = process.env.DERIV_APP_ID || '117347';
@@ -218,7 +469,6 @@ function connectDeriv() {
   try {
     derivWs = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${appId}`);
   } catch (err) {
-    console.error('Error creando WebSocket:', err);
     setTimeout(connectDeriv, 5000);
     return;
   }
@@ -228,24 +478,18 @@ function connectDeriv() {
     isConnected = true;
     reconnectAttempts = 0;
     
-    // Suscribir a cada activo
     for (const symbol of Object.keys(ASSETS)) {
-      // 1. Obtener historial de velas M5
       derivWs.send(JSON.stringify({
         ticks_history: symbol,
         adjust_start_time: 1,
         count: 100,
         end: 'latest',
-        granularity: 300, // M5 = 300 segundos
+        granularity: 300,
         style: 'candles',
         subscribe: 1
       }));
       
-      // 2. Suscribir a ticks para precio en tiempo real
-      derivWs.send(JSON.stringify({
-        ticks: symbol,
-        subscribe: 1
-      }));
+      derivWs.send(JSON.stringify({ ticks: symbol, subscribe: 1 }));
     }
   });
   
@@ -253,13 +497,6 @@ function connectDeriv() {
     try {
       const msg = JSON.parse(data);
       
-      // Error de Deriv
-      if (msg.error) {
-        console.error('Deriv error:', msg.error.message);
-        return;
-      }
-      
-      // Historial inicial de velas
       if (msg.candles && msg.echo_req?.ticks_history) {
         const symbol = msg.echo_req.ticks_history;
         if (assetData[symbol]) {
@@ -270,12 +507,10 @@ function connectDeriv() {
             low: parseFloat(c.low),
             close: parseFloat(c.close)
           }));
-          console.log(`📊 ${ASSETS[symbol].name}: ${assetData[symbol].candles.length} velas M5 cargadas`);
           analyzeAsset(symbol);
         }
       }
       
-      // Actualización de vela (OHLC streaming)
       if (msg.ohlc) {
         const symbol = msg.ohlc.symbol;
         if (assetData[symbol]) {
@@ -292,61 +527,42 @@ function connectDeriv() {
           if (candles.length > 0) {
             const lastCandle = candles[candles.length - 1];
             
-            // Si es la misma vela (mismo tiempo de apertura), actualizarla
             if (lastCandle.time === newCandle.time) {
               candles[candles.length - 1] = newCandle;
-            } 
-            // Si es una vela nueva (nuevo período), agregarla
-            else if (newCandle.time > lastCandle.time) {
+            } else if (newCandle.time > lastCandle.time) {
               candles.push(newCandle);
-              // Mantener máximo 200 velas
-              if (candles.length > 200) {
-                candles.shift();
-              }
-              // Analizar cuando hay nueva vela completa
+              if (candles.length > 200) candles.shift();
               analyzeAsset(symbol);
             }
           }
           
-          // Actualizar precio actual
           assetData[symbol].price = newCandle.close;
         }
       }
       
-      // Tick individual (precio en tiempo real)
       if (msg.tick) {
         const symbol = msg.tick.symbol;
         if (assetData[symbol]) {
           assetData[symbol].price = parseFloat(msg.tick.quote);
         }
       }
-      
-    } catch (err) {
-      // Silenciar errores de parse
-    }
+    } catch (err) {}
   });
   
   derivWs.on('close', () => {
-    console.log('❌ Desconectado de Deriv');
     isConnected = false;
     reconnectAttempts++;
-    const delay = Math.min(5000 * reconnectAttempts, 30000);
-    console.log(`🔄 Reconectando en ${delay/1000}s...`);
-    setTimeout(connectDeriv, delay);
+    setTimeout(connectDeriv, Math.min(5000 * reconnectAttempts, 30000));
   });
   
-  derivWs.on('error', (err) => {
-    console.error('WebSocket error:', err.message);
-  });
+  derivWs.on('error', () => {});
 }
 
-// Analizar activo
 function analyzeAsset(symbol) {
   const data = assetData[symbol];
   const config = ASSETS[symbol];
   if (!data || !config || data.candles.length < 30) return;
   
-  // No analizar más de una vez por segundo
   const now = Date.now();
   if (now - data.lastAnalysis < 1000) return;
   data.lastAnalysis = now;
@@ -354,13 +570,12 @@ function analyzeAsset(symbol) {
   const signal = SMC.analyze(data.candles, config);
   data.signal = signal;
   
-  // Registrar señal si es nueva y válida
   if (signal.action !== 'WAIT' && signal.action !== 'LOADING' && signal.score >= 70) {
     const lastSignal = signalHistory[0];
     const isDuplicate = lastSignal && 
       lastSignal.symbol === symbol && 
       lastSignal.action === signal.action &&
-      now - new Date(lastSignal.timestamp).getTime() < 300000; // 5 min cooldown
+      now - new Date(lastSignal.timestamp).getTime() < 300000;
     
     if (!isDuplicate) {
       const fullSignal = {
@@ -375,7 +590,6 @@ function analyzeAsset(symbol) {
       if (signalHistory.length > 50) signalHistory.pop();
       
       console.log(`\n🎯 SEÑAL ${signal.action} - ${config.name}`);
-      console.log(`   Score: ${signal.score} | Entry: ${signal.entry} | SL: ${signal.stop} | TP: ${signal.tp}\n`);
     }
   }
 }
@@ -387,12 +601,9 @@ function analyzeAsset(symbol) {
 app.get('/', (req, res) => {
   res.json({
     name: 'Trading Master Pro',
-    version: '10.0',
-    status: 'ok',
-    connected: isConnected,
-    assets: Object.keys(ASSETS).length,
-    methodology: 'SMC (Smart Money Concepts)',
-    timeframe: 'M5 (5 minutes)'
+    version: '10.1',
+    features: ['SMC Analysis', 'AI Narration', 'AI Chat'],
+    connected: isConnected
   });
 });
 
@@ -437,26 +648,56 @@ app.get('/api/analyze/:symbol', (req, res) => {
     decimals: config.decimals,
     price: data.price,
     signal: data.signal,
-    candles: data.candles.slice(-60), // Últimas 60 velas M5
+    candles: data.candles.slice(-60),
     timeframe: 'M5'
   });
 });
 
-app.get('/api/signals', (req, res) => {
-  res.json({ signals: signalHistory });
+// =============================================
+// API DE IA
+// =============================================
+
+// Narración en vivo del mercado
+app.get('/api/ai/narrate/:symbol', (req, res) => {
+  const { symbol } = req.params;
+  const narration = AI.generateNarration(symbol);
+  
+  if (!narration) {
+    return res.status(404).json({ error: 'Activo no encontrado' });
+  }
+  
+  res.json(narration);
 });
 
-app.get('/api/status', (req, res) => {
-  res.json({
-    connected: isConnected,
-    reconnectAttempts,
-    assets: Object.entries(assetData).map(([s, d]) => ({
-      symbol: s,
-      name: ASSETS[s].name,
-      candles: d.candles.length,
-      price: d.price
-    }))
+// Chat con la IA
+app.post('/api/ai/chat', (req, res) => {
+  const { question, symbol } = req.body;
+  
+  if (!question || !symbol) {
+    return res.status(400).json({ error: 'Se requiere question y symbol' });
+  }
+  
+  const response = AI.answerQuestion(question, symbol);
+  
+  // Guardar en historial
+  chatHistory.unshift({
+    question,
+    answer: response.answer,
+    symbol,
+    timestamp: response.timestamp
   });
+  if (chatHistory.length > 100) chatHistory.pop();
+  
+  res.json(response);
+});
+
+// Historial de chat
+app.get('/api/ai/chat/history', (req, res) => {
+  res.json({ history: chatHistory.slice(0, 20) });
+});
+
+app.get('/api/signals', (req, res) => {
+  res.json({ signals: signalHistory });
 });
 
 // =============================================
@@ -464,19 +705,21 @@ app.get('/api/status', (req, res) => {
 // =============================================
 app.listen(PORT, () => {
   console.log(`
-╔═══════════════════════════════════════════════════╗
-║       TRADING MASTER PRO v10.0                    ║
-║       SMC • Minimalista • Profesional             ║
-╠═══════════════════════════════════════════════════╣
-║  Temporalidad: M5 (5 minutos)                     ║
-║  Metodología: Smart Money Concepts                ║
-║  Puerto: ${PORT}                                      ║
-╚═══════════════════════════════════════════════════╝
+╔═══════════════════════════════════════════════════════════╗
+║         TRADING MASTER PRO v10.1                          ║
+║         SMC + IA (Narración y Chat en Vivo)               ║
+╠═══════════════════════════════════════════════════════════╣
+║  🤖 IA Features:                                          ║
+║     • Narración en vivo del mercado                       ║
+║     • Chat interactivo sobre el gráfico                   ║
+║     • Análisis SMC explicado                              ║
+╠═══════════════════════════════════════════════════════════╣
+║  Puerto: ${PORT}                                              ║
+╚═══════════════════════════════════════════════════════════╝
   `);
   
   connectDeriv();
   
-  // Keep-alive ping
   setInterval(() => {
     if (derivWs?.readyState === WebSocket.OPEN) {
       derivWs.send(JSON.stringify({ ping: 1 }));
