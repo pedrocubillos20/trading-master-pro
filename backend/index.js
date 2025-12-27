@@ -1,5 +1,5 @@
 // =============================================
-// TRADING MASTER PRO v11.3
+// TRADING MASTER PRO v11.5
 // - No repetir señales hasta TP/SL
 // - Alerta cuando estructura cambia
 // - Sin Volatility 100
@@ -109,7 +109,7 @@ for (const symbol of Object.keys(ASSETS)) {
 }
 
 // =============================================
-// MOTOR SMC v11.3
+// MOTOR SMC v11.5
 // =============================================
 const SMC = {
   findSwings(candles, lookback = 2) {
@@ -1064,7 +1064,7 @@ app.post('/api/ai/chat', (req, res) => {
 app.listen(PORT, () => {
   console.log(`
 ╔══════════════════════════════════════════════════════════════╗
-║              TRADING MASTER PRO v11.3                        ║
+║              TRADING MASTER PRO v11.5                        ║
 ╠══════════════════════════════════════════════════════════════╣
 ║  ✅ No repite señales hasta TP/SL                            ║
 ║  ✅ Alerta si estructura cambia contra posición              ║
