@@ -3,29 +3,27 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 const API_URL = import.meta.env.VITE_API_URL || 'https://trading-master-pro-production.up.railway.app';
 
 // =============================================
-// DASHBOARD PRINCIPAL v12.6
+// TRADING MASTER PRO v12.7
+// ELISA IA + CHAT ARREGLADO
 // =============================================
 export default function Dashboard() {
-  // Estados principales
   const [data, setData] = useState(null);
   const [selectedAsset, setSelectedAsset] = useState(null);
   const [activeSection, setActiveSection] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth > 768);
   const [timeframe, setTimeframe] = useState('M5');
   
-  // Estados del chart
   const [candles, setCandles] = useState([]);
   const [candlesH1, setCandlesH1] = useState([]);
   
-  // Estados del chat
+  // Chat states - SIMPLIFICADO
   const [chatOpen, setChatOpen] = useState(false);
   const [messages, setMessages] = useState([]);
-  const [chatInput, setChatInput] = useState('');
-  const [isTyping, setIsTyping] = useState(false);
-  const chatEndRef = useRef(null);
-  const chatInputRef = useRef(null);
+  const [inputText, setInputText] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const messagesEndRef = useRef(null);
+  const inputRef = useRef(null);
   
-  // Responsive
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   
   useEffect(() => {
@@ -38,21 +36,13 @@ export default function Dashboard() {
   }, []);
 
   // ═══════════════════════════════════════════
-  // FETCH DATA - Sin parpadeo
+  // DATA FETCHING
   // ═══════════════════════════════════════════
   const fetchData = useCallback(async () => {
     try {
       const res = await fetch(`${API_URL}/api/dashboard`);
       const json = await res.json();
-      
-      setData(prev => {
-        // Solo actualizar si hay cambios reales
-        if (!prev || JSON.stringify(prev.timestamp) !== JSON.stringify(json.timestamp)) {
-          return json;
-        }
-        return prev;
-      });
-      
+      setData(json);
       if (!selectedAsset && json.assets?.length) {
         setSelectedAsset(json.assets[0].symbol);
       }
@@ -66,21 +56,8 @@ export default function Dashboard() {
     try {
       const res = await fetch(`${API_URL}/api/analyze/${selectedAsset}`);
       const json = await res.json();
-      
-      if (json.candles?.length) {
-        setCandles(prev => {
-          const newLast = json.candles[json.candles.length - 1];
-          const prevLast = prev[prev.length - 1];
-          if (!prevLast || newLast.time !== prevLast.time || newLast.close !== prevLast.close) {
-            return json.candles;
-          }
-          return prev;
-        });
-      }
-      
-      if (json.candlesH1?.length) {
-        setCandlesH1(json.candlesH1);
-      }
+      if (json.candles?.length) setCandles(json.candles);
+      if (json.candlesH1?.length) setCandlesH1(json.candlesH1);
     } catch (e) {
       console.error('Candles error:', e);
     }
@@ -101,42 +78,82 @@ export default function Dashboard() {
   }, [selectedAsset, fetchCandles]);
 
   // ═══════════════════════════════════════════
-  // CHAT FUNCTIONS
+  // CHAT - COMPLETAMENTE REESCRITO
   // ═══════════════════════════════════════════
-  const sendMessage = useCallback(async (customMsg) => {
-    const text = customMsg || chatInput.trim();
-    if (!text) return;
+  const handleSendMessage = async () => {
+    const text = inputText.trim();
+    if (!text || isLoading) return;
     
-    setChatInput('');
-    setMessages(prev => [...prev, { role: 'user', text }]);
-    setIsTyping(true);
+    // Limpiar input inmediatamente
+    setInputText('');
+    
+    // Agregar mensaje del usuario
+    setMessages(prev => [...prev, { role: 'user', content: text }]);
+    setIsLoading(true);
     
     try {
-      const res = await fetch(`${API_URL}/api/ai/chat`, {
+      const response = await fetch(`${API_URL}/api/ai/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: text, symbol: selectedAsset || 'stpRNG' })
+        body: JSON.stringify({ 
+          question: text, 
+          symbol: selectedAsset || 'stpRNG' 
+        })
       });
-      const json = await res.json();
-      setMessages(prev => [...prev, { role: 'marcus', text: json.answer }]);
-    } catch {
-      setMessages(prev => [...prev, { role: 'marcus', text: '❌ Error de conexión' }]);
+      
+      const result = await response.json();
+      setMessages(prev => [...prev, { role: 'assistant', content: result.answer }]);
+    } catch (error) {
+      setMessages(prev => [...prev, { role: 'assistant', content: '❌ Error de conexión. Intenta de nuevo.' }]);
     }
     
-    setIsTyping(false);
-  }, [chatInput, selectedAsset]);
+    setIsLoading(false);
+    
+    // Focus en el input después de enviar
+    setTimeout(() => {
+      if (inputRef.current) {
+        inputRef.current.focus();
+      }
+    }, 100);
+  };
 
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
+  };
 
-  const openChat = useCallback(() => {
+  const handleInputChange = (e) => {
+    setInputText(e.target.value);
+  };
+
+  const openChatWithGreeting = () => {
     setChatOpen(true);
     if (messages.length === 0) {
-      setTimeout(() => sendMessage('hola'), 300);
+      // Enviar saludo inicial
+      setTimeout(async () => {
+        setIsLoading(true);
+        try {
+          const response = await fetch(`${API_URL}/api/ai/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question: 'hola', symbol: selectedAsset || 'stpRNG' })
+          });
+          const result = await response.json();
+          setMessages([{ role: 'assistant', content: result.answer }]);
+        } catch (e) {
+          setMessages([{ role: 'assistant', content: '¡Hola! 💜 Soy Elisa, tu asistente de trading. ¿En qué te puedo ayudar?' }]);
+        }
+        setIsLoading(false);
+      }, 300);
     }
-    setTimeout(() => chatInputRef.current?.focus(), 400);
-  }, [messages.length, sendMessage]);
+    setTimeout(() => inputRef.current?.focus(), 400);
+  };
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
   // ═══════════════════════════════════════════
   // SIGNAL ACTIONS
@@ -244,7 +261,6 @@ export default function Dashboard() {
     return (
       <div ref={containerRef} className="w-full">
         <svg width={width} height={height}>
-          {/* Grid */}
           {[0, 0.25, 0.5, 0.75, 1].map((pct, i) => {
             const price = adjMax - ((adjMax - adjMin) * pct);
             return (
@@ -257,7 +273,6 @@ export default function Dashboard() {
             );
           })}
 
-          {/* Candles */}
           {visibleCandles.map((c, i) => {
             const x = padding.left + i * (candleW + gap);
             const isGreen = c.close >= c.open;
@@ -272,7 +287,6 @@ export default function Dashboard() {
             );
           })}
 
-          {/* Current price line */}
           {lastPrice && (
             <g>
               <line x1={padding.left} y1={getY(lastPrice)} x2={width - padding.right} y2={getY(lastPrice)} stroke="#10b981" strokeWidth="1" strokeDasharray="3,3" opacity="0.5" />
@@ -283,7 +297,6 @@ export default function Dashboard() {
             </g>
           )}
 
-          {/* Signal lines */}
           {signal && timeframe === 'M5' && (
             <>
               <line x1={padding.left} y1={getY(signal.entry)} x2={width - padding.right} y2={getY(signal.entry)} stroke="#3b82f6" strokeWidth="1.5" strokeDasharray="4,2" />
@@ -299,21 +312,21 @@ export default function Dashboard() {
   };
 
   // ═══════════════════════════════════════════
-  // MARCUS CHAT COMPONENT
+  // ELISA CHAT COMPONENT
   // ═══════════════════════════════════════════
-  const MarcusChat = () => {
+  const ElisaChat = () => {
     if (!chatOpen) {
       return (
         <button 
-          onClick={openChat}
-          className={`fixed z-50 flex items-center gap-2 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 text-white rounded-2xl shadow-xl transition-all hover:scale-105 ${
+          onClick={openChatWithGreeting}
+          className={`fixed z-50 flex items-center gap-2 bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-400 hover:to-purple-500 text-white rounded-2xl shadow-xl transition-all hover:scale-105 ${
             isMobile ? 'bottom-4 right-4 px-3 py-2' : 'bottom-6 right-6 px-4 py-3'
           }`}
         >
-          <span className={isMobile ? 'text-xl' : 'text-2xl'}>🤖</span>
+          <span className={isMobile ? 'text-xl' : 'text-2xl'}>👩‍💼</span>
           <div className="text-left">
-            <p className={`font-semibold ${isMobile ? 'text-xs' : 'text-sm'}`}>Marcus</p>
-            {!isMobile && <p className="text-xs text-white/70">Mentor SMC</p>}
+            <p className={`font-semibold ${isMobile ? 'text-xs' : 'text-sm'}`}>Elisa</p>
+            {!isMobile && <p className="text-xs text-white/70">Tu asistente</p>}
           </div>
           <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
         </button>
@@ -323,21 +336,24 @@ export default function Dashboard() {
     return (
       <div className={`fixed z-50 bg-[#0d0d12] rounded-2xl shadow-2xl border border-white/10 flex flex-col ${
         isMobile 
-          ? 'inset-4 rounded-xl' 
-          : 'bottom-6 right-6 w-96'
-      }`} style={{ height: isMobile ? 'auto' : '480px' }}>
+          ? 'inset-3' 
+          : 'bottom-6 right-6 w-[380px] h-[500px]'
+      }`}>
         
         {/* Header */}
-        <div className="flex items-center justify-between p-3 bg-gradient-to-r from-violet-600 to-purple-600 rounded-t-2xl">
+        <div className="flex items-center justify-between p-3 bg-gradient-to-r from-pink-500 to-purple-600 rounded-t-2xl flex-shrink-0">
           <div className="flex items-center gap-2">
-            <span className="text-xl">🤖</span>
+            <span className="text-2xl">👩‍💼</span>
             <div>
-              <p className="font-semibold text-white text-sm">Marcus</p>
-              <p className="text-xs text-white/70">{currentAsset?.name || 'Trading'}</p>
+              <p className="font-semibold text-white text-sm">Elisa</p>
+              <p className="text-xs text-white/70">{currentAsset?.name || 'Tu asistente de trading'}</p>
             </div>
           </div>
-          <button onClick={() => setChatOpen(false)} className="w-8 h-8 rounded-lg bg-white/20 hover:bg-white/30 flex items-center justify-center">
-            <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <button 
+            onClick={() => setChatOpen(false)} 
+            className="w-8 h-8 rounded-lg bg-white/20 hover:bg-white/30 flex items-center justify-center transition-colors"
+          >
+            <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
@@ -347,38 +363,49 @@ export default function Dashboard() {
         <div className="flex-1 overflow-y-auto p-3 space-y-3">
           {messages.map((msg, i) => (
             <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              {msg.role === 'marcus' && (
-                <div className="w-6 h-6 rounded-full bg-violet-500/30 flex items-center justify-center mr-2 flex-shrink-0 text-xs">🤖</div>
+              {msg.role === 'assistant' && (
+                <div className="w-7 h-7 rounded-full bg-pink-500/30 flex items-center justify-center mr-2 flex-shrink-0">
+                  <span className="text-sm">👩‍💼</span>
+                </div>
               )}
-              <div className={`max-w-[85%] rounded-2xl px-3 py-2 ${
-                msg.role === 'user' ? 'bg-violet-600 text-white' : 'bg-white/5 text-white/90'
+              <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 ${
+                msg.role === 'user' 
+                  ? 'bg-purple-600 text-white' 
+                  : 'bg-white/5 text-white/90'
               }`}>
-                <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.text}</p>
+                <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>
               </div>
             </div>
           ))}
           
-          {isTyping && (
+          {isLoading && (
             <div className="flex justify-start">
-              <div className="w-6 h-6 rounded-full bg-violet-500/30 flex items-center justify-center mr-2 text-xs">🤖</div>
-              <div className="bg-white/5 rounded-2xl px-4 py-3 flex gap-1">
-                <div className="w-2 h-2 bg-violet-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                <div className="w-2 h-2 bg-violet-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                <div className="w-2 h-2 bg-violet-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+              <div className="w-7 h-7 rounded-full bg-pink-500/30 flex items-center justify-center mr-2">
+                <span className="text-sm">👩‍💼</span>
+              </div>
+              <div className="bg-white/5 rounded-2xl px-4 py-3 flex gap-1.5">
+                <div className="w-2 h-2 bg-pink-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                <div className="w-2 h-2 bg-pink-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                <div className="w-2 h-2 bg-pink-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
               </div>
             </div>
           )}
           
-          <div ref={chatEndRef} />
+          <div ref={messagesEndRef} />
         </div>
 
         {/* Quick Actions */}
-        <div className="px-3 py-2 border-t border-white/5 flex gap-2 overflow-x-auto">
-          {['📊 Análisis', '📦 Zonas', '🎯 Plan', '💡 Señal'].map((btn) => (
+        <div className="px-3 py-2 border-t border-white/5 flex gap-2 overflow-x-auto flex-shrink-0">
+          {['📊 Análisis', '🎯 Plan', '📦 Zonas', '💵 Precio'].map((btn) => (
             <button
               key={btn}
-              onClick={() => sendMessage(btn.split(' ')[1]?.toLowerCase())}
-              className="flex-shrink-0 px-3 py-1.5 bg-white/5 hover:bg-violet-500/20 rounded-full text-xs text-white/60 hover:text-white transition-all"
+              onClick={() => {
+                const cmd = btn.split(' ')[1];
+                setInputText(cmd);
+                setTimeout(() => handleSendMessage(), 50);
+              }}
+              disabled={isLoading}
+              className="flex-shrink-0 px-3 py-1.5 bg-white/5 hover:bg-pink-500/20 rounded-full text-xs text-white/60 hover:text-white transition-all disabled:opacity-50"
             >
               {btn}
             </button>
@@ -386,34 +413,29 @@ export default function Dashboard() {
         </div>
 
         {/* Input */}
-        <div className="p-3 border-t border-white/5">
+        <div className="p-3 border-t border-white/5 flex-shrink-0">
           <div className="flex gap-2">
             <input
-              ref={chatInputRef}
+              ref={inputRef}
               type="text"
-              value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  sendMessage();
-                }
-              }}
+              value={inputText}
+              onChange={handleInputChange}
+              onKeyDown={handleKeyDown}
               placeholder="Escribe tu pregunta..."
-              disabled={isTyping}
-              className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-white/30 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 disabled:opacity-50"
+              disabled={isLoading}
+              className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-white/30 focus:outline-none focus:border-pink-500 focus:ring-1 focus:ring-pink-500 disabled:opacity-50"
               autoComplete="off"
               autoCorrect="off"
               autoCapitalize="off"
-              spellCheck="false"
+              spellCheck={false}
             />
             <button
-              onClick={() => sendMessage()}
-              disabled={!chatInput.trim() || isTyping}
-              className="w-11 h-11 bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl flex items-center justify-center transition-all"
+              onClick={handleSendMessage}
+              disabled={!inputText.trim() || isLoading}
+              className="w-12 h-12 bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-400 hover:to-purple-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl flex items-center justify-center transition-all"
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
               </svg>
             </button>
           </div>
@@ -427,7 +449,6 @@ export default function Dashboard() {
   // ═══════════════════════════════════════════
   const Sidebar = () => (
     <>
-      {/* Mobile overlay */}
       {isMobile && sidebarOpen && (
         <div className="fixed inset-0 bg-black/50 z-40" onClick={() => setSidebarOpen(false)} />
       )}
@@ -435,7 +456,6 @@ export default function Dashboard() {
       <aside className={`fixed left-0 top-0 h-full bg-[#0a0a0f] border-r border-white/5 z-40 transition-all duration-300 ${
         sidebarOpen ? (isMobile ? 'w-64' : 'w-48') : 'w-0 overflow-hidden'
       }`}>
-        {/* Header */}
         <div className="h-12 flex items-center justify-between px-3 border-b border-white/5">
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-emerald-400 to-cyan-400 flex items-center justify-center">
@@ -452,7 +472,6 @@ export default function Dashboard() {
           </button>
         </div>
 
-        {/* Navigation */}
         <nav className="p-2 space-y-1">
           {[
             { id: 'dashboard', icon: '🏠', label: 'Dashboard' },
@@ -479,46 +498,41 @@ export default function Dashboard() {
           ))}
         </nav>
 
-        {/* Markets */}
         <div className="p-2 border-t border-white/5">
           <p className="text-[10px] uppercase text-white/30 mb-2 px-3">Mercados</p>
           <div className="space-y-1 max-h-[300px] overflow-y-auto">
-            {data?.assets?.map(asset => {
-              const ms = asset.lockedSignal ? getModelStyle(asset.lockedSignal.model) : null;
-              return (
-                <button
-                  key={asset.symbol}
-                  onClick={() => { 
-                    setSelectedAsset(asset.symbol); 
-                    setMessages([]); 
-                    if (isMobile) setSidebarOpen(false); 
-                  }}
-                  className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-                    selectedAsset === asset.symbol ? 'bg-white/10 text-white' : 'text-white/50 hover:bg-white/5'
-                  }`}
-                >
-                  <span>{asset.emoji}</span>
-                  <div className="flex-1 text-left">
-                    <div className="flex items-center gap-1">
-                      <span className="text-xs font-medium">{asset.shortName}</span>
-                      {asset.h1Loaded && <span className="text-[8px] px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-400">H1</span>}
-                    </div>
-                    <span className="text-[10px] text-white/40 font-mono">{asset.price?.toFixed(2) || '---'}</span>
+            {data?.assets?.map(asset => (
+              <button
+                key={asset.symbol}
+                onClick={() => { 
+                  setSelectedAsset(asset.symbol); 
+                  setMessages([]); 
+                  if (isMobile) setSidebarOpen(false); 
+                }}
+                className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
+                  selectedAsset === asset.symbol ? 'bg-white/10 text-white' : 'text-white/50 hover:bg-white/5'
+                }`}
+              >
+                <span>{asset.emoji}</span>
+                <div className="flex-1 text-left">
+                  <div className="flex items-center gap-1">
+                    <span className="text-xs font-medium">{asset.shortName}</span>
+                    {asset.h1Loaded && <span className="text-[8px] px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-400">H1</span>}
                   </div>
-                  {asset.lockedSignal && (
-                    <span className={`px-1.5 py-0.5 text-[9px] font-bold rounded ${
-                      asset.lockedSignal.action === 'LONG' ? 'bg-emerald-500 text-black' : 'bg-red-500 text-white'
-                    }`}>
-                      {asset.lockedSignal.action}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
+                  <span className="text-[10px] text-white/40 font-mono">{asset.price?.toFixed(2) || '---'}</span>
+                </div>
+                {asset.lockedSignal && (
+                  <span className={`px-1.5 py-0.5 text-[9px] font-bold rounded ${
+                    asset.lockedSignal.action === 'LONG' ? 'bg-emerald-500 text-black' : 'bg-red-500 text-white'
+                  }`}>
+                    {asset.lockedSignal.action}
+                  </span>
+                )}
+              </button>
+            ))}
           </div>
         </div>
 
-        {/* Status */}
         <div className="absolute bottom-0 left-0 right-0 p-3 border-t border-white/5">
           <div className="flex items-center gap-2">
             <div className={`w-2 h-2 rounded-full ${data?.connected ? 'bg-emerald-400' : 'bg-red-400'}`} />
@@ -546,7 +560,6 @@ export default function Dashboard() {
         <span className="text-[10px] px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded hidden sm:inline">6 Modelos SMC</span>
       </div>
       
-      {/* Timeframe Selector */}
       <div className="flex items-center gap-2">
         <div className="flex bg-white/5 rounded-lg p-0.5">
           {['M5', 'H1'].map(tf => (
@@ -582,11 +595,9 @@ export default function Dashboard() {
     if (!currentAsset) return null;
     
     const signal = lockedSignal;
-    const ms = signal ? getModelStyle(signal.model) : null;
     
     return (
       <div className="rounded-xl bg-[#0f0f14] overflow-hidden">
-        {/* Header */}
         <div className="p-3 border-b border-white/5">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -594,9 +605,7 @@ export default function Dashboard() {
                 {currentAsset.emoji}
               </div>
               <div>
-                <div className="flex items-center gap-2">
-                  <h3 className={`font-bold text-white ${isMobile ? 'text-sm' : 'text-base'}`}>{currentAsset.name}</h3>
-                </div>
+                <h3 className={`font-bold text-white ${isMobile ? 'text-sm' : 'text-base'}`}>{currentAsset.name}</h3>
                 <div className="flex items-center gap-2 flex-wrap mt-0.5">
                   <span className={`text-[10px] px-1.5 py-0.5 rounded ${
                     currentAsset.structureM5 === 'BULLISH' ? 'bg-emerald-500/20 text-emerald-400' :
@@ -635,12 +644,10 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Chart */}
         <div className="p-2">
           <Chart height={isMobile ? 220 : 280} />
         </div>
 
-        {/* Signal Info */}
         {signal && (
           <div className="p-3 border-t border-white/5" style={{ background: signal.action === 'LONG' ? 'rgba(16,185,129,0.05)' : 'rgba(239,68,68,0.05)' }}>
             <div className="flex items-center justify-between mb-3">
@@ -650,7 +657,14 @@ export default function Dashboard() {
                 }`}>
                   {signal.action}
                 </span>
-                <span className={`px-1.5 py-0.5 rounded text-[10px] ${ms?.bg} ${ms?.text}`}>{signal.model}</span>
+                <span className={`px-1.5 py-0.5 rounded text-[10px] ${getModelStyle(signal.model).bg} ${getModelStyle(signal.model).text}`}>
+                  {signal.model}
+                </span>
+                {signal.trailingActive && (
+                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-blue-500/20 text-blue-400">
+                    🔄 Trailing
+                  </span>
+                )}
               </div>
               <div className="text-right">
                 <div className="text-xl font-bold text-white">{signal.score}%</div>
@@ -668,14 +682,13 @@ export default function Dashboard() {
                 </div>
               ))}
               <div className="bg-red-500/20 rounded p-2 text-center">
-                <p className="text-[8px] text-red-400">SL</p>
+                <p className="text-[8px] text-red-400">SL {signal.trailingActive && '🔄'}</p>
                 <p className="text-[10px] font-mono text-red-400 font-bold">{signal.stop}</p>
               </div>
             </div>
           </div>
         )}
 
-        {/* Score when no signal */}
         {!signal && currentAsset.signal && (
           <div className="p-3 border-t border-white/5">
             <div className="flex items-center justify-between">
@@ -810,7 +823,7 @@ export default function Dashboard() {
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="flex-1 h-1.5 bg-white/10 rounded-full">
-                    <div className="h-full rounded-full bg-gradient-to-r from-violet-500 to-purple-500" style={{ width: `${wr}%` }} />
+                    <div className="h-full rounded-full bg-gradient-to-r from-pink-500 to-purple-500" style={{ width: `${wr}%` }} />
                   </div>
                   <span className="text-[10px] text-white/60">{wr}% ({ms.wins}W/{ms.losses}L)</span>
                 </div>
@@ -906,7 +919,7 @@ export default function Dashboard() {
         </div>
       </main>
       
-      <MarcusChat />
+      <ElisaChat />
     </div>
   );
 }
