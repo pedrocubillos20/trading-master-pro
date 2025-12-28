@@ -3,8 +3,8 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 const API_URL = import.meta.env.VITE_API_URL || 'https://trading-master-pro-production.up.railway.app';
 
 // =============================================
-// TRADING MASTER PRO v12.7
-// ELISA IA + CHAT ARREGLADO
+// TRADING MASTER PRO v12.8
+// CHAT ARREGLADO DEFINITIVO + ICONO IA
 // =============================================
 export default function Dashboard() {
   const [data, setData] = useState(null);
@@ -15,14 +15,6 @@ export default function Dashboard() {
   
   const [candles, setCandles] = useState([]);
   const [candlesH1, setCandlesH1] = useState([]);
-  
-  // Chat states - SIMPLIFICADO
-  const [chatOpen, setChatOpen] = useState(false);
-  const [messages, setMessages] = useState([]);
-  const [inputText, setInputText] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const messagesEndRef = useRef(null);
-  const inputRef = useRef(null);
   
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   
@@ -76,84 +68,6 @@ export default function Dashboard() {
       return () => clearInterval(interval);
     }
   }, [selectedAsset, fetchCandles]);
-
-  // ═══════════════════════════════════════════
-  // CHAT - COMPLETAMENTE REESCRITO
-  // ═══════════════════════════════════════════
-  const handleSendMessage = async () => {
-    const text = inputText.trim();
-    if (!text || isLoading) return;
-    
-    // Limpiar input inmediatamente
-    setInputText('');
-    
-    // Agregar mensaje del usuario
-    setMessages(prev => [...prev, { role: 'user', content: text }]);
-    setIsLoading(true);
-    
-    try {
-      const response = await fetch(`${API_URL}/api/ai/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          question: text, 
-          symbol: selectedAsset || 'stpRNG' 
-        })
-      });
-      
-      const result = await response.json();
-      setMessages(prev => [...prev, { role: 'assistant', content: result.answer }]);
-    } catch (error) {
-      setMessages(prev => [...prev, { role: 'assistant', content: '❌ Error de conexión. Intenta de nuevo.' }]);
-    }
-    
-    setIsLoading(false);
-    
-    // Focus en el input después de enviar
-    setTimeout(() => {
-      if (inputRef.current) {
-        inputRef.current.focus();
-      }
-    }, 100);
-  };
-
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSendMessage();
-    }
-  };
-
-  const handleInputChange = (e) => {
-    setInputText(e.target.value);
-  };
-
-  const openChatWithGreeting = () => {
-    setChatOpen(true);
-    if (messages.length === 0) {
-      // Enviar saludo inicial
-      setTimeout(async () => {
-        setIsLoading(true);
-        try {
-          const response = await fetch(`${API_URL}/api/ai/chat`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ question: 'hola', symbol: selectedAsset || 'stpRNG' })
-          });
-          const result = await response.json();
-          setMessages([{ role: 'assistant', content: result.answer }]);
-        } catch (e) {
-          setMessages([{ role: 'assistant', content: '¡Hola! 💜 Soy Elisa, tu asistente de trading. ¿En qué te puedo ayudar?' }]);
-        }
-        setIsLoading(false);
-      }, 300);
-    }
-    setTimeout(() => inputRef.current?.focus(), 400);
-  };
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
 
   // ═══════════════════════════════════════════
   // SIGNAL ACTIONS
@@ -312,45 +226,179 @@ export default function Dashboard() {
   };
 
   // ═══════════════════════════════════════════
-  // ELISA CHAT COMPONENT
+  // ELISA CHAT - COMPONENTE SEPARADO Y OPTIMIZADO
   // ═══════════════════════════════════════════
-  const ElisaChat = () => {
-    if (!chatOpen) {
+  const ElisaChat = React.memo(function ElisaChatComponent() {
+    const [isOpen, setIsOpen] = useState(false);
+    const [messages, setMessages] = useState([]);
+    const [text, setText] = useState('');
+    const [loading, setLoading] = useState(false);
+    const [initialized, setInitialized] = useState(false);
+    
+    const messagesContainerRef = useRef(null);
+    const inputRef = useRef(null);
+    const isTypingRef = useRef(false);
+
+    // Scroll al final solo cuando hay nuevos mensajes (no cuando escribe)
+    const scrollToBottom = useCallback(() => {
+      if (messagesContainerRef.current && !isTypingRef.current) {
+        const container = messagesContainerRef.current;
+        container.scrollTop = container.scrollHeight;
+      }
+    }, []);
+
+    // Solo scroll cuando cambian los mensajes
+    useEffect(() => {
+      if (messages.length > 0 && !isTypingRef.current) {
+        scrollToBottom();
+      }
+    }, [messages.length, scrollToBottom]);
+
+    // Enviar mensaje
+    const sendMessage = useCallback(async (customText) => {
+      const messageText = customText || text.trim();
+      if (!messageText || loading) return;
+
+      isTypingRef.current = false;
+      setText('');
+      
+      const userMsg = { role: 'user', content: messageText };
+      setMessages(prev => [...prev, userMsg]);
+      setLoading(true);
+
+      try {
+        const response = await fetch(`${API_URL}/api/ai/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            question: messageText, 
+            symbol: selectedAsset || 'stpRNG' 
+          })
+        });
+        
+        const result = await response.json();
+        setMessages(prev => [...prev, { role: 'assistant', content: result.answer }]);
+      } catch (error) {
+        setMessages(prev => [...prev, { role: 'assistant', content: '❌ Error de conexión. Intenta de nuevo.' }]);
+      }
+      
+      setLoading(false);
+      
+      // Scroll después de recibir respuesta
+      setTimeout(scrollToBottom, 100);
+    }, [text, loading, selectedAsset, scrollToBottom]);
+
+    // Abrir chat con saludo
+    const openChat = useCallback(async () => {
+      setIsOpen(true);
+      
+      if (!initialized) {
+        setLoading(true);
+        try {
+          const response = await fetch(`${API_URL}/api/ai/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question: 'hola', symbol: selectedAsset || 'stpRNG' })
+          });
+          const result = await response.json();
+          setMessages([{ role: 'assistant', content: result.answer }]);
+        } catch (e) {
+          setMessages([{ role: 'assistant', content: '¡Hola! 💜 Soy Elisa, tu asistente de trading. ¿En qué te puedo ayudar?' }]);
+        }
+        setLoading(false);
+        setInitialized(true);
+      }
+    }, [initialized, selectedAsset]);
+
+    // Handler de input - NO causa re-render del padre
+    const handleInputChange = useCallback((e) => {
+      isTypingRef.current = true;
+      setText(e.target.value);
+    }, []);
+
+    // Handler de tecla
+    const handleKeyPress = useCallback((e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        sendMessage();
+      }
+    }, [sendMessage]);
+
+    // Click en botón enviar
+    const handleSendClick = useCallback((e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      sendMessage();
+    }, [sendMessage]);
+
+    // Quick action click
+    const handleQuickAction = useCallback((action) => {
+      sendMessage(action);
+    }, [sendMessage]);
+
+    // Cerrar chat
+    const closeChat = useCallback(() => {
+      setIsOpen(false);
+    }, []);
+
+    // Icono de IA para Elisa
+    const AIIcon = () => (
+      <svg viewBox="0 0 24 24" fill="none" className="w-6 h-6">
+        <circle cx="12" cy="12" r="10" fill="url(#gradient1)" />
+        <path d="M8 14s1.5 2 4 2 4-2 4-2" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
+        <circle cx="9" cy="10" r="1.5" fill="white" />
+        <circle cx="15" cy="10" r="1.5" fill="white" />
+        <path d="M12 2v2M22 12h-2M12 22v-2M4 12H2" stroke="url(#gradient1)" strokeWidth="1.5" strokeLinecap="round" />
+        <defs>
+          <linearGradient id="gradient1" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#ec4899" />
+            <stop offset="100%" stopColor="#8b5cf6" />
+          </linearGradient>
+        </defs>
+      </svg>
+    );
+
+    // Botón flotante
+    if (!isOpen) {
       return (
         <button 
-          onClick={openChatWithGreeting}
-          className={`fixed z-50 flex items-center gap-2 bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-400 hover:to-purple-500 text-white rounded-2xl shadow-xl transition-all hover:scale-105 ${
-            isMobile ? 'bottom-4 right-4 px-3 py-2' : 'bottom-6 right-6 px-4 py-3'
+          onClick={openChat}
+          className={`fixed z-50 flex items-center gap-2 bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-400 hover:to-purple-500 text-white rounded-2xl shadow-xl transition-all hover:scale-105 active:scale-95 ${
+            isMobile ? 'bottom-4 right-4 px-3 py-2.5' : 'bottom-6 right-6 px-4 py-3'
           }`}
         >
-          <span className={isMobile ? 'text-xl' : 'text-2xl'}>👩‍💼</span>
+          <AIIcon />
           <div className="text-left">
             <p className={`font-semibold ${isMobile ? 'text-xs' : 'text-sm'}`}>Elisa</p>
-            {!isMobile && <p className="text-xs text-white/70">Tu asistente</p>}
+            {!isMobile && <p className="text-xs text-white/70">IA Assistant</p>}
           </div>
           <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
         </button>
       );
     }
 
+    // Chat abierto
     return (
-      <div className={`fixed z-50 bg-[#0d0d12] rounded-2xl shadow-2xl border border-white/10 flex flex-col ${
-        isMobile 
-          ? 'inset-3' 
-          : 'bottom-6 right-6 w-[380px] h-[500px]'
-      }`}>
-        
+      <div 
+        className={`fixed z-50 bg-[#0d0d12] rounded-2xl shadow-2xl border border-white/10 flex flex-col ${
+          isMobile ? 'inset-2' : 'bottom-6 right-6 w-[380px] h-[520px]'
+        }`}
+        style={{ maxHeight: isMobile ? 'calc(100vh - 16px)' : '520px' }}
+      >
         {/* Header */}
         <div className="flex items-center justify-between p-3 bg-gradient-to-r from-pink-500 to-purple-600 rounded-t-2xl flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <span className="text-2xl">👩‍💼</span>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
+              <AIIcon />
+            </div>
             <div>
-              <p className="font-semibold text-white text-sm">Elisa</p>
-              <p className="text-xs text-white/70">{currentAsset?.name || 'Tu asistente de trading'}</p>
+              <p className="font-semibold text-white">Elisa</p>
+              <p className="text-xs text-white/70">IA Trading Assistant</p>
             </div>
           </div>
           <button 
-            onClick={() => setChatOpen(false)} 
+            onClick={closeChat}
             className="w-8 h-8 rounded-lg bg-white/20 hover:bg-white/30 flex items-center justify-center transition-colors"
           >
             <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -359,18 +407,27 @@ export default function Dashboard() {
           </button>
         </div>
 
-        {/* Messages */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-3">
+        {/* Messages - con ref para controlar scroll */}
+        <div 
+          ref={messagesContainerRef}
+          className="flex-1 overflow-y-auto p-3 space-y-3"
+          style={{ overscrollBehavior: 'contain' }}
+        >
           {messages.map((msg, i) => (
             <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
               {msg.role === 'assistant' && (
-                <div className="w-7 h-7 rounded-full bg-pink-500/30 flex items-center justify-center mr-2 flex-shrink-0">
-                  <span className="text-sm">👩‍💼</span>
+                <div className="w-8 h-8 rounded-full bg-gradient-to-r from-pink-500 to-purple-600 flex items-center justify-center mr-2 flex-shrink-0">
+                  <svg viewBox="0 0 24 24" fill="none" className="w-5 h-5">
+                    <circle cx="12" cy="12" r="8" fill="rgba(255,255,255,0.3)" />
+                    <path d="M8 13s1.5 1.5 4 1.5 4-1.5 4-1.5" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
+                    <circle cx="9" cy="10" r="1" fill="white" />
+                    <circle cx="15" cy="10" r="1" fill="white" />
+                  </svg>
                 </div>
               )}
-              <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 ${
+              <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 ${
                 msg.role === 'user' 
-                  ? 'bg-purple-600 text-white' 
+                  ? 'bg-gradient-to-r from-pink-500 to-purple-600 text-white' 
                   : 'bg-white/5 text-white/90'
               }`}>
                 <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>
@@ -378,71 +435,79 @@ export default function Dashboard() {
             </div>
           ))}
           
-          {isLoading && (
+          {loading && (
             <div className="flex justify-start">
-              <div className="w-7 h-7 rounded-full bg-pink-500/30 flex items-center justify-center mr-2">
-                <span className="text-sm">👩‍💼</span>
+              <div className="w-8 h-8 rounded-full bg-gradient-to-r from-pink-500 to-purple-600 flex items-center justify-center mr-2">
+                <svg viewBox="0 0 24 24" fill="none" className="w-5 h-5 animate-pulse">
+                  <circle cx="12" cy="12" r="8" fill="rgba(255,255,255,0.3)" />
+                </svg>
               </div>
               <div className="bg-white/5 rounded-2xl px-4 py-3 flex gap-1.5">
                 <div className="w-2 h-2 bg-pink-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                <div className="w-2 h-2 bg-pink-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
                 <div className="w-2 h-2 bg-pink-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
               </div>
             </div>
           )}
-          
-          <div ref={messagesEndRef} />
         </div>
 
         {/* Quick Actions */}
         <div className="px-3 py-2 border-t border-white/5 flex gap-2 overflow-x-auto flex-shrink-0">
-          {['📊 Análisis', '🎯 Plan', '📦 Zonas', '💵 Precio'].map((btn) => (
+          {[
+            { label: '📊 Análisis', cmd: 'análisis' },
+            { label: '🎯 Plan', cmd: 'plan' },
+            { label: '📦 Zonas', cmd: 'zonas' },
+            { label: '📈 Stats', cmd: 'stats' }
+          ].map((btn) => (
             <button
-              key={btn}
-              onClick={() => {
-                const cmd = btn.split(' ')[1];
-                setInputText(cmd);
-                setTimeout(() => handleSendMessage(), 50);
-              }}
-              disabled={isLoading}
+              key={btn.cmd}
+              onClick={() => handleQuickAction(btn.cmd)}
+              disabled={loading}
               className="flex-shrink-0 px-3 py-1.5 bg-white/5 hover:bg-pink-500/20 rounded-full text-xs text-white/60 hover:text-white transition-all disabled:opacity-50"
             >
-              {btn}
+              {btn.label}
             </button>
           ))}
         </div>
 
-        {/* Input */}
+        {/* Input - Completamente aislado */}
         <div className="p-3 border-t border-white/5 flex-shrink-0">
-          <div className="flex gap-2">
+          <form 
+            onSubmit={(e) => { e.preventDefault(); sendMessage(); }}
+            className="flex gap-2"
+          >
             <input
               ref={inputRef}
               type="text"
-              value={inputText}
+              value={text}
               onChange={handleInputChange}
-              onKeyDown={handleKeyDown}
-              placeholder="Escribe tu pregunta..."
-              disabled={isLoading}
-              className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-white/30 focus:outline-none focus:border-pink-500 focus:ring-1 focus:ring-pink-500 disabled:opacity-50"
+              onKeyDown={handleKeyPress}
+              onFocus={() => { isTypingRef.current = true; }}
+              onBlur={() => { isTypingRef.current = false; }}
+              placeholder="Pregunta lo que quieras..."
+              disabled={loading}
+              className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-white/30 focus:outline-none focus:border-pink-500 disabled:opacity-50"
+              style={{ fontSize: '16px' }} // Previene zoom en iOS
               autoComplete="off"
               autoCorrect="off"
               autoCapitalize="off"
               spellCheck={false}
             />
             <button
-              onClick={handleSendMessage}
-              disabled={!inputText.trim() || isLoading}
-              className="w-12 h-12 bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-400 hover:to-purple-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl flex items-center justify-center transition-all"
+              type="submit"
+              disabled={!text.trim() || loading}
+              onClick={handleSendClick}
+              className="w-12 h-12 bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-400 hover:to-purple-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl flex items-center justify-center transition-all flex-shrink-0"
             >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M12 5l7 7-7 7" />
               </svg>
             </button>
-          </div>
+          </form>
         </div>
       </div>
     );
-  };
+  });
 
   // ═══════════════════════════════════════════
   // SIDEBAR
@@ -506,7 +571,6 @@ export default function Dashboard() {
                 key={asset.symbol}
                 onClick={() => { 
                   setSelectedAsset(asset.symbol); 
-                  setMessages([]); 
                   if (isMobile) setSidebarOpen(false); 
                 }}
                 className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
