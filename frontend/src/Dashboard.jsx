@@ -15,7 +15,6 @@ const ElisaChat = ({ selectedAsset, isMobile }) => {
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
 
-  // Scroll solo después de nuevo mensaje
   useEffect(() => {
     if (messages.length > 0) {
       setTimeout(() => {
@@ -24,7 +23,6 @@ const ElisaChat = ({ selectedAsset, isMobile }) => {
     }
   }, [messages.length]);
 
-  // Enviar mensaje
   const sendMessage = async (customText) => {
     const messageText = customText || text.trim();
     if (!messageText || loading) return;
@@ -52,7 +50,6 @@ const ElisaChat = ({ selectedAsset, isMobile }) => {
     setLoading(false);
   };
 
-  // Abrir chat
   const openChat = async () => {
     setIsOpen(true);
     
@@ -76,7 +73,6 @@ const ElisaChat = ({ selectedAsset, isMobile }) => {
     setTimeout(() => inputRef.current?.focus(), 300);
   };
 
-  // Icono IA
   const AIIcon = ({ size = 24 }) => (
     <svg viewBox="0 0 24 24" fill="none" width={size} height={size}>
       <circle cx="12" cy="12" r="10" fill="url(#elisa-grad)" />
@@ -92,7 +88,6 @@ const ElisaChat = ({ selectedAsset, isMobile }) => {
     </svg>
   );
 
-  // Botón flotante
   if (!isOpen) {
     return (
       <button 
@@ -111,7 +106,6 @@ const ElisaChat = ({ selectedAsset, isMobile }) => {
     );
   }
 
-  // Chat abierto
   return (
     <div 
       className={`fixed z-[100] bg-[#0d0d12] rounded-2xl shadow-2xl border border-white/10 flex flex-col ${
@@ -119,7 +113,6 @@ const ElisaChat = ({ selectedAsset, isMobile }) => {
       }`}
       style={{ height: isMobile ? 'calc(100% - 16px)' : '500px' }}
     >
-      {/* Header */}
       <div className="flex items-center justify-between p-3 bg-gradient-to-r from-pink-500 to-purple-600 rounded-t-2xl">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
@@ -140,7 +133,6 @@ const ElisaChat = ({ selectedAsset, isMobile }) => {
         </button>
       </div>
 
-      {/* Messages */}
       <div className="flex-1 overflow-y-auto p-3 space-y-3">
         {messages.map((msg, i) => (
           <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -175,7 +167,6 @@ const ElisaChat = ({ selectedAsset, isMobile }) => {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Quick Actions */}
       <div className="px-3 py-2 border-t border-white/5 flex gap-2 overflow-x-auto">
         {['📊 Análisis', '🎯 Plan', '📦 Zonas', '📈 Stats'].map((btn) => (
           <button
@@ -189,7 +180,6 @@ const ElisaChat = ({ selectedAsset, isMobile }) => {
         ))}
       </div>
 
-      {/* Input */}
       <div className="p-3 border-t border-white/5">
         <div className="flex gap-2">
           <input
@@ -228,9 +218,9 @@ const ElisaChat = ({ selectedAsset, isMobile }) => {
 };
 
 // =============================================
-// DASHBOARD PRINCIPAL v12.9
+// DASHBOARD PRINCIPAL v13.0
 // =============================================
-export default function Dashboard() {
+export default function Dashboard({ user, onLogout }) {
   const [data, setData] = useState(null);
   const [selectedAsset, setSelectedAsset] = useState(null);
   const [activeSection, setActiveSection] = useState('dashboard');
@@ -241,8 +231,8 @@ export default function Dashboard() {
   const [candlesH1, setCandlesH1] = useState([]);
   
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const [showUserMenu, setShowUserMenu] = useState(false);
   
-  // Ref para evitar actualizar estado si está desmontado
   const mountedRef = useRef(true);
   
   useEffect(() => {
@@ -260,7 +250,7 @@ export default function Dashboard() {
   }, []);
 
   // ═══════════════════════════════════════════
-  // DATA FETCHING - CON PROTECCIÓN
+  // DATA FETCHING
   // ═══════════════════════════════════════════
   useEffect(() => {
     let isCancelled = false;
@@ -568,7 +558,7 @@ export default function Dashboard() {
   );
 
   // ═══════════════════════════════════════════
-  // HEADER
+  // HEADER CON USUARIO
   // ═══════════════════════════════════════════
   const Header = () => (
     <header className="h-12 bg-[#0a0a0f] border-b border-white/5 flex items-center justify-between px-3 sticky top-0 z-30">
@@ -584,7 +574,8 @@ export default function Dashboard() {
         <span className="text-[10px] px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded hidden sm:inline">6 Modelos SMC</span>
       </div>
       
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-3">
+        {/* Timeframe selector */}
         <div className="flex bg-white/5 rounded-lg p-0.5">
           {['M5', 'H1'].map(tf => (
             <button
@@ -599,6 +590,46 @@ export default function Dashboard() {
               {tf}
             </button>
           ))}
+        </div>
+
+        {/* User menu */}
+        <div className="relative">
+          <button 
+            onClick={() => setShowUserMenu(!showUserMenu)}
+            className="flex items-center gap-2 px-2 py-1.5 hover:bg-white/5 rounded-lg transition-colors"
+          >
+            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-emerald-400 to-cyan-400 flex items-center justify-center">
+              <span className="text-black text-xs font-bold">
+                {user?.email?.charAt(0).toUpperCase() || 'U'}
+              </span>
+            </div>
+            <svg className={`w-4 h-4 text-white/50 transition-transform ${showUserMenu ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+
+          {showUserMenu && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setShowUserMenu(false)} />
+              <div className="absolute right-0 top-full mt-2 w-56 bg-[#0d0d12] border border-white/10 rounded-xl shadow-xl z-50 overflow-hidden">
+                <div className="p-3 border-b border-white/5">
+                  <p className="text-xs text-white/50">Conectado como</p>
+                  <p className="text-sm text-white font-medium truncate">{user?.email}</p>
+                </div>
+                <div className="p-1">
+                  <button
+                    onClick={onLogout}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-red-400 hover:bg-red-500/10 rounded-lg transition-colors text-sm"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                    </svg>
+                    Cerrar Sesión
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </header>
@@ -924,7 +955,6 @@ export default function Dashboard() {
         </div>
       </main>
       
-      {/* CHAT COMPLETAMENTE SEPARADO - NO AFECTADO POR RE-RENDERS */}
       <ElisaChat selectedAsset={selectedAsset} isMobile={isMobile} />
     </div>
   );
