@@ -3,8 +3,232 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 const API_URL = import.meta.env.VITE_API_URL || 'https://trading-master-pro-production.up.railway.app';
 
 // =============================================
-// TRADING MASTER PRO v12.8
-// CHAT ARREGLADO DEFINITIVO + ICONO IA
+// ELISA CHAT - COMPONENTE 100% INDEPENDIENTE
+// =============================================
+const ElisaChat = ({ selectedAsset, isMobile }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [messages, setMessages] = useState([]);
+  const [text, setText] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [initialized, setInitialized] = useState(false);
+  
+  const messagesEndRef = useRef(null);
+  const inputRef = useRef(null);
+
+  // Scroll solo después de nuevo mensaje
+  useEffect(() => {
+    if (messages.length > 0) {
+      setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    }
+  }, [messages.length]);
+
+  // Enviar mensaje
+  const sendMessage = async (customText) => {
+    const messageText = customText || text.trim();
+    if (!messageText || loading) return;
+
+    setText('');
+    setMessages(prev => [...prev, { role: 'user', content: messageText }]);
+    setLoading(true);
+
+    try {
+      const response = await fetch(`${API_URL}/api/ai/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          question: messageText, 
+          symbol: selectedAsset || 'stpRNG' 
+        })
+      });
+      
+      const result = await response.json();
+      setMessages(prev => [...prev, { role: 'assistant', content: result.answer }]);
+    } catch (error) {
+      setMessages(prev => [...prev, { role: 'assistant', content: '❌ Error de conexión.' }]);
+    }
+    
+    setLoading(false);
+  };
+
+  // Abrir chat
+  const openChat = async () => {
+    setIsOpen(true);
+    
+    if (!initialized) {
+      setLoading(true);
+      try {
+        const response = await fetch(`${API_URL}/api/ai/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question: 'hola', symbol: selectedAsset || 'stpRNG' })
+        });
+        const result = await response.json();
+        setMessages([{ role: 'assistant', content: result.answer }]);
+      } catch (e) {
+        setMessages([{ role: 'assistant', content: '¡Hola! 💜 Soy Elisa, tu asistente de trading.' }]);
+      }
+      setLoading(false);
+      setInitialized(true);
+    }
+    
+    setTimeout(() => inputRef.current?.focus(), 300);
+  };
+
+  // Icono IA
+  const AIIcon = ({ size = 24 }) => (
+    <svg viewBox="0 0 24 24" fill="none" width={size} height={size}>
+      <circle cx="12" cy="12" r="10" fill="url(#elisa-grad)" />
+      <path d="M8 14s1.5 2 4 2 4-2 4-2" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
+      <circle cx="9" cy="10" r="1.5" fill="white" />
+      <circle cx="15" cy="10" r="1.5" fill="white" />
+      <defs>
+        <linearGradient id="elisa-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#ec4899" />
+          <stop offset="100%" stopColor="#8b5cf6" />
+        </linearGradient>
+      </defs>
+    </svg>
+  );
+
+  // Botón flotante
+  if (!isOpen) {
+    return (
+      <button 
+        onClick={openChat}
+        className={`fixed z-[100] flex items-center gap-2 bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-400 hover:to-purple-500 text-white rounded-2xl shadow-xl transition-transform hover:scale-105 active:scale-95 ${
+          isMobile ? 'bottom-4 right-4 px-3 py-2.5' : 'bottom-6 right-6 px-4 py-3'
+        }`}
+      >
+        <AIIcon size={24} />
+        <div className="text-left">
+          <p className="font-semibold text-sm">Elisa</p>
+          {!isMobile && <p className="text-xs text-white/70">IA Assistant</p>}
+        </div>
+        <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+      </button>
+    );
+  }
+
+  // Chat abierto
+  return (
+    <div 
+      className={`fixed z-[100] bg-[#0d0d12] rounded-2xl shadow-2xl border border-white/10 flex flex-col ${
+        isMobile ? 'inset-2' : 'bottom-6 right-6 w-[380px]'
+      }`}
+      style={{ height: isMobile ? 'calc(100% - 16px)' : '500px' }}
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between p-3 bg-gradient-to-r from-pink-500 to-purple-600 rounded-t-2xl">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
+            <AIIcon size={28} />
+          </div>
+          <div>
+            <p className="font-semibold text-white">Elisa</p>
+            <p className="text-xs text-white/70">IA Trading Assistant</p>
+          </div>
+        </div>
+        <button 
+          onClick={() => setIsOpen(false)}
+          className="w-8 h-8 rounded-lg bg-white/20 hover:bg-white/30 flex items-center justify-center"
+        >
+          <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto p-3 space-y-3">
+        {messages.map((msg, i) => (
+          <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+            {msg.role === 'assistant' && (
+              <div className="w-7 h-7 rounded-full bg-gradient-to-r from-pink-500 to-purple-600 flex items-center justify-center mr-2 flex-shrink-0">
+                <AIIcon size={18} />
+              </div>
+            )}
+            <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 ${
+              msg.role === 'user' 
+                ? 'bg-gradient-to-r from-pink-500 to-purple-600 text-white' 
+                : 'bg-white/5 text-white/90'
+            }`}>
+              <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+            </div>
+          </div>
+        ))}
+        
+        {loading && (
+          <div className="flex justify-start">
+            <div className="w-7 h-7 rounded-full bg-gradient-to-r from-pink-500 to-purple-600 flex items-center justify-center mr-2">
+              <AIIcon size={18} />
+            </div>
+            <div className="bg-white/5 rounded-2xl px-4 py-3 flex gap-1.5">
+              <div className="w-2 h-2 bg-pink-400 rounded-full animate-bounce" />
+              <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+              <div className="w-2 h-2 bg-pink-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+            </div>
+          </div>
+        )}
+        
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Quick Actions */}
+      <div className="px-3 py-2 border-t border-white/5 flex gap-2 overflow-x-auto">
+        {['📊 Análisis', '🎯 Plan', '📦 Zonas', '📈 Stats'].map((btn) => (
+          <button
+            key={btn}
+            onClick={() => sendMessage(btn.split(' ')[1])}
+            disabled={loading}
+            className="flex-shrink-0 px-3 py-1.5 bg-white/5 hover:bg-pink-500/20 rounded-full text-xs text-white/60 hover:text-white disabled:opacity-50"
+          >
+            {btn}
+          </button>
+        ))}
+      </div>
+
+      {/* Input */}
+      <div className="p-3 border-t border-white/5">
+        <div className="flex gap-2">
+          <input
+            ref={inputRef}
+            type="text"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+              }
+            }}
+            placeholder="Pregunta lo que quieras..."
+            disabled={loading}
+            className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-white/30 focus:outline-none focus:border-pink-500 disabled:opacity-50"
+            style={{ fontSize: '16px' }}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
+          />
+          <button
+            onClick={() => sendMessage()}
+            disabled={!text.trim() || loading}
+            className="w-12 h-12 bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-400 hover:to-purple-500 disabled:opacity-40 text-white rounded-xl flex items-center justify-center flex-shrink-0"
+          >
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M12 5l7 7-7 7" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// =============================================
+// DASHBOARD PRINCIPAL v12.9
 // =============================================
 export default function Dashboard() {
   const [data, setData] = useState(null);
@@ -18,56 +242,81 @@ export default function Dashboard() {
   
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   
+  // Ref para evitar actualizar estado si está desmontado
+  const mountedRef = useRef(true);
+  
+  useEffect(() => {
+    return () => { mountedRef.current = false; };
+  }, []);
+  
   useEffect(() => {
     const handleResize = () => {
-      setIsMobile(window.innerWidth < 768);
-      if (window.innerWidth < 768) setSidebarOpen(false);
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      if (mobile) setSidebarOpen(false);
     };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
   // ═══════════════════════════════════════════
-  // DATA FETCHING
+  // DATA FETCHING - CON PROTECCIÓN
   // ═══════════════════════════════════════════
-  const fetchData = useCallback(async () => {
-    try {
-      const res = await fetch(`${API_URL}/api/dashboard`);
-      const json = await res.json();
-      setData(json);
-      if (!selectedAsset && json.assets?.length) {
-        setSelectedAsset(json.assets[0].symbol);
-      }
-    } catch (e) {
-      console.error('Fetch error:', e);
-    }
-  }, [selectedAsset]);
-
-  const fetchCandles = useCallback(async () => {
-    if (!selectedAsset) return;
-    try {
-      const res = await fetch(`${API_URL}/api/analyze/${selectedAsset}`);
-      const json = await res.json();
-      if (json.candles?.length) setCandles(json.candles);
-      if (json.candlesH1?.length) setCandlesH1(json.candlesH1);
-    } catch (e) {
-      console.error('Candles error:', e);
-    }
-  }, [selectedAsset]);
-
   useEffect(() => {
+    let isCancelled = false;
+    
+    const fetchData = async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/dashboard`);
+        const json = await res.json();
+        
+        if (!isCancelled && mountedRef.current) {
+          setData(json);
+          if (!selectedAsset && json.assets?.length) {
+            setSelectedAsset(json.assets[0].symbol);
+          }
+        }
+      } catch (e) {
+        console.error('Fetch error:', e);
+      }
+    };
+    
     fetchData();
     const interval = setInterval(fetchData, 3000);
-    return () => clearInterval(interval);
-  }, [fetchData]);
+    
+    return () => {
+      isCancelled = true;
+      clearInterval(interval);
+    };
+  }, [selectedAsset]);
 
   useEffect(() => {
-    if (selectedAsset) {
-      fetchCandles();
-      const interval = setInterval(fetchCandles, 4000);
-      return () => clearInterval(interval);
-    }
-  }, [selectedAsset, fetchCandles]);
+    if (!selectedAsset) return;
+    
+    let isCancelled = false;
+    
+    const fetchCandles = async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/analyze/${selectedAsset}`);
+        const json = await res.json();
+        
+        if (!isCancelled && mountedRef.current) {
+          if (json.candles?.length) setCandles(json.candles);
+          if (json.candlesH1?.length) setCandlesH1(json.candlesH1);
+        }
+      } catch (e) {
+        console.error('Candles error:', e);
+      }
+    };
+    
+    fetchCandles();
+    const interval = setInterval(fetchCandles, 4000);
+    
+    return () => {
+      isCancelled = true;
+      clearInterval(interval);
+    };
+  }, [selectedAsset]);
 
   // ═══════════════════════════════════════════
   // SIGNAL ACTIONS
@@ -79,7 +328,6 @@ export default function Dashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status })
       });
-      fetchData();
     } catch (e) {
       console.error(e);
     }
@@ -114,28 +362,25 @@ export default function Dashboard() {
     'ORDER_FLOW': { bg: 'bg-pink-500/20', text: 'text-pink-400', label: 'OF' }
   };
   
-  const getModelStyle = (model) => modelColors[model] || { bg: 'bg-white/10', text: 'text-white/60', label: model?.slice(0, 4) || '?' };
+  const getModelStyle = (model) => modelColors[model] || { bg: 'bg-white/10', text: 'text-white/60', label: '?' };
 
   // ═══════════════════════════════════════════
   // CHART COMPONENT
   // ═══════════════════════════════════════════
   const Chart = ({ height = 300 }) => {
     const containerRef = useRef(null);
-    const [dimensions, setDimensions] = useState({ width: 600, height });
+    const [width, setWidth] = useState(600);
     
     useEffect(() => {
-      const updateDimensions = () => {
+      const updateWidth = () => {
         if (containerRef.current) {
-          setDimensions({
-            width: containerRef.current.offsetWidth || 600,
-            height
-          });
+          setWidth(containerRef.current.offsetWidth || 600);
         }
       };
-      updateDimensions();
-      window.addEventListener('resize', updateDimensions);
-      return () => window.removeEventListener('resize', updateDimensions);
-    }, [height]);
+      updateWidth();
+      window.addEventListener('resize', updateWidth);
+      return () => window.removeEventListener('resize', updateWidth);
+    }, []);
 
     const displayCandles = timeframe === 'H1' ? candlesH1 : candles;
     
@@ -150,7 +395,6 @@ export default function Dashboard() {
       );
     }
 
-    const { width } = dimensions;
     const padding = { top: 10, right: isMobile ? 45 : 60, bottom: 20, left: 5 };
     const chartW = width - padding.left - padding.right;
     const chartH = height - padding.top - padding.bottom;
@@ -224,290 +468,6 @@ export default function Dashboard() {
       </div>
     );
   };
-
-  // ═══════════════════════════════════════════
-  // ELISA CHAT - COMPONENTE SEPARADO Y OPTIMIZADO
-  // ═══════════════════════════════════════════
-  const ElisaChat = React.memo(function ElisaChatComponent() {
-    const [isOpen, setIsOpen] = useState(false);
-    const [messages, setMessages] = useState([]);
-    const [text, setText] = useState('');
-    const [loading, setLoading] = useState(false);
-    const [initialized, setInitialized] = useState(false);
-    
-    const messagesContainerRef = useRef(null);
-    const inputRef = useRef(null);
-    const isTypingRef = useRef(false);
-
-    // Scroll al final solo cuando hay nuevos mensajes (no cuando escribe)
-    const scrollToBottom = useCallback(() => {
-      if (messagesContainerRef.current && !isTypingRef.current) {
-        const container = messagesContainerRef.current;
-        container.scrollTop = container.scrollHeight;
-      }
-    }, []);
-
-    // Solo scroll cuando cambian los mensajes
-    useEffect(() => {
-      if (messages.length > 0 && !isTypingRef.current) {
-        scrollToBottom();
-      }
-    }, [messages.length, scrollToBottom]);
-
-    // Enviar mensaje
-    const sendMessage = useCallback(async (customText) => {
-      const messageText = customText || text.trim();
-      if (!messageText || loading) return;
-
-      isTypingRef.current = false;
-      setText('');
-      
-      const userMsg = { role: 'user', content: messageText };
-      setMessages(prev => [...prev, userMsg]);
-      setLoading(true);
-
-      try {
-        const response = await fetch(`${API_URL}/api/ai/chat`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            question: messageText, 
-            symbol: selectedAsset || 'stpRNG' 
-          })
-        });
-        
-        const result = await response.json();
-        setMessages(prev => [...prev, { role: 'assistant', content: result.answer }]);
-      } catch (error) {
-        setMessages(prev => [...prev, { role: 'assistant', content: '❌ Error de conexión. Intenta de nuevo.' }]);
-      }
-      
-      setLoading(false);
-      
-      // Scroll después de recibir respuesta
-      setTimeout(scrollToBottom, 100);
-    }, [text, loading, selectedAsset, scrollToBottom]);
-
-    // Abrir chat con saludo
-    const openChat = useCallback(async () => {
-      setIsOpen(true);
-      
-      if (!initialized) {
-        setLoading(true);
-        try {
-          const response = await fetch(`${API_URL}/api/ai/chat`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ question: 'hola', symbol: selectedAsset || 'stpRNG' })
-          });
-          const result = await response.json();
-          setMessages([{ role: 'assistant', content: result.answer }]);
-        } catch (e) {
-          setMessages([{ role: 'assistant', content: '¡Hola! 💜 Soy Elisa, tu asistente de trading. ¿En qué te puedo ayudar?' }]);
-        }
-        setLoading(false);
-        setInitialized(true);
-      }
-    }, [initialized, selectedAsset]);
-
-    // Handler de input - NO causa re-render del padre
-    const handleInputChange = useCallback((e) => {
-      isTypingRef.current = true;
-      setText(e.target.value);
-    }, []);
-
-    // Handler de tecla
-    const handleKeyPress = useCallback((e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        e.stopPropagation();
-        sendMessage();
-      }
-    }, [sendMessage]);
-
-    // Click en botón enviar
-    const handleSendClick = useCallback((e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      sendMessage();
-    }, [sendMessage]);
-
-    // Quick action click
-    const handleQuickAction = useCallback((action) => {
-      sendMessage(action);
-    }, [sendMessage]);
-
-    // Cerrar chat
-    const closeChat = useCallback(() => {
-      setIsOpen(false);
-    }, []);
-
-    // Icono de IA para Elisa
-    const AIIcon = () => (
-      <svg viewBox="0 0 24 24" fill="none" className="w-6 h-6">
-        <circle cx="12" cy="12" r="10" fill="url(#gradient1)" />
-        <path d="M8 14s1.5 2 4 2 4-2 4-2" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
-        <circle cx="9" cy="10" r="1.5" fill="white" />
-        <circle cx="15" cy="10" r="1.5" fill="white" />
-        <path d="M12 2v2M22 12h-2M12 22v-2M4 12H2" stroke="url(#gradient1)" strokeWidth="1.5" strokeLinecap="round" />
-        <defs>
-          <linearGradient id="gradient1" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#ec4899" />
-            <stop offset="100%" stopColor="#8b5cf6" />
-          </linearGradient>
-        </defs>
-      </svg>
-    );
-
-    // Botón flotante
-    if (!isOpen) {
-      return (
-        <button 
-          onClick={openChat}
-          className={`fixed z-50 flex items-center gap-2 bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-400 hover:to-purple-500 text-white rounded-2xl shadow-xl transition-all hover:scale-105 active:scale-95 ${
-            isMobile ? 'bottom-4 right-4 px-3 py-2.5' : 'bottom-6 right-6 px-4 py-3'
-          }`}
-        >
-          <AIIcon />
-          <div className="text-left">
-            <p className={`font-semibold ${isMobile ? 'text-xs' : 'text-sm'}`}>Elisa</p>
-            {!isMobile && <p className="text-xs text-white/70">IA Assistant</p>}
-          </div>
-          <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-        </button>
-      );
-    }
-
-    // Chat abierto
-    return (
-      <div 
-        className={`fixed z-50 bg-[#0d0d12] rounded-2xl shadow-2xl border border-white/10 flex flex-col ${
-          isMobile ? 'inset-2' : 'bottom-6 right-6 w-[380px] h-[520px]'
-        }`}
-        style={{ maxHeight: isMobile ? 'calc(100vh - 16px)' : '520px' }}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between p-3 bg-gradient-to-r from-pink-500 to-purple-600 rounded-t-2xl flex-shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
-              <AIIcon />
-            </div>
-            <div>
-              <p className="font-semibold text-white">Elisa</p>
-              <p className="text-xs text-white/70">IA Trading Assistant</p>
-            </div>
-          </div>
-          <button 
-            onClick={closeChat}
-            className="w-8 h-8 rounded-lg bg-white/20 hover:bg-white/30 flex items-center justify-center transition-colors"
-          >
-            <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-
-        {/* Messages - con ref para controlar scroll */}
-        <div 
-          ref={messagesContainerRef}
-          className="flex-1 overflow-y-auto p-3 space-y-3"
-          style={{ overscrollBehavior: 'contain' }}
-        >
-          {messages.map((msg, i) => (
-            <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              {msg.role === 'assistant' && (
-                <div className="w-8 h-8 rounded-full bg-gradient-to-r from-pink-500 to-purple-600 flex items-center justify-center mr-2 flex-shrink-0">
-                  <svg viewBox="0 0 24 24" fill="none" className="w-5 h-5">
-                    <circle cx="12" cy="12" r="8" fill="rgba(255,255,255,0.3)" />
-                    <path d="M8 13s1.5 1.5 4 1.5 4-1.5 4-1.5" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
-                    <circle cx="9" cy="10" r="1" fill="white" />
-                    <circle cx="15" cy="10" r="1" fill="white" />
-                  </svg>
-                </div>
-              )}
-              <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 ${
-                msg.role === 'user' 
-                  ? 'bg-gradient-to-r from-pink-500 to-purple-600 text-white' 
-                  : 'bg-white/5 text-white/90'
-              }`}>
-                <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>
-              </div>
-            </div>
-          ))}
-          
-          {loading && (
-            <div className="flex justify-start">
-              <div className="w-8 h-8 rounded-full bg-gradient-to-r from-pink-500 to-purple-600 flex items-center justify-center mr-2">
-                <svg viewBox="0 0 24 24" fill="none" className="w-5 h-5 animate-pulse">
-                  <circle cx="12" cy="12" r="8" fill="rgba(255,255,255,0.3)" />
-                </svg>
-              </div>
-              <div className="bg-white/5 rounded-2xl px-4 py-3 flex gap-1.5">
-                <div className="w-2 h-2 bg-pink-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                <div className="w-2 h-2 bg-pink-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Quick Actions */}
-        <div className="px-3 py-2 border-t border-white/5 flex gap-2 overflow-x-auto flex-shrink-0">
-          {[
-            { label: '📊 Análisis', cmd: 'análisis' },
-            { label: '🎯 Plan', cmd: 'plan' },
-            { label: '📦 Zonas', cmd: 'zonas' },
-            { label: '📈 Stats', cmd: 'stats' }
-          ].map((btn) => (
-            <button
-              key={btn.cmd}
-              onClick={() => handleQuickAction(btn.cmd)}
-              disabled={loading}
-              className="flex-shrink-0 px-3 py-1.5 bg-white/5 hover:bg-pink-500/20 rounded-full text-xs text-white/60 hover:text-white transition-all disabled:opacity-50"
-            >
-              {btn.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Input - Completamente aislado */}
-        <div className="p-3 border-t border-white/5 flex-shrink-0">
-          <form 
-            onSubmit={(e) => { e.preventDefault(); sendMessage(); }}
-            className="flex gap-2"
-          >
-            <input
-              ref={inputRef}
-              type="text"
-              value={text}
-              onChange={handleInputChange}
-              onKeyDown={handleKeyPress}
-              onFocus={() => { isTypingRef.current = true; }}
-              onBlur={() => { isTypingRef.current = false; }}
-              placeholder="Pregunta lo que quieras..."
-              disabled={loading}
-              className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-white/30 focus:outline-none focus:border-pink-500 disabled:opacity-50"
-              style={{ fontSize: '16px' }} // Previene zoom en iOS
-              autoComplete="off"
-              autoCorrect="off"
-              autoCapitalize="off"
-              spellCheck={false}
-            />
-            <button
-              type="submit"
-              disabled={!text.trim() || loading}
-              onClick={handleSendClick}
-              className="w-12 h-12 bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-400 hover:to-purple-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl flex items-center justify-center transition-all flex-shrink-0"
-            >
-              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M12 5l7 7-7 7" />
-              </svg>
-            </button>
-          </form>
-        </div>
-      </div>
-    );
-  });
 
   // ═══════════════════════════════════════════
   // SIDEBAR
@@ -645,7 +605,7 @@ export default function Dashboard() {
   );
 
   // ═══════════════════════════════════════════
-  // COMPONENTS
+  // SMALL COMPONENTS
   // ═══════════════════════════════════════════
   const StatsCard = ({ title, value, icon }) => (
     <div className="rounded-xl p-3 bg-[#0f0f14]">
@@ -654,125 +614,6 @@ export default function Dashboard() {
       <p className="text-[10px] text-white/50">{title}</p>
     </div>
   );
-
-  const PriceCard = () => {
-    if (!currentAsset) return null;
-    
-    const signal = lockedSignal;
-    
-    return (
-      <div className="rounded-xl bg-[#0f0f14] overflow-hidden">
-        <div className="p-3 border-b border-white/5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className={`w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center ${isMobile ? 'text-lg' : 'text-xl'}`}>
-                {currentAsset.emoji}
-              </div>
-              <div>
-                <h3 className={`font-bold text-white ${isMobile ? 'text-sm' : 'text-base'}`}>{currentAsset.name}</h3>
-                <div className="flex items-center gap-2 flex-wrap mt-0.5">
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${
-                    currentAsset.structureM5 === 'BULLISH' ? 'bg-emerald-500/20 text-emerald-400' :
-                    currentAsset.structureM5 === 'BEARISH' ? 'bg-red-500/20 text-red-400' : 'bg-white/10 text-white/50'
-                  }`}>
-                    M5: {currentAsset.structureM5}
-                  </span>
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${
-                    currentAsset.structureH1 === 'BULLISH' ? 'bg-emerald-500/20 text-emerald-400' :
-                    currentAsset.structureH1 === 'BEARISH' ? 'bg-red-500/20 text-red-400' :
-                    currentAsset.structureH1 === 'LOADING' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-white/10 text-white/50'
-                  }`}>
-                    H1: {currentAsset.structureH1}
-                  </span>
-                  {currentAsset.mtfConfluence && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400">✨ MTF</span>
-                  )}
-                  {currentAsset.premiumDiscount !== 'EQUILIBRIUM' && (
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded ${
-                      currentAsset.premiumDiscount === 'DISCOUNT' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'
-                    }`}>
-                      {currentAsset.premiumDiscount}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-            <div className="text-right">
-              <p className={`font-bold font-mono text-white ${isMobile ? 'text-lg' : 'text-xl'}`}>
-                {currentAsset.price?.toFixed(currentAsset.decimals) || '---'}
-              </p>
-              <p className="text-[10px] text-white/40">
-                📦 {currentAsset.demandZones}D / {currentAsset.supplyZones}S
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="p-2">
-          <Chart height={isMobile ? 220 : 280} />
-        </div>
-
-        {signal && (
-          <div className="p-3 border-t border-white/5" style={{ background: signal.action === 'LONG' ? 'rgba(16,185,129,0.05)' : 'rgba(239,68,68,0.05)' }}>
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className={`px-2 py-1 rounded-lg font-bold text-sm ${
-                  signal.action === 'LONG' ? 'bg-emerald-500 text-black' : 'bg-red-500 text-white'
-                }`}>
-                  {signal.action}
-                </span>
-                <span className={`px-1.5 py-0.5 rounded text-[10px] ${getModelStyle(signal.model).bg} ${getModelStyle(signal.model).text}`}>
-                  {signal.model}
-                </span>
-                {signal.trailingActive && (
-                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-blue-500/20 text-blue-400">
-                    🔄 Trailing
-                  </span>
-                )}
-              </div>
-              <div className="text-right">
-                <div className="text-xl font-bold text-white">{signal.score}%</div>
-              </div>
-            </div>
-            <div className={`grid gap-2 ${isMobile ? 'grid-cols-3' : 'grid-cols-5'}`}>
-              <div className="bg-blue-500/20 rounded p-2 text-center">
-                <p className="text-[8px] text-blue-400">ENTRY</p>
-                <p className="text-[10px] font-mono text-blue-400 font-bold">{signal.entry}</p>
-              </div>
-              {['tp1', 'tp2', 'tp3'].map(tp => (
-                <div key={tp} className={`rounded p-2 text-center ${signal[`${tp}Hit`] ? 'bg-emerald-500/30' : 'bg-emerald-500/10'}`}>
-                  <p className="text-[8px] text-emerald-400">{tp.toUpperCase()} {signal[`${tp}Hit`] && '✓'}</p>
-                  <p className="text-[10px] font-mono text-emerald-400">{signal[tp]}</p>
-                </div>
-              ))}
-              <div className="bg-red-500/20 rounded p-2 text-center">
-                <p className="text-[8px] text-red-400">SL {signal.trailingActive && '🔄'}</p>
-                <p className="text-[10px] font-mono text-red-400 font-bold">{signal.stop}</p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {!signal && currentAsset.signal && (
-          <div className="p-3 border-t border-white/5">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-white/60">Score: {currentAsset.signal.score || 0}%</p>
-                <p className="text-[10px] text-white/40">{currentAsset.signal.reason || 'Esperando setup'}</p>
-              </div>
-              <div className="w-12 h-12 relative">
-                <svg className="w-12 h-12 -rotate-90">
-                  <circle cx="24" cy="24" r="20" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="3" />
-                  <circle cx="24" cy="24" r="20" fill="none" stroke={currentAsset.signal.score >= 60 ? "#10b981" : "#eab308"} strokeWidth="3" strokeLinecap="round" strokeDasharray={`${(currentAsset.signal.score || 0) * 1.25} 125`} />
-                </svg>
-                <span className="absolute inset-0 flex items-center justify-center text-xs font-bold text-white">{currentAsset.signal.score || 0}</span>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  };
 
   const SignalCard = ({ signal: s }) => {
     const ms = getModelStyle(s.model);
@@ -812,6 +653,117 @@ export default function Dashboard() {
   };
 
   // ═══════════════════════════════════════════
+  // PRICE CARD
+  // ═══════════════════════════════════════════
+  const PriceCard = () => {
+    if (!currentAsset) return null;
+    
+    const signal = lockedSignal;
+    
+    return (
+      <div className="rounded-xl bg-[#0f0f14] overflow-hidden">
+        <div className="p-3 border-b border-white/5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-xl">
+                {currentAsset.emoji}
+              </div>
+              <div>
+                <h3 className="font-bold text-white text-sm">{currentAsset.name}</h3>
+                <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                    currentAsset.structureM5 === 'BULLISH' ? 'bg-emerald-500/20 text-emerald-400' :
+                    currentAsset.structureM5 === 'BEARISH' ? 'bg-red-500/20 text-red-400' : 'bg-white/10 text-white/50'
+                  }`}>
+                    M5: {currentAsset.structureM5}
+                  </span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                    currentAsset.structureH1 === 'BULLISH' ? 'bg-emerald-500/20 text-emerald-400' :
+                    currentAsset.structureH1 === 'BEARISH' ? 'bg-red-500/20 text-red-400' :
+                    currentAsset.structureH1 === 'LOADING' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-white/10 text-white/50'
+                  }`}>
+                    H1: {currentAsset.structureH1}
+                  </span>
+                  {currentAsset.mtfConfluence && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400">✨ MTF</span>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="text-right">
+              <p className="font-bold font-mono text-white text-lg">
+                {currentAsset.price?.toFixed(currentAsset.decimals) || '---'}
+              </p>
+              <p className="text-[10px] text-white/40">
+                📦 {currentAsset.demandZones}D / {currentAsset.supplyZones}S
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="p-2">
+          <Chart height={isMobile ? 220 : 280} />
+        </div>
+
+        {signal && (
+          <div className="p-3 border-t border-white/5" style={{ background: signal.action === 'LONG' ? 'rgba(16,185,129,0.05)' : 'rgba(239,68,68,0.05)' }}>
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <span className={`px-2 py-1 rounded-lg font-bold text-sm ${
+                  signal.action === 'LONG' ? 'bg-emerald-500 text-black' : 'bg-red-500 text-white'
+                }`}>
+                  {signal.action}
+                </span>
+                <span className={`px-1.5 py-0.5 rounded text-[10px] ${getModelStyle(signal.model).bg} ${getModelStyle(signal.model).text}`}>
+                  {signal.model}
+                </span>
+                {signal.trailingActive && (
+                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-blue-500/20 text-blue-400">🔄</span>
+                )}
+              </div>
+              <div className="text-xl font-bold text-white">{signal.score}%</div>
+            </div>
+            <div className={`grid gap-2 ${isMobile ? 'grid-cols-3' : 'grid-cols-5'}`}>
+              <div className="bg-blue-500/20 rounded p-2 text-center">
+                <p className="text-[8px] text-blue-400">ENTRY</p>
+                <p className="text-[10px] font-mono text-blue-400 font-bold">{signal.entry}</p>
+              </div>
+              {['tp1', 'tp2', 'tp3'].map(tp => (
+                <div key={tp} className={`rounded p-2 text-center ${signal[`${tp}Hit`] ? 'bg-emerald-500/30' : 'bg-emerald-500/10'}`}>
+                  <p className="text-[8px] text-emerald-400">{tp.toUpperCase()} {signal[`${tp}Hit`] && '✓'}</p>
+                  <p className="text-[10px] font-mono text-emerald-400">{signal[tp]}</p>
+                </div>
+              ))}
+              <div className="bg-red-500/20 rounded p-2 text-center">
+                <p className="text-[8px] text-red-400">SL</p>
+                <p className="text-[10px] font-mono text-red-400 font-bold">{signal.stop}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {!signal && currentAsset.signal && (
+          <div className="p-3 border-t border-white/5">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-white/60">Score: {currentAsset.signal.score || 0}%</p>
+                <p className="text-[10px] text-white/40">{currentAsset.signal.reason || 'Esperando setup'}</p>
+              </div>
+              <div className="w-12 h-12 relative">
+                <svg className="w-12 h-12 -rotate-90">
+                  <circle cx="24" cy="24" r="20" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="3" />
+                  <circle cx="24" cy="24" r="20" fill="none" stroke={currentAsset.signal.score >= 60 ? "#10b981" : "#eab308"} strokeWidth="3" strokeLinecap="round" strokeDasharray={`${(currentAsset.signal.score || 0) * 1.25} 125`} />
+                </svg>
+                <span className="absolute inset-0 flex items-center justify-center text-xs font-bold text-white">{currentAsset.signal.score || 0}</span>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ═══════════════════════════════════════════
   // SECTIONS
   // ═══════════════════════════════════════════
   const DashboardSection = () => {
@@ -827,14 +779,12 @@ export default function Dashboard() {
           <StatsCard title="Wins" value={data?.stats?.wins || 0} icon="✅" />
           <StatsCard title="TP3" value={data?.stats?.tp3Hits || 0} icon="💎" />
         </div>
-        
         <PriceCard />
-        
         {pendingSignals.length > 0 && (
           <div>
             <h3 className="text-xs font-medium text-white mb-2">Señales Activas</h3>
             <div className={`grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-3'}`}>
-              {pendingSignals.slice(0, isMobile ? 2 : 3).map(s => <SignalCard key={s.id} signal={s} />)}
+              {pendingSignals.slice(0, 3).map(s => <SignalCard key={s.id} signal={s} />)}
             </div>
           </div>
         )}
@@ -857,76 +807,67 @@ export default function Dashboard() {
     </div>
   );
 
-  const ModelsSection = () => {
-    const models = [
-      { name: 'MTF_CONFLUENCE', score: 95, desc: 'H1+M5 alineados + Pullback' },
-      { name: 'CHOCH_PULLBACK', score: 90, desc: 'Cambio de carácter + Pullback' },
-      { name: 'LIQUIDITY_SWEEP', score: 85, desc: 'Caza de stops + Reversión' },
-      { name: 'BOS_CONTINUATION', score: 80, desc: 'Ruptura de estructura' },
-      { name: 'FVG_ENTRY', score: 75, desc: 'Entrada en Fair Value Gap' },
-      { name: 'ORDER_FLOW', score: 70, desc: 'Momentum + Pullback' }
-    ];
-    
-    return (
-      <div className="space-y-4">
-        <h3 className="text-sm font-medium text-white">6 Modelos SMC</h3>
-        <div className={`grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-2'}`}>
-          {models.map(m => {
-            const style = getModelStyle(m.name);
-            const ms = data?.stats?.byModel?.[m.name] || { wins: 0, losses: 0 };
-            const wr = ms.wins + ms.losses > 0 ? Math.round(ms.wins / (ms.wins + ms.losses) * 100) : 0;
-            
-            return (
-              <div key={m.name} className="rounded-xl p-4 bg-[#0f0f14]">
-                <div className="flex items-center justify-between mb-2">
-                  <div>
-                    <p className={`text-sm font-medium ${style.text}`}>{m.name}</p>
-                    <p className="text-[10px] text-white/40">{m.desc}</p>
-                  </div>
-                  <span className="text-lg font-bold text-white">{m.score}pts</span>
+  const ModelsSection = () => (
+    <div className="space-y-4">
+      <h3 className="text-sm font-medium text-white">6 Modelos SMC</h3>
+      <div className={`grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-2'}`}>
+        {[
+          { name: 'MTF_CONFLUENCE', score: 95, desc: 'H1+M5 alineados' },
+          { name: 'CHOCH_PULLBACK', score: 90, desc: 'Cambio de carácter' },
+          { name: 'LIQUIDITY_SWEEP', score: 85, desc: 'Caza de stops' },
+          { name: 'BOS_CONTINUATION', score: 80, desc: 'Ruptura estructura' },
+          { name: 'FVG_ENTRY', score: 75, desc: 'Fair Value Gap' },
+          { name: 'ORDER_FLOW', score: 70, desc: 'Momentum' }
+        ].map(m => {
+          const style = getModelStyle(m.name);
+          const ms = data?.stats?.byModel?.[m.name] || { wins: 0, losses: 0 };
+          const wr = ms.wins + ms.losses > 0 ? Math.round(ms.wins / (ms.wins + ms.losses) * 100) : 0;
+          
+          return (
+            <div key={m.name} className="rounded-xl p-4 bg-[#0f0f14]">
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <p className={`text-sm font-medium ${style.text}`}>{m.name}</p>
+                  <p className="text-[10px] text-white/40">{m.desc}</p>
                 </div>
-                <div className="flex items-center gap-2">
-                  <div className="flex-1 h-1.5 bg-white/10 rounded-full">
-                    <div className="h-full rounded-full bg-gradient-to-r from-pink-500 to-purple-500" style={{ width: `${wr}%` }} />
-                  </div>
-                  <span className="text-[10px] text-white/60">{wr}% ({ms.wins}W/{ms.losses}L)</span>
-                </div>
+                <span className="text-lg font-bold text-white">{m.score}</span>
               </div>
-            );
-          })}
-        </div>
+              <div className="flex items-center gap-2">
+                <div className="flex-1 h-1.5 bg-white/10 rounded-full">
+                  <div className="h-full rounded-full bg-gradient-to-r from-pink-500 to-purple-500" style={{ width: `${wr}%` }} />
+                </div>
+                <span className="text-[10px] text-white/60">{wr}%</span>
+              </div>
+            </div>
+          );
+        })}
       </div>
-    );
-  };
+    </div>
+  );
 
   const HistorySection = () => (
     <div className="space-y-4">
       <h3 className="text-sm font-medium text-white">Historial</h3>
       <div className="rounded-xl bg-[#0f0f14] overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[500px]">
+          <table className="w-full min-w-[400px]">
             <thead>
-              <tr className="border-b border-white/5 text-left">
-                <th className="p-3 text-[10px] text-white/50">Activo</th>
-                <th className="p-3 text-[10px] text-white/50">Modelo</th>
-                <th className="p-3 text-[10px] text-white/50">Tipo</th>
-                <th className="p-3 text-[10px] text-white/50">Score</th>
-                <th className="p-3 text-[10px] text-white/50">Resultado</th>
+              <tr className="border-b border-white/5">
+                <th className="p-3 text-left text-[10px] text-white/50">Activo</th>
+                <th className="p-3 text-left text-[10px] text-white/50">Tipo</th>
+                <th className="p-3 text-left text-[10px] text-white/50">Score</th>
+                <th className="p-3 text-left text-[10px] text-white/50">Resultado</th>
               </tr>
             </thead>
             <tbody>
-              {closedSignals.slice(0, 20).map(s => {
-                const style = getModelStyle(s.model);
-                return (
-                  <tr key={s.id} className="border-b border-white/5">
-                    <td className="p-3 text-xs text-white">{s.emoji} {s.assetName}</td>
-                    <td className="p-3"><span className={`px-1 py-0.5 rounded text-[9px] ${style.bg} ${style.text}`}>{style.label}</span></td>
-                    <td className="p-3"><span className={`px-1 py-0.5 rounded text-[9px] ${s.action === 'LONG' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>{s.action}</span></td>
-                    <td className="p-3 text-[10px] text-white/50">{s.score}%</td>
-                    <td className="p-3"><span className={`px-1 py-0.5 rounded text-[9px] ${s.status === 'WIN' ? 'bg-emerald-500/20 text-emerald-400' : s.status === 'LOSS' ? 'bg-red-500/20 text-red-400' : 'bg-white/10 text-white/50'}`}>{s.status}</span></td>
-                  </tr>
-                );
-              })}
+              {closedSignals.slice(0, 15).map(s => (
+                <tr key={s.id} className="border-b border-white/5">
+                  <td className="p-3 text-xs text-white">{s.emoji} {s.assetName}</td>
+                  <td className="p-3"><span className={`px-1.5 py-0.5 rounded text-[9px] ${s.action === 'LONG' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>{s.action}</span></td>
+                  <td className="p-3 text-[10px] text-white/50">{s.score}%</td>
+                  <td className="p-3"><span className={`px-1.5 py-0.5 rounded text-[9px] ${s.status === 'WIN' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>{s.status}</span></td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
@@ -966,7 +907,7 @@ export default function Dashboard() {
   };
 
   // ═══════════════════════════════════════════
-  // RENDER
+  // RENDER FINAL
   // ═══════════════════════════════════════════
   return (
     <div className="min-h-screen bg-[#06060a]">
@@ -974,7 +915,7 @@ export default function Dashboard() {
       
       <main className={`transition-all duration-300 ${sidebarOpen && !isMobile ? 'ml-48' : 'ml-0'}`}>
         <Header />
-        <div className={`p-3 pb-24 ${isMobile ? 'p-2' : 'p-4'}`}>
+        <div className="p-3 pb-24">
           {activeSection === 'dashboard' && <DashboardSection />}
           {activeSection === 'signals' && <SignalsSection />}
           {activeSection === 'models' && <ModelsSection />}
@@ -983,7 +924,8 @@ export default function Dashboard() {
         </div>
       </main>
       
-      <ElisaChat />
+      {/* CHAT COMPLETAMENTE SEPARADO - NO AFECTADO POR RE-RENDERS */}
+      <ElisaChat selectedAsset={selectedAsset} isMobile={isMobile} />
     </div>
   );
 }
