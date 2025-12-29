@@ -151,7 +151,7 @@ function getForexStatus() {
 }
 
 // ═══════════════════════════════════════════
-// CONFIGURACIÓN DE ACTIVOS
+// CONFIGURACIÓN DE ACTIVOS - SÍMBOLOS CORREGIDOS
 // ═══════════════════════════════════════════
 const ASSETS = {
   // SINTÉTICOS - 24/7
@@ -166,26 +166,38 @@ const ASSETS = {
     type: 'synthetic',
     alwaysActive: true
   },
-  'Volatility 75 Index': { 
-    symbol: 'Volatility 75 Index', 
+  R_75: { 
+    symbol: 'R_75', 
     name: 'Volatility 75', 
     shortName: 'V75',
-    emoji: '📈',
+    emoji: '🔥',
+    decimals: 4,
+    pipSize: 0.0001,
+    atrMultiplier: 2.0,
+    type: 'synthetic',
+    alwaysActive: true
+  },
+  BOOM1000: { 
+    symbol: 'BOOM1000', 
+    name: 'Boom 1000', 
+    shortName: 'Boom1000',
+    emoji: '💣',
     decimals: 2,
     pipSize: 0.01,
     atrMultiplier: 1.8,
     type: 'synthetic',
     alwaysActive: true
   },
-  'Volatility 100 Index': { 
-    symbol: 'Volatility 100 Index', 
-    name: 'Volatility 100', 
-    shortName: 'V100',
-    emoji: '📉',
+  // CRYPTO - 24/7
+  cryBTCUSD: { 
+    symbol: 'cryBTCUSD', 
+    name: 'Bitcoin (BTC/USD)', 
+    shortName: 'BTC',
+    emoji: '₿',
     decimals: 2,
-    pipSize: 0.01,
+    pipSize: 1,
     atrMultiplier: 2.0,
-    type: 'synthetic',
+    type: 'crypto',
     alwaysActive: true
   },
   // FOREX - Solo 7am-12pm Colombia
@@ -210,18 +222,6 @@ const ASSETS = {
     atrMultiplier: 1.2,
     type: 'forex',
     alwaysActive: false
-  },
-  // CRYPTO - 24/7
-  cryBTCUSD: { 
-    symbol: 'cryBTCUSD', 
-    name: 'Bitcoin', 
-    shortName: 'BTC',
-    emoji: '₿',
-    decimals: 2,
-    pipSize: 1,
-    atrMultiplier: 2.0,
-    type: 'crypto',
-    alwaysActive: true
   }
 };
 
@@ -248,7 +248,7 @@ const state = {
 // ═══════════════════════════════════════════
 // DERIVWS CONNECTION
 // ═══════════════════════════════════════════
-const DERIV_APP_ID = process.env.DERIV_APP_ID || '67252';
+const DERIV_APP_ID = process.env.DERIV_APP_ID || '1089';
 let derivWs = null;
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 50;
@@ -260,7 +260,7 @@ function connectDeriv() {
       try { derivWs.close(); } catch(e) {}
     }
     
-    derivWs = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${DERIV_APP_ID}`);
+    derivWs = new WebSocket(`wss://ws.binaryws.com/websockets/v3?app_id=${DERIV_APP_ID}`);
     
     derivWs.on('open', () => {
       console.log('✅ Conectado a Deriv');
