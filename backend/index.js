@@ -248,48 +248,78 @@ const state = {
 // ═══════════════════════════════════════════
 // DERIVWS CONNECTION
 // ═══════════════════════════════════════════
-const DERIV_APP_ID = process.env.DERIV_APP_ID || '1089';
+const DERIV_APP_ID = process.env.DERIV_APP_ID || '67252';
 let derivWs = null;
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 50;
+let pingInterval = null;
 
 function connectDeriv() {
   try {
-    derivWs = new WebSocket(`wss://ws.binaryws.com/websockets/v3?app_id=${DERIV_APP_ID}`);
+    if (derivWs) {
+      try { derivWs.close(); } catch(e) {}
+    }
+    
+    derivWs = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${DERIV_APP_ID}`);
     
     derivWs.on('open', () => {
       console.log('✅ Conectado a Deriv');
       state.wsConnected = true;
       reconnectAttempts = 0;
       
-      Object.keys(ASSETS).forEach((symbol, index) => {
-        // Suscribir a M5
+      // Ping cada 30 segundos para mantener conexión viva
+      if (pingInterval) clearInterval(pingInterval);
+      pingInterval = setInterval(() => {
+        if (derivWs && derivWs.readyState === WebSocket.OPEN) {
+          derivWs.send(JSON.stringify({ ping: 1 }));
+        }
+      }, 30000);
+      
+      // Suscribir a cada activo con delay
+      const symbols = Object.keys(ASSETS);
+      symbols.forEach((symbol, index) => {
+        // M5 candles
         setTimeout(() => {
-          derivWs.send(JSON.stringify({
-            ticks_history: symbol,
-            style: 'candles',
-            granularity: 300,
-            count: 100,
-            subscribe: 1
-          }));
-        }, index * 500);
+          if (derivWs && derivWs.readyState === WebSocket.OPEN) {
+            console.log(`📡 Suscribiendo M5: ${ASSETS[symbol].shortName}`);
+            derivWs.send(JSON.stringify({
+              ticks_history: symbol,
+              style: 'candles',
+              granularity: 300,
+              count: 100,
+              subscribe: 1
+            }));
+          }
+        }, index * 1000);
         
-        // Suscribir a H1
+        // H1 candles
         setTimeout(() => {
-          derivWs.send(JSON.stringify({
-            ticks_history: symbol,
-            style: 'candles',
-            granularity: 3600,
-            count: 50,
-            subscribe: 1
-          }));
-        }, index * 500 + 250);
+          if (derivWs && derivWs.readyState === WebSocket.OPEN) {
+            console.log(`📡 Suscribiendo H1: ${ASSETS[symbol].shortName}`);
+            derivWs.send(JSON.stringify({
+              ticks_history: symbol,
+              style: 'candles',
+              granularity: 3600,
+              count: 50,
+              subscribe: 1
+            }));
+          }
+        }, index * 1000 + 500);
       });
     });
 
     derivWs.on('message', (data) => {
       try {
         const msg = JSON.parse(data);
+        
+        // Ignorar pongs
+        if (msg.pong) return;
+        
+        // Log de errores de Deriv
+        if (msg.error) {
+          console.error('❌ Deriv API error:', msg.error.message);
+          return;
+        }
         
         if (msg.candles) {
           const symbol = msg.echo_req.ticks_history;
@@ -345,17 +375,22 @@ function connectDeriv() {
       }
     });
 
-    derivWs.on('close', () => {
-      console.log('❌ Deriv desconectado');
+    derivWs.on('close', (code, reason) => {
+      console.log(`❌ Deriv desconectado (code: ${code})`);
       state.wsConnected = false;
+      if (pingInterval) {
+        clearInterval(pingInterval);
+        pingInterval = null;
+      }
       scheduleReconnect();
     });
 
     derivWs.on('error', (err) => {
-      console.error('WS error:', err.message);
+      console.error('❌ WS error:', err.message);
+      state.wsConnected = false;
     });
   } catch (e) {
-    console.error('Connection error:', e.message);
+    console.error('❌ Connection error:', e.message);
     scheduleReconnect();
   }
 }
