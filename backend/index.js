@@ -154,7 +154,7 @@ function getForexStatus() {
 // CONFIGURACIÓN DE ACTIVOS - SÍMBOLOS CORREGIDOS
 // ═══════════════════════════════════════════
 const ASSETS = {
-  // SINTÉTICOS - 24/7
+  // SINTÉTICOS - 24/7 (funcionan siempre)
   stpRNG: { 
     symbol: 'stpRNG', 
     name: 'Step Index', 
@@ -180,7 +180,7 @@ const ASSETS = {
   BOOM1000: { 
     symbol: 'BOOM1000', 
     name: 'Boom 1000', 
-    shortName: 'Boom1000',
+    shortName: 'Boom',
     emoji: '💣',
     decimals: 2,
     pipSize: 0.01,
@@ -188,10 +188,9 @@ const ASSETS = {
     type: 'synthetic',
     alwaysActive: true
   },
-  // CRYPTO - 24/7
   cryBTCUSD: { 
     symbol: 'cryBTCUSD', 
-    name: 'Bitcoin (BTC/USD)', 
+    name: 'Bitcoin', 
     shortName: 'BTC',
     emoji: '₿',
     decimals: 2,
@@ -200,7 +199,7 @@ const ASSETS = {
     type: 'crypto',
     alwaysActive: true
   },
-  // FOREX - Solo 7am-12pm Colombia
+  // FOREX - Solo Lunes a Viernes 7am-12pm Colombia
   frxXAUUSD: { 
     symbol: 'frxXAUUSD', 
     name: 'Oro (XAU/USD)', 
@@ -248,7 +247,7 @@ const state = {
 // ═══════════════════════════════════════════
 // DERIVWS CONNECTION
 // ═══════════════════════════════════════════
-const DERIV_APP_ID = process.env.DERIV_APP_ID || '1089';
+const DERIV_APP_ID = process.env.DERIV_APP_ID || '67347';
 let derivWs = null;
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 50;
@@ -277,11 +276,25 @@ function connectDeriv() {
       
       // Suscribir a cada activo con delay
       const symbols = Object.keys(ASSETS);
-      symbols.forEach((symbol, index) => {
+      let delay = 0;
+      
+      symbols.forEach((symbol) => {
+        const asset = ASSETS[symbol];
+        
+        // No suscribir a Forex en fin de semana
+        const now = new Date();
+        const day = now.getUTCDay(); // 0 = Domingo, 6 = Sábado
+        const isWeekend = day === 0 || day === 6;
+        
+        if (asset.type === 'forex' && isWeekend) {
+          console.log(`⏸️ ${asset.shortName}: Forex cerrado (fin de semana)`);
+          return;
+        }
+        
         // M5 candles
         setTimeout(() => {
           if (derivWs && derivWs.readyState === WebSocket.OPEN) {
-            console.log(`📡 Suscribiendo M5: ${ASSETS[symbol].shortName}`);
+            console.log(`📡 Suscribiendo M5: ${asset.shortName}`);
             derivWs.send(JSON.stringify({
               ticks_history: symbol,
               style: 'candles',
@@ -290,12 +303,12 @@ function connectDeriv() {
               subscribe: 1
             }));
           }
-        }, index * 1000);
+        }, delay);
         
         // H1 candles
         setTimeout(() => {
           if (derivWs && derivWs.readyState === WebSocket.OPEN) {
-            console.log(`📡 Suscribiendo H1: ${ASSETS[symbol].shortName}`);
+            console.log(`📡 Suscribiendo H1: ${asset.shortName}`);
             derivWs.send(JSON.stringify({
               ticks_history: symbol,
               style: 'candles',
@@ -304,7 +317,9 @@ function connectDeriv() {
               subscribe: 1
             }));
           }
-        }, index * 1000 + 500);
+        }, delay + 500);
+        
+        delay += 1000;
       });
     });
 
