@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 const API_URL = import.meta.env.VITE_API_URL || 'https://trading-master-pro-production.up.railway.app';
 
 // =============================================
-// ELISA CHAT - COMPONENTE 100% INDEPENDIENTE
+// ELISA CHAT - COMPONENTE AISLADO
 // =============================================
 const ElisaChat = ({ selectedAsset, isMobile }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -35,24 +35,18 @@ const ElisaChat = ({ selectedAsset, isMobile }) => {
       const response = await fetch(`${API_URL}/api/ai/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          question: messageText, 
-          symbol: selectedAsset || 'stpRNG' 
-        })
+        body: JSON.stringify({ question: messageText, symbol: selectedAsset || 'stpRNG' })
       });
-      
       const result = await response.json();
       setMessages(prev => [...prev, { role: 'assistant', content: result.answer }]);
     } catch (error) {
       setMessages(prev => [...prev, { role: 'assistant', content: '❌ Error de conexión.' }]);
     }
-    
     setLoading(false);
   };
 
   const openChat = async () => {
     setIsOpen(true);
-    
     if (!initialized) {
       setLoading(true);
       try {
@@ -69,7 +63,6 @@ const ElisaChat = ({ selectedAsset, isMobile }) => {
       setLoading(false);
       setInitialized(true);
     }
-    
     setTimeout(() => inputRef.current?.focus(), 300);
   };
 
@@ -107,12 +100,9 @@ const ElisaChat = ({ selectedAsset, isMobile }) => {
   }
 
   return (
-    <div 
-      className={`fixed z-[100] bg-[#0d0d12] rounded-2xl shadow-2xl border border-white/10 flex flex-col ${
-        isMobile ? 'inset-2' : 'bottom-6 right-6 w-[380px]'
-      }`}
-      style={{ height: isMobile ? 'calc(100% - 16px)' : '500px' }}
-    >
+    <div className={`fixed z-[100] bg-[#0d0d12] rounded-2xl shadow-2xl border border-white/10 flex flex-col ${
+      isMobile ? 'inset-2' : 'bottom-6 right-6 w-[380px]'
+    }`} style={{ height: isMobile ? 'calc(100% - 16px)' : '500px' }}>
       <div className="flex items-center justify-between p-3 bg-gradient-to-r from-pink-500 to-purple-600 rounded-t-2xl">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
@@ -123,10 +113,7 @@ const ElisaChat = ({ selectedAsset, isMobile }) => {
             <p className="text-xs text-white/70">IA Trading Assistant</p>
           </div>
         </div>
-        <button 
-          onClick={() => setIsOpen(false)}
-          className="w-8 h-8 rounded-lg bg-white/20 hover:bg-white/30 flex items-center justify-center"
-        >
+        <button onClick={() => setIsOpen(false)} className="w-8 h-8 rounded-lg bg-white/20 hover:bg-white/30 flex items-center justify-center">
           <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
           </svg>
@@ -142,15 +129,12 @@ const ElisaChat = ({ selectedAsset, isMobile }) => {
               </div>
             )}
             <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 ${
-              msg.role === 'user' 
-                ? 'bg-gradient-to-r from-pink-500 to-purple-600 text-white' 
-                : 'bg-white/5 text-white/90'
+              msg.role === 'user' ? 'bg-gradient-to-r from-pink-500 to-purple-600 text-white' : 'bg-white/5 text-white/90'
             }`}>
               <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
             </div>
           </div>
         ))}
-        
         {loading && (
           <div className="flex justify-start">
             <div className="w-7 h-7 rounded-full bg-gradient-to-r from-pink-500 to-purple-600 flex items-center justify-center mr-2">
@@ -163,18 +147,13 @@ const ElisaChat = ({ selectedAsset, isMobile }) => {
             </div>
           </div>
         )}
-        
         <div ref={messagesEndRef} />
       </div>
 
       <div className="px-3 py-2 border-t border-white/5 flex gap-2 overflow-x-auto">
-        {['📊 Análisis', '🎯 Plan', '📦 Zonas', '📈 Stats'].map((btn) => (
-          <button
-            key={btn}
-            onClick={() => sendMessage(btn.split(' ')[1])}
-            disabled={loading}
-            className="flex-shrink-0 px-3 py-1.5 bg-white/5 hover:bg-pink-500/20 rounded-full text-xs text-white/60 hover:text-white disabled:opacity-50"
-          >
+        {['📊 Análisis', '🎯 Señal', '📈 Plan', '📦 Stats'].map((btn) => (
+          <button key={btn} onClick={() => sendMessage(btn.split(' ')[1])} disabled={loading}
+            className="flex-shrink-0 px-3 py-1.5 bg-white/5 hover:bg-pink-500/20 rounded-full text-xs text-white/60 hover:text-white disabled:opacity-50">
             {btn}
           </button>
         ))}
@@ -182,31 +161,15 @@ const ElisaChat = ({ selectedAsset, isMobile }) => {
 
       <div className="p-3 border-t border-white/5">
         <div className="flex gap-2">
-          <input
-            ref={inputRef}
-            type="text"
-            value={text}
+          <input ref={inputRef} type="text" value={text}
             onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                sendMessage();
-              }
-            }}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }}}
             placeholder="Pregunta lo que quieras..."
             disabled={loading}
             className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-white/30 focus:outline-none focus:border-pink-500 disabled:opacity-50"
-            style={{ fontSize: '16px' }}
-            autoComplete="off"
-            autoCorrect="off"
-            autoCapitalize="off"
-            spellCheck={false}
-          />
-          <button
-            onClick={() => sendMessage()}
-            disabled={!text.trim() || loading}
-            className="w-12 h-12 bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-400 hover:to-purple-500 disabled:opacity-40 text-white rounded-xl flex items-center justify-center flex-shrink-0"
-          >
+            style={{ fontSize: '16px' }} autoComplete="off" />
+          <button onClick={() => sendMessage()} disabled={!text.trim() || loading}
+            className="w-12 h-12 bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-400 hover:to-purple-500 disabled:opacity-40 text-white rounded-xl flex items-center justify-center flex-shrink-0">
             <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M12 5l7 7-7 7" />
             </svg>
@@ -218,7 +181,7 @@ const ElisaChat = ({ selectedAsset, isMobile }) => {
 };
 
 // =============================================
-// DASHBOARD PRINCIPAL v13.0
+// DASHBOARD PRINCIPAL v14.1
 // =============================================
 export default function Dashboard({ user, onLogout }) {
   const [data, setData] = useState(null);
@@ -226,18 +189,14 @@ export default function Dashboard({ user, onLogout }) {
   const [activeSection, setActiveSection] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth > 768);
   const [timeframe, setTimeframe] = useState('M5');
-  
   const [candles, setCandles] = useState([]);
   const [candlesH1, setCandlesH1] = useState([]);
-  
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [showUserMenu, setShowUserMenu] = useState(false);
   
   const mountedRef = useRef(true);
   
-  useEffect(() => {
-    return () => { mountedRef.current = false; };
-  }, []);
+  useEffect(() => { return () => { mountedRef.current = false; }; }, []);
   
   useEffect(() => {
     const handleResize = () => {
@@ -249,68 +208,42 @@ export default function Dashboard({ user, onLogout }) {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // ═══════════════════════════════════════════
-  // DATA FETCHING
-  // ═══════════════════════════════════════════
+  // Data fetching
   useEffect(() => {
     let isCancelled = false;
-    
     const fetchData = async () => {
       try {
         const res = await fetch(`${API_URL}/api/dashboard`);
         const json = await res.json();
-        
         if (!isCancelled && mountedRef.current) {
           setData(json);
-          if (!selectedAsset && json.assets?.length) {
-            setSelectedAsset(json.assets[0].symbol);
-          }
+          if (!selectedAsset && json.assets?.length) setSelectedAsset(json.assets[0].symbol);
         }
-      } catch (e) {
-        console.error('Fetch error:', e);
-      }
+      } catch (e) { console.error('Fetch error:', e); }
     };
-    
     fetchData();
     const interval = setInterval(fetchData, 3000);
-    
-    return () => {
-      isCancelled = true;
-      clearInterval(interval);
-    };
+    return () => { isCancelled = true; clearInterval(interval); };
   }, [selectedAsset]);
 
   useEffect(() => {
     if (!selectedAsset) return;
-    
     let isCancelled = false;
-    
     const fetchCandles = async () => {
       try {
         const res = await fetch(`${API_URL}/api/analyze/${selectedAsset}`);
         const json = await res.json();
-        
         if (!isCancelled && mountedRef.current) {
           if (json.candles?.length) setCandles(json.candles);
           if (json.candlesH1?.length) setCandlesH1(json.candlesH1);
         }
-      } catch (e) {
-        console.error('Candles error:', e);
-      }
+      } catch (e) { console.error('Candles error:', e); }
     };
-    
     fetchCandles();
     const interval = setInterval(fetchCandles, 4000);
-    
-    return () => {
-      isCancelled = true;
-      clearInterval(interval);
-    };
+    return () => { isCancelled = true; clearInterval(interval); };
   }, [selectedAsset]);
 
-  // ═══════════════════════════════════════════
-  // SIGNAL ACTIONS
-  // ═══════════════════════════════════════════
   const markSignal = async (id, status) => {
     try {
       await fetch(`${API_URL}/api/signals/${id}`, {
@@ -318,30 +251,13 @@ export default function Dashboard({ user, onLogout }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status })
       });
-    } catch (e) {
-      console.error(e);
-    }
+    } catch (e) { console.error(e); }
   };
 
-  // ═══════════════════════════════════════════
-  // COMPUTED VALUES
-  // ═══════════════════════════════════════════
-  const currentAsset = useMemo(() => 
-    data?.assets?.find(a => a.symbol === selectedAsset),
-    [data?.assets, selectedAsset]
-  );
-  
+  const currentAsset = useMemo(() => data?.assets?.find(a => a.symbol === selectedAsset), [data?.assets, selectedAsset]);
   const lockedSignal = currentAsset?.lockedSignal;
-  
-  const pendingSignals = useMemo(() => 
-    data?.recentSignals?.filter(s => s.status === 'PENDING') || [],
-    [data?.recentSignals]
-  );
-  
-  const closedSignals = useMemo(() => 
-    data?.recentSignals?.filter(s => s.status !== 'PENDING') || [],
-    [data?.recentSignals]
-  );
+  const pendingSignals = useMemo(() => data?.recentSignals?.filter(s => s.status === 'PENDING') || [], [data?.recentSignals]);
+  const closedSignals = useMemo(() => data?.recentSignals?.filter(s => s.status !== 'PENDING') || [], [data?.recentSignals]);
 
   const modelColors = {
     'MTF_CONFLUENCE': { bg: 'bg-purple-500/20', text: 'text-purple-400', label: 'MTF' },
@@ -351,22 +267,15 @@ export default function Dashboard({ user, onLogout }) {
     'FVG_ENTRY': { bg: 'bg-orange-500/20', text: 'text-orange-400', label: 'FVG' },
     'ORDER_FLOW': { bg: 'bg-pink-500/20', text: 'text-pink-400', label: 'OF' }
   };
-  
   const getModelStyle = (model) => modelColors[model] || { bg: 'bg-white/10', text: 'text-white/60', label: '?' };
 
-  // ═══════════════════════════════════════════
-  // CHART COMPONENT
-  // ═══════════════════════════════════════════
+  // Chart Component
   const Chart = ({ height = 300 }) => {
     const containerRef = useRef(null);
     const [width, setWidth] = useState(600);
     
     useEffect(() => {
-      const updateWidth = () => {
-        if (containerRef.current) {
-          setWidth(containerRef.current.offsetWidth || 600);
-        }
-      };
+      const updateWidth = () => { if (containerRef.current) setWidth(containerRef.current.offsetWidth || 600); };
       updateWidth();
       window.addEventListener('resize', updateWidth);
       return () => window.removeEventListener('resize', updateWidth);
@@ -388,11 +297,9 @@ export default function Dashboard({ user, onLogout }) {
     const padding = { top: 10, right: isMobile ? 45 : 60, bottom: 20, left: 5 };
     const chartW = width - padding.left - padding.right;
     const chartH = height - padding.top - padding.bottom;
-    
     const visibleCandles = displayCandles.slice(-(isMobile ? 30 : 50));
     const candleW = Math.max(3, (chartW / visibleCandles.length) * 0.7);
     const gap = (chartW / visibleCandles.length) - candleW;
-
     const prices = visibleCandles.flatMap(c => [c.high, c.low]);
     const minP = Math.min(...prices);
     const maxP = Math.max(...prices);
@@ -401,7 +308,6 @@ export default function Dashboard({ user, onLogout }) {
     const adjMax = maxP + pad;
     const scale = chartH / (adjMax - adjMin);
     const getY = (p) => padding.top + (adjMax - p) * scale;
-
     const lastPrice = visibleCandles[visibleCandles.length - 1]?.close;
     const decimals = currentAsset?.decimals || 2;
     const signal = lockedSignal;
@@ -420,7 +326,6 @@ export default function Dashboard({ user, onLogout }) {
               </g>
             );
           })}
-
           {visibleCandles.map((c, i) => {
             const x = padding.left + i * (candleW + gap);
             const isGreen = c.close >= c.open;
@@ -434,7 +339,6 @@ export default function Dashboard({ user, onLogout }) {
               </g>
             );
           })}
-
           {lastPrice && (
             <g>
               <line x1={padding.left} y1={getY(lastPrice)} x2={width - padding.right} y2={getY(lastPrice)} stroke="#10b981" strokeWidth="1" strokeDasharray="3,3" opacity="0.5" />
@@ -444,7 +348,6 @@ export default function Dashboard({ user, onLogout }) {
               </text>
             </g>
           )}
-
           {signal && timeframe === 'M5' && (
             <>
               <line x1={padding.left} y1={getY(signal.entry)} x2={width - padding.right} y2={getY(signal.entry)} stroke="#3b82f6" strokeWidth="1.5" strokeDasharray="4,2" />
@@ -459,15 +362,10 @@ export default function Dashboard({ user, onLogout }) {
     );
   };
 
-  // ═══════════════════════════════════════════
-  // SIDEBAR
-  // ═══════════════════════════════════════════
+  // Sidebar
   const Sidebar = () => (
     <>
-      {isMobile && sidebarOpen && (
-        <div className="fixed inset-0 bg-black/50 z-40" onClick={() => setSidebarOpen(false)} />
-      )}
-      
+      {isMobile && sidebarOpen && <div className="fixed inset-0 bg-black/50 z-40" onClick={() => setSidebarOpen(false)} />}
       <aside className={`fixed left-0 top-0 h-full bg-[#0a0a0f] border-r border-white/5 z-40 transition-all duration-300 ${
         sidebarOpen ? (isMobile ? 'w-64' : 'w-48') : 'w-0 overflow-hidden'
       }`}>
@@ -495,19 +393,15 @@ export default function Dashboard({ user, onLogout }) {
             { id: 'history', icon: '📜', label: 'Historial' },
             { id: 'stats', icon: '📈', label: 'Stats' },
           ].map(item => (
-            <button
-              key={item.id}
+            <button key={item.id}
               onClick={() => { setActiveSection(item.id); if (isMobile) setSidebarOpen(false); }}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
                 activeSection === item.id ? 'bg-emerald-500/15 text-emerald-400' : 'text-white/60 hover:bg-white/5'
-              }`}
-            >
+              }`}>
               <span>{item.icon}</span>
               <span className="text-sm">{item.label}</span>
               {item.badge > 0 && (
-                <span className="ml-auto px-1.5 py-0.5 text-[10px] font-bold bg-emerald-500 text-black rounded-full">
-                  {item.badge}
-                </span>
+                <span className="ml-auto px-1.5 py-0.5 text-[10px] font-bold bg-emerald-500 text-black rounded-full">{item.badge}</span>
               )}
             </button>
           ))}
@@ -517,30 +411,26 @@ export default function Dashboard({ user, onLogout }) {
           <p className="text-[10px] uppercase text-white/30 mb-2 px-3">Mercados</p>
           <div className="space-y-1 max-h-[300px] overflow-y-auto">
             {data?.assets?.map(asset => (
-              <button
-                key={asset.symbol}
-                onClick={() => { 
-                  setSelectedAsset(asset.symbol); 
-                  if (isMobile) setSidebarOpen(false); 
-                }}
+              <button key={asset.symbol}
+                onClick={() => { setSelectedAsset(asset.symbol); if (isMobile) setSidebarOpen(false); }}
                 className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
                   selectedAsset === asset.symbol ? 'bg-white/10 text-white' : 'text-white/50 hover:bg-white/5'
-                }`}
-              >
+                }`}>
                 <span>{asset.emoji}</span>
                 <div className="flex-1 text-left">
                   <div className="flex items-center gap-1">
                     <span className="text-xs font-medium">{asset.shortName}</span>
                     {asset.h1Loaded && <span className="text-[8px] px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-400">H1</span>}
+                    {!asset.isActive && asset.type === 'forex' && (
+                      <span className="text-[8px] px-1 py-0.5 rounded bg-yellow-500/20 text-yellow-400">⏰</span>
+                    )}
                   </div>
                   <span className="text-[10px] text-white/40 font-mono">{asset.price?.toFixed(2) || '---'}</span>
                 </div>
                 {asset.lockedSignal && (
                   <span className={`px-1.5 py-0.5 text-[9px] font-bold rounded ${
                     asset.lockedSignal.action === 'LONG' ? 'bg-emerald-500 text-black' : 'bg-red-500 text-white'
-                  }`}>
-                    {asset.lockedSignal.action}
-                  </span>
+                  }`}>{asset.lockedSignal.action}</span>
                 )}
               </button>
             ))}
@@ -557,9 +447,7 @@ export default function Dashboard({ user, onLogout }) {
     </>
   );
 
-  // ═══════════════════════════════════════════
-  // HEADER CON USUARIO
-  // ═══════════════════════════════════════════
+  // Header
   const Header = () => (
     <header className="h-12 bg-[#0a0a0f] border-b border-white/5 flex items-center justify-between px-3 sticky top-0 z-30">
       <div className="flex items-center gap-3">
@@ -575,39 +463,25 @@ export default function Dashboard({ user, onLogout }) {
       </div>
       
       <div className="flex items-center gap-3">
-        {/* Timeframe selector */}
         <div className="flex bg-white/5 rounded-lg p-0.5">
           {['M5', 'H1'].map(tf => (
-            <button
-              key={tf}
-              onClick={() => setTimeframe(tf)}
+            <button key={tf} onClick={() => setTimeframe(tf)}
               className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
-                timeframe === tf 
-                  ? 'bg-emerald-500 text-black' 
-                  : 'text-white/50 hover:text-white'
-              }`}
-            >
-              {tf}
-            </button>
+                timeframe === tf ? 'bg-emerald-500 text-black' : 'text-white/50 hover:text-white'
+              }`}>{tf}</button>
           ))}
         </div>
 
-        {/* User menu */}
         <div className="relative">
-          <button 
-            onClick={() => setShowUserMenu(!showUserMenu)}
-            className="flex items-center gap-2 px-2 py-1.5 hover:bg-white/5 rounded-lg transition-colors"
-          >
+          <button onClick={() => setShowUserMenu(!showUserMenu)}
+            className="flex items-center gap-2 px-2 py-1.5 hover:bg-white/5 rounded-lg transition-colors">
             <div className="w-7 h-7 rounded-full bg-gradient-to-br from-emerald-400 to-cyan-400 flex items-center justify-center">
-              <span className="text-black text-xs font-bold">
-                {user?.email?.charAt(0).toUpperCase() || 'U'}
-              </span>
+              <span className="text-black text-xs font-bold">{user?.email?.charAt(0).toUpperCase() || 'U'}</span>
             </div>
             <svg className={`w-4 h-4 text-white/50 transition-transform ${showUserMenu ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
             </svg>
           </button>
-
           {showUserMenu && (
             <>
               <div className="fixed inset-0 z-40" onClick={() => setShowUserMenu(false)} />
@@ -617,10 +491,8 @@ export default function Dashboard({ user, onLogout }) {
                   <p className="text-sm text-white font-medium truncate">{user?.email}</p>
                 </div>
                 <div className="p-1">
-                  <button
-                    onClick={onLogout}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-red-400 hover:bg-red-500/10 rounded-lg transition-colors text-sm"
-                  >
+                  <button onClick={onLogout}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-red-400 hover:bg-red-500/10 rounded-lg transition-colors text-sm">
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
                     </svg>
@@ -635,9 +507,7 @@ export default function Dashboard({ user, onLogout }) {
     </header>
   );
 
-  // ═══════════════════════════════════════════
-  // SMALL COMPONENTS
-  // ═══════════════════════════════════════════
+  // Small Components
   const StatsCard = ({ title, value, icon }) => (
     <div className="rounded-xl p-3 bg-[#0f0f14]">
       <div className="text-lg mb-1">{icon}</div>
@@ -660,11 +530,8 @@ export default function Dashboard({ user, onLogout }) {
           </div>
           <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
             s.action === 'LONG' ? 'bg-emerald-500 text-black' : 'bg-red-500 text-white'
-          }`}>
-            {s.action}
-          </span>
+          }`}>{s.action}</span>
         </div>
-        
         <div className="flex gap-1 mb-2">
           {['tp1', 'tp2', 'tp3'].map(tp => (
             <div key={tp} className={`flex-1 rounded p-1 text-center ${s[`${tp}Hit`] ? 'bg-emerald-500/20' : 'bg-white/5'}`}>
@@ -672,7 +539,6 @@ export default function Dashboard({ user, onLogout }) {
             </div>
           ))}
         </div>
-        
         {s.status === 'PENDING' && (
           <div className="flex gap-1">
             <button onClick={() => markSignal(s.id, 'WIN')} className="flex-1 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 rounded text-[10px]">✓ Win</button>
@@ -683,12 +549,9 @@ export default function Dashboard({ user, onLogout }) {
     );
   };
 
-  // ═══════════════════════════════════════════
-  // PRICE CARD
-  // ═══════════════════════════════════════════
+  // Price Card
   const PriceCard = () => {
     if (!currentAsset) return null;
-    
     const signal = lockedSignal;
     
     return (
@@ -696,61 +559,42 @@ export default function Dashboard({ user, onLogout }) {
         <div className="p-3 border-b border-white/5">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-xl">
-                {currentAsset.emoji}
-              </div>
+              <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-xl">{currentAsset.emoji}</div>
               <div>
                 <h3 className="font-bold text-white text-sm">{currentAsset.name}</h3>
                 <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
                   <span className={`text-[10px] px-1.5 py-0.5 rounded ${
                     currentAsset.structureM5 === 'BULLISH' ? 'bg-emerald-500/20 text-emerald-400' :
                     currentAsset.structureM5 === 'BEARISH' ? 'bg-red-500/20 text-red-400' : 'bg-white/10 text-white/50'
-                  }`}>
-                    M5: {currentAsset.structureM5}
-                  </span>
+                  }`}>M5: {currentAsset.structureM5}</span>
                   <span className={`text-[10px] px-1.5 py-0.5 rounded ${
                     currentAsset.structureH1 === 'BULLISH' ? 'bg-emerald-500/20 text-emerald-400' :
                     currentAsset.structureH1 === 'BEARISH' ? 'bg-red-500/20 text-red-400' :
                     currentAsset.structureH1 === 'LOADING' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-white/10 text-white/50'
-                  }`}>
-                    H1: {currentAsset.structureH1}
-                  </span>
-                  {currentAsset.mtfConfluence && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400">✨ MTF</span>
+                  }`}>H1: {currentAsset.structureH1}</span>
+                  {currentAsset.mtfConfluence && <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400">✨ MTF</span>}
+                  {!currentAsset.isActive && currentAsset.type === 'forex' && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-400">⏰ {currentAsset.scheduleMessage}</span>
                   )}
                 </div>
               </div>
             </div>
             <div className="text-right">
-              <p className="font-bold font-mono text-white text-lg">
-                {currentAsset.price?.toFixed(currentAsset.decimals) || '---'}
-              </p>
-              <p className="text-[10px] text-white/40">
-                📦 {currentAsset.demandZones}D / {currentAsset.supplyZones}S
-              </p>
+              <p className="font-bold font-mono text-white text-lg">{currentAsset.price?.toFixed(currentAsset.decimals) || '---'}</p>
+              <p className="text-[10px] text-white/40">📦 {currentAsset.demandZones}D / {currentAsset.supplyZones}S</p>
             </div>
           </div>
         </div>
 
-        <div className="p-2">
-          <Chart height={isMobile ? 220 : 280} />
-        </div>
+        <div className="p-2"><Chart height={isMobile ? 220 : 280} /></div>
 
         {signal && (
           <div className="p-3 border-t border-white/5" style={{ background: signal.action === 'LONG' ? 'rgba(16,185,129,0.05)' : 'rgba(239,68,68,0.05)' }}>
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
-                <span className={`px-2 py-1 rounded-lg font-bold text-sm ${
-                  signal.action === 'LONG' ? 'bg-emerald-500 text-black' : 'bg-red-500 text-white'
-                }`}>
-                  {signal.action}
-                </span>
-                <span className={`px-1.5 py-0.5 rounded text-[10px] ${getModelStyle(signal.model).bg} ${getModelStyle(signal.model).text}`}>
-                  {signal.model}
-                </span>
-                {signal.trailingActive && (
-                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-blue-500/20 text-blue-400">🔄</span>
-                )}
+                <span className={`px-2 py-1 rounded-lg font-bold text-sm ${signal.action === 'LONG' ? 'bg-emerald-500 text-black' : 'bg-red-500 text-white'}`}>{signal.action}</span>
+                <span className={`px-1.5 py-0.5 rounded text-[10px] ${getModelStyle(signal.model).bg} ${getModelStyle(signal.model).text}`}>{signal.model}</span>
+                {signal.trailingActive && <span className="px-1.5 py-0.5 rounded text-[10px] bg-blue-500/20 text-blue-400">🔄</span>}
               </div>
               <div className="text-xl font-bold text-white">{signal.score}%</div>
             </div>
@@ -772,38 +616,27 @@ export default function Dashboard({ user, onLogout }) {
             </div>
           </div>
         )}
-
-        {!signal && currentAsset.signal && (
-          <div className="p-3 border-t border-white/5">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-white/60">Score: {currentAsset.signal.score || 0}%</p>
-                <p className="text-[10px] text-white/40">{currentAsset.signal.reason || 'Esperando setup'}</p>
-              </div>
-              <div className="w-12 h-12 relative">
-                <svg className="w-12 h-12 -rotate-90">
-                  <circle cx="24" cy="24" r="20" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="3" />
-                  <circle cx="24" cy="24" r="20" fill="none" stroke={currentAsset.signal.score >= 60 ? "#10b981" : "#eab308"} strokeWidth="3" strokeLinecap="round" strokeDasharray={`${(currentAsset.signal.score || 0) * 1.25} 125`} />
-                </svg>
-                <span className="absolute inset-0 flex items-center justify-center text-xs font-bold text-white">{currentAsset.signal.score || 0}</span>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     );
   };
 
-  // ═══════════════════════════════════════════
-  // SECTIONS
-  // ═══════════════════════════════════════════
+  // Sections
   const DashboardSection = () => {
-    const wr = data?.stats?.wins + data?.stats?.losses > 0 
-      ? Math.round(data.stats.wins / (data.stats.wins + data.stats.losses) * 100) 
-      : 0;
-    
+    const wr = data?.stats?.wins + data?.stats?.losses > 0 ? Math.round(data.stats.wins / (data.stats.wins + data.stats.losses) * 100) : 0;
     return (
       <div className="space-y-4">
+        {/* Forex Schedule Banner */}
+        {data?.forexStatus && !data.forexStatus.active && (
+          <div className="p-3 rounded-xl bg-yellow-500/10 border border-yellow-500/20">
+            <div className="flex items-center gap-2">
+              <span className="text-yellow-400">⏰</span>
+              <div>
+                <p className="text-yellow-400 text-sm font-medium">Forex (XAU, GBP): {data.forexStatus.message}</p>
+                <p className="text-yellow-400/60 text-xs">Horario de trading: 7:00 AM - 12:00 PM Colombia</p>
+              </div>
+            </div>
+          </div>
+        )}
         <div className={`grid gap-3 ${isMobile ? 'grid-cols-2' : 'grid-cols-4'}`}>
           <StatsCard title="Win Rate" value={`${wr}%`} icon="📊" />
           <StatsCard title="Activas" value={pendingSignals.length} icon="🎯" />
@@ -853,7 +686,6 @@ export default function Dashboard({ user, onLogout }) {
           const style = getModelStyle(m.name);
           const ms = data?.stats?.byModel?.[m.name] || { wins: 0, losses: 0 };
           const wr = ms.wins + ms.losses > 0 ? Math.round(ms.wins / (ms.wins + ms.losses) * 100) : 0;
-          
           return (
             <div key={m.name} className="rounded-xl p-4 bg-[#0f0f14]">
               <div className="flex items-center justify-between mb-2">
@@ -908,10 +740,7 @@ export default function Dashboard({ user, onLogout }) {
   );
 
   const StatsSection = () => {
-    const wr = data?.stats?.wins + data?.stats?.losses > 0 
-      ? Math.round(data.stats.wins / (data.stats.wins + data.stats.losses) * 100) 
-      : 0;
-    
+    const wr = data?.stats?.wins + data?.stats?.losses > 0 ? Math.round(data.stats.wins / (data.stats.wins + data.stats.losses) * 100) : 0;
     return (
       <div className="space-y-4">
         <h3 className="text-sm font-medium text-white">Estadísticas</h3>
@@ -921,7 +750,6 @@ export default function Dashboard({ user, onLogout }) {
           <StatsCard title="Losses" value={data?.stats?.losses || 0} icon="❌" />
           <StatsCard title="Win Rate" value={`${wr}%`} icon="🎯" />
         </div>
-        
         <div className="rounded-xl p-4 bg-[#0f0f14]">
           <h4 className="text-xs font-medium text-white mb-3">TPs Alcanzados</h4>
           <div className="grid grid-cols-3 gap-3">
@@ -937,13 +765,9 @@ export default function Dashboard({ user, onLogout }) {
     );
   };
 
-  // ═══════════════════════════════════════════
-  // RENDER FINAL
-  // ═══════════════════════════════════════════
   return (
     <div className="min-h-screen bg-[#06060a]">
       <Sidebar />
-      
       <main className={`transition-all duration-300 ${sidebarOpen && !isMobile ? 'ml-48' : 'ml-0'}`}>
         <Header />
         <div className="p-3 pb-24">
@@ -954,7 +778,6 @@ export default function Dashboard({ user, onLogout }) {
           {activeSection === 'stats' && <StatsSection />}
         </div>
       </main>
-      
       <ElisaChat selectedAsset={selectedAsset} isMobile={isMobile} />
     </div>
   );
