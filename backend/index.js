@@ -16,7 +16,7 @@ app.use(express.json());
 // =============================================
 // CONFIGURACIÓN
 // =============================================
-const DERIV_APP_ID = process.env.DERIV_APP_ID || '67347';
+const DERIV_APP_ID = process.env.DERIV_APP_ID || '117347';
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '7749268073:AAGcUxq2Pea0pyoIqmqb7kUgif0bpPe8oZQ';
 const TELEGRAM_CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID || '-1003581375831';
 
