@@ -29,28 +29,39 @@ async function sendTelegramSignal(signal) {
   }
   
   try {
-    const emoji = signal.action === 'BUY' ? '🟢' : '🔴';
-    const actionText = signal.action === 'BUY' ? 'COMPRA' : 'VENTA';
+    // Corregido: Aceptar tanto BUY/SELL como LONG/SHORT
+    const isLong = signal.action === 'BUY' || signal.action === 'LONG';
+    const emoji = isLong ? '🟢' : '🔴';
+    const actionText = isLong ? 'COMPRA (LONG)' : 'VENTA (SHORT)';
+    
+    // Escapar caracteres especiales de Markdown
+    const escapeMarkdown = (text) => {
+      if (!text) return '';
+      return String(text).replace(/[_*`\[\]()~>#+=|{}.!-]/g, '\\$&');
+    };
+    
+    const safeReason = escapeMarkdown(signal.reason);
+    const safeModel = escapeMarkdown(signal.model);
     
     const message = `
 ${emoji} *SEÑAL #${signal.id}* ${emoji}
 
 📊 *Activo:* ${signal.assetName} (${signal.symbol})
 📈 *Dirección:* ${actionText}
-🎯 *Modelo:* ${signal.model}
+🎯 *Modelo:* ${safeModel}
 💯 *Score:* ${signal.score}%
 
-💰 *Entry:* \`${signal.entry}\`
-🛑 *Stop Loss:* \`${signal.stop}\`
+💰 *Entry:* ${signal.entry}
+🛑 *Stop Loss:* ${signal.stop}
 
-✅ *TP1:* \`${signal.tp1}\`
-✅ *TP2:* \`${signal.tp2}\`
-✅ *TP3:* \`${signal.tp3}\`
+✅ *TP1:* ${signal.tp1}
+✅ *TP2:* ${signal.tp2}
+✅ *TP3:* ${signal.tp3}
 
-📝 *Razón:* ${signal.reason}
+📝 *Razón:* ${safeReason}
 ⏰ *Hora:* ${new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })}
 
-_Trading Master Pro - ELISA IA_ 🤖
+_Trading Master Pro \\- ELISA IA_ 🤖
 `;
 
     const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
