@@ -23,7 +23,8 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
 async function sendTelegramSignal(signal) {
-  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {console.log('⚠️ Telegram no configurado - Token o Chat ID faltante');
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
+    console.log('⚠️ Telegram no configurado - Token o Chat ID faltante');
     return;
   }
   
@@ -1305,7 +1306,7 @@ function connectDeriv() {
   
   derivWs.on('message', (rawData) => {
     try {
-      const msg = JSON.parse(rawData);
+      const msg = JSON.parse(rawData.toString());
       
       if (msg.candles && msg.echo_req?.granularity === 300) {
         const symbol = msg.echo_req.ticks_history;
@@ -1317,6 +1318,7 @@ function connectDeriv() {
             low: +c.low,
             close: +c.close
           }));
+          console.log(`📊 M5 ${ASSETS[symbol]?.shortName}: ${assetData[symbol].candles.length} velas`);
           analyzeAsset(symbol);
         }
       }
@@ -1373,7 +1375,9 @@ function connectDeriv() {
         }
       }
       
-    } catch (err) { /* ignore */ }
+    } catch (err) { 
+      console.error('❌ Error procesando mensaje:', err.message);
+    }
   });
   
   derivWs.on('close', () => {
