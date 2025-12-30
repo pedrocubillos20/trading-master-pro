@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import elisaAvatar from './assets/elisa-avatar.jpg';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://trading-master-pro-production.up.railway.app';
 
@@ -68,7 +69,7 @@ const ElisaChat = ({ selectedAsset, isMobile }) => {
 
   const ElisaAvatar = ({ size = 24, className = "" }) => (
     <img 
-      src="/elisa-avatar.jpg" 
+      src={elisaAvatar} 
       alt="Elisa AI" 
       className={`rounded-full object-cover ${className}`}
       style={{ width: size, height: size }}
