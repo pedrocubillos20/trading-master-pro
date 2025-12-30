@@ -66,51 +66,43 @@ const ElisaChat = ({ selectedAsset, isMobile }) => {
     setTimeout(() => inputRef.current?.focus(), 300);
   };
 
-  const AIIcon = ({ size = 24 }) => (
-    <svg viewBox="0 0 24 24" fill="none" width={size} height={size}>
-      <circle cx="12" cy="12" r="10" fill="url(#elisa-grad)" />
-      <path d="M8 14s1.5 2 4 2 4-2 4-2" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
-      <circle cx="9" cy="10" r="1.5" fill="white" />
-      <circle cx="15" cy="10" r="1.5" fill="white" />
-      <defs>
-        <linearGradient id="elisa-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stopColor="#ec4899" />
-          <stop offset="100%" stopColor="#8b5cf6" />
-        </linearGradient>
-      </defs>
-    </svg>
+  const ElisaAvatar = ({ size = 24, className = "" }) => (
+    <img 
+      src="/elisa-avatar.jpg" 
+      alt="Elisa AI" 
+      className={`rounded-full object-cover ${className}`}
+      style={{ width: size, height: size }}
+    />
   );
 
   if (!isOpen) {
     return (
       <button 
         onClick={openChat}
-        className={`fixed z-[100] flex items-center gap-2 bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-400 hover:to-purple-500 text-white rounded-2xl shadow-xl transition-transform hover:scale-105 active:scale-95 ${
+        className={`fixed z-[100] flex items-center gap-2 bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 text-white rounded-2xl shadow-xl transition-transform hover:scale-105 active:scale-95 ${
           isMobile ? 'bottom-4 right-4 px-3 py-2.5' : 'bottom-6 right-6 px-4 py-3'
         }`}
       >
-        <AIIcon size={24} />
+        <ElisaAvatar size={32} className="border-2 border-cyan-400" />
         <div className="text-left">
           <p className="font-semibold text-sm">Elisa</p>
           {!isMobile && <p className="text-xs text-white/70">IA Assistant</p>}
         </div>
-        <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+        <div className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
       </button>
     );
   }
 
   return (
-    <div className={`fixed z-[100] bg-[#0d0d12] rounded-2xl shadow-2xl border border-white/10 flex flex-col ${
+    <div className={`fixed z-[100] bg-[#0a1628] rounded-2xl shadow-2xl border border-cyan-500/30 flex flex-col ${
       isMobile ? 'inset-2' : 'bottom-6 right-6 w-[380px]'
     }`} style={{ height: isMobile ? 'calc(100% - 16px)' : '500px' }}>
-      <div className="flex items-center justify-between p-3 bg-gradient-to-r from-pink-500 to-purple-600 rounded-t-2xl">
+      <div className="flex items-center justify-between p-3 bg-gradient-to-r from-cyan-600 to-blue-700 rounded-t-2xl">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
-            <AIIcon size={28} />
-          </div>
+          <ElisaAvatar size={44} className="border-2 border-cyan-400 shadow-lg shadow-cyan-500/50" />
           <div>
             <p className="font-semibold text-white">Elisa</p>
-            <p className="text-xs text-white/70">IA Trading Assistant</p>
+            <p className="text-xs text-cyan-200">IA Trading Assistant</p>
           </div>
         </div>
         <button onClick={() => setIsOpen(false)} className="w-8 h-8 rounded-lg bg-white/20 hover:bg-white/30 flex items-center justify-center">
@@ -124,9 +116,7 @@ const ElisaChat = ({ selectedAsset, isMobile }) => {
         {messages.map((msg, i) => (
           <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             {msg.role === 'assistant' && (
-              <div className="w-7 h-7 rounded-full bg-gradient-to-r from-pink-500 to-purple-600 flex items-center justify-center mr-2 flex-shrink-0">
-                <AIIcon size={18} />
-              </div>
+              <ElisaAvatar size={28} className="border border-cyan-500/50 mr-2 flex-shrink-0" />
             )}
             <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 ${
               msg.role === 'user' ? 'bg-gradient-to-r from-pink-500 to-purple-600 text-white' : 'bg-white/5 text-white/90'
@@ -208,7 +198,9 @@ export default function Dashboard({ user, onLogout }) {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Data fetching
+  // Data fetching - OPTIMIZADO
+  const lastDataRef = useRef(null);
+  
   useEffect(() => {
     let isCancelled = false;
     const fetchData = async () => {
@@ -216,7 +208,16 @@ export default function Dashboard({ user, onLogout }) {
         const res = await fetch(`${API_URL}/api/dashboard`);
         const json = await res.json();
         if (!isCancelled && mountedRef.current) {
-          setData(json);
+          // Solo actualizar si el estado de conexión o señales cambiaron
+          const hasChanges = !lastDataRef.current || 
+            lastDataRef.current.connected !== json.connected ||
+            JSON.stringify(lastDataRef.current.recentSignals) !== JSON.stringify(json.recentSignals) ||
+            lastDataRef.current.stats?.total !== json.stats?.total;
+          
+          if (hasChanges) {
+            lastDataRef.current = json;
+            setData(json);
+          }
           if (!selectedAsset && json.assets?.length) setSelectedAsset(json.assets[0].symbol);
         }
       } catch (e) { console.error('Fetch error:', e); }
@@ -226,21 +227,44 @@ export default function Dashboard({ user, onLogout }) {
     return () => { isCancelled = true; clearInterval(interval); };
   }, [selectedAsset]);
 
+  // Cargar velas del activo seleccionado - OPTIMIZADO
+  const lastCandlesRef = useRef({ candles: [], candlesH1: [] });
+  
   useEffect(() => {
     if (!selectedAsset) return;
     let isCancelled = false;
+    
     const fetchCandles = async () => {
       try {
         const res = await fetch(`${API_URL}/api/analyze/${selectedAsset}`);
         const json = await res.json();
         if (!isCancelled && mountedRef.current) {
-          if (json.candles?.length) setCandles(json.candles);
-          if (json.candlesH1?.length) setCandlesH1(json.candlesH1);
+          // Solo actualizar si hay cambios significativos (evitar vibración)
+          if (json.candles?.length) {
+            const lastTime = lastCandlesRef.current.candles[lastCandlesRef.current.candles.length - 1]?.time;
+            const newLastTime = json.candles[json.candles.length - 1]?.time;
+            // Solo actualizar si hay una nueva vela o cambio significativo
+            if (!lastTime || newLastTime !== lastTime || lastCandlesRef.current.candles.length !== json.candles.length) {
+              lastCandlesRef.current.candles = json.candles;
+              setCandles([...json.candles]);
+            }
+          }
+          if (json.candlesH1?.length) {
+            const lastTimeH1 = lastCandlesRef.current.candlesH1[lastCandlesRef.current.candlesH1.length - 1]?.time;
+            const newLastTimeH1 = json.candlesH1[json.candlesH1.length - 1]?.time;
+            if (!lastTimeH1 || newLastTimeH1 !== lastTimeH1 || lastCandlesRef.current.candlesH1.length !== json.candlesH1.length) {
+              lastCandlesRef.current.candlesH1 = json.candlesH1;
+              setCandlesH1([...json.candlesH1]);
+            }
+          }
         }
       } catch (e) { console.error('Candles error:', e); }
     };
+    
+    // Reset cuando cambia el activo
+    lastCandlesRef.current = { candles: [], candlesH1: [] };
     fetchCandles();
-    const interval = setInterval(fetchCandles, 4000);
+    const interval = setInterval(fetchCandles, 5000); // Aumentado a 5s
     return () => { isCancelled = true; clearInterval(interval); };
   }, [selectedAsset]);
 
@@ -269,8 +293,8 @@ export default function Dashboard({ user, onLogout }) {
   };
   const getModelStyle = (model) => modelColors[model] || { bg: 'bg-white/10', text: 'text-white/60', label: '?' };
 
-  // Chart Component
-  const Chart = ({ height = 300 }) => {
+  // Chart Component - OPTIMIZADO
+  const Chart = React.memo(({ height = 300 }) => {
     const containerRef = useRef(null);
     const [width, setWidth] = useState(600);
     
@@ -283,7 +307,30 @@ export default function Dashboard({ user, onLogout }) {
 
     const displayCandles = timeframe === 'H1' ? candlesH1 : candles;
     
-    if (!displayCandles?.length) {
+    // Usar useMemo para cálculos pesados
+    const chartData = useMemo(() => {
+      if (!displayCandles?.length) return null;
+      
+      const padding = { top: 10, right: isMobile ? 45 : 60, bottom: 20, left: 5 };
+      const chartW = width - padding.left - padding.right;
+      const chartH = height - padding.top - padding.bottom;
+      const visibleCandles = displayCandles.slice(-(isMobile ? 30 : 50));
+      const candleW = Math.max(3, (chartW / visibleCandles.length) * 0.7);
+      const gap = (chartW / visibleCandles.length) - candleW;
+      const prices = visibleCandles.flatMap(c => [c.high, c.low]);
+      const minP = Math.min(...prices);
+      const maxP = Math.max(...prices);
+      const pad = (maxP - minP) * 0.1;
+      const adjMin = minP - pad;
+      const adjMax = maxP + pad;
+      const scale = chartH / (adjMax - adjMin);
+      const getY = (p) => padding.top + (adjMax - p) * scale;
+      const lastPrice = visibleCandles[visibleCandles.length - 1]?.close;
+      
+      return { padding, chartW, chartH, visibleCandles, candleW, gap, adjMin, adjMax, scale, getY, lastPrice };
+    }, [displayCandles, width, height, isMobile, timeframe]);
+    
+    if (!chartData) {
       return (
         <div ref={containerRef} style={{ height }} className="flex items-center justify-center">
           <div className="text-center">
@@ -294,27 +341,13 @@ export default function Dashboard({ user, onLogout }) {
       );
     }
 
-    const padding = { top: 10, right: isMobile ? 45 : 60, bottom: 20, left: 5 };
-    const chartW = width - padding.left - padding.right;
-    const chartH = height - padding.top - padding.bottom;
-    const visibleCandles = displayCandles.slice(-(isMobile ? 30 : 50));
-    const candleW = Math.max(3, (chartW / visibleCandles.length) * 0.7);
-    const gap = (chartW / visibleCandles.length) - candleW;
-    const prices = visibleCandles.flatMap(c => [c.high, c.low]);
-    const minP = Math.min(...prices);
-    const maxP = Math.max(...prices);
-    const pad = (maxP - minP) * 0.1;
-    const adjMin = minP - pad;
-    const adjMax = maxP + pad;
-    const scale = chartH / (adjMax - adjMin);
-    const getY = (p) => padding.top + (adjMax - p) * scale;
-    const lastPrice = visibleCandles[visibleCandles.length - 1]?.close;
+    const { padding, visibleCandles, candleW, gap, adjMin, adjMax, getY, lastPrice } = chartData;
     const decimals = currentAsset?.decimals || 2;
     const signal = lockedSignal;
 
     return (
       <div ref={containerRef} className="w-full">
-        <svg width={width} height={height}>
+        <svg width={width} height={height} style={{ transition: 'all 0.3s ease-out' }}>
           {[0, 0.25, 0.5, 0.75, 1].map((pct, i) => {
             const price = adjMax - ((adjMax - adjMin) * pct);
             return (
