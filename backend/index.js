@@ -17,6 +17,111 @@ app.use(cors());
 app.use(express.json());
 
 // =============================================
+// CONFIGURACIÓN DE TELEGRAM
+// =============================================
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+
+async function sendTelegramSignal(signal) {
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {console.log('⚠️ Telegram no configurado - Token o Chat ID faltante');
+    return;
+  }
+  
+  try {
+    const emoji = signal.action === 'BUY' ? '🟢' : '🔴';
+    const actionText = signal.action === 'BUY' ? 'COMPRA' : 'VENTA';
+    
+    const message = `
+${emoji} *SEÑAL #${signal.id}* ${emoji}
+
+📊 *Activo:* ${signal.assetName} (${signal.symbol})
+📈 *Dirección:* ${actionText}
+🎯 *Modelo:* ${signal.model}
+💯 *Score:* ${signal.score}%
+
+💰 *Entry:* \`${signal.entry}\`
+🛑 *Stop Loss:* \`${signal.stop}\`
+
+✅ *TP1:* \`${signal.tp1}\`
+✅ *TP2:* \`${signal.tp2}\`
+✅ *TP3:* \`${signal.tp3}\`
+
+📝 *Razón:* ${signal.reason}
+⏰ *Hora:* ${new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })}
+
+_Trading Master Pro - ELISA IA_ 🤖
+`;
+
+    const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: TELEGRAM_CHAT_ID,
+        text: message,
+        parse_mode: 'Markdown',
+        disable_web_page_preview: true
+      })
+    });
+    
+    const result = await response.json();
+    if (result.ok) {
+      console.log(`✅ Señal #${signal.id} enviada a Telegram`);
+    } else {
+      console.error('❌ Error Telegram:', result.description);
+    }
+  } catch (error) {
+    console.error('❌ Error enviando a Telegram:', error.message);
+  }
+}
+
+async function sendTelegramUpdate(signal, updateType) {
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
+  
+  try {
+    let emoji, text;
+    
+    switch (updateType) {
+      case 'TP1':
+        emoji = '🎯';
+        text = `${emoji} *TP1 ALCANZADO* - Señal #${signal.id}\n${signal.assetName} | +1R`;
+        break;
+      case 'TP2':
+        emoji = '🎯🎯';
+        text = `${emoji} *TP2 ALCANZADO* - Señal #${signal.id}\n${signal.assetName} | +2R`;
+        break;
+      case 'TP3':
+        emoji = '🏆';
+        text = `${emoji} *TP3 ALCANZADO* - Señal #${signal.id}\n${signal.assetName} | +3R | MÁXIMO BENEFICIO`;
+        break;
+      case 'SL':
+        emoji = '🛑';
+        text = `${emoji} *STOP LOSS* - Señal #${signal.id}\n${signal.assetName} | -1R`;
+        break;
+      case 'TRAILING':
+        emoji = '🔄';
+        text = `${emoji} *TRAILING ACTIVADO* - Señal #${signal.id}\n${signal.assetName} | SL movido a ${signal.stop}`;
+        break;
+      default:
+        return;
+    }
+
+    const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: TELEGRAM_CHAT_ID,
+        text,
+        parse_mode: 'Markdown'
+      })
+    });
+  } catch (error) {
+    console.error('❌ Error update Telegram:', error.message);
+  }
+}
+
+// =============================================
 // CONFIGURACIÓN DE ACTIVOS
 // =============================================
 const ASSETS = {
@@ -1081,8 +1186,10 @@ function checkSignalHits() {
       if (signal.tp1Hit) {
         closeSignal(signal.id, 'WIN', symbol);
         console.log(`✅ #${signal.id} cerrado en TRAILING STOP (WIN parcial - TP1 alcanzado)`);
+        sendTelegramUpdate(signal, 'TRAILING');
       } else {
         closeSignal(signal.id, 'LOSS', symbol);
+        sendTelegramUpdate(signal, 'SL');
       }
       continue;
     }
@@ -1095,34 +1202,40 @@ function checkSignalHits() {
         signal.tp1Hit = locked.tp1Hit = true; 
         stats.tp1Hits++; 
         console.log(`🎯 TP1 HIT #${signal.id} - Activando trailing stop`);
+        sendTelegramUpdate(signal, 'TP1');
       }
       if (price >= locked.tp2 && !signal.tp2Hit) { 
         signal.tp2Hit = locked.tp2Hit = true; 
         stats.tp2Hits++; 
         console.log(`🎯 TP2 HIT #${signal.id}`);
+        sendTelegramUpdate(signal, 'TP2');
       }
       if (price >= locked.tp3 && !signal.tp3Hit) { 
         signal.tp3Hit = locked.tp3Hit = true; 
         stats.tp3Hits++; 
         closeSignal(signal.id, 'WIN', symbol); 
         console.log(`💎 TP3 HIT #${signal.id} - TRADE COMPLETO`);
+        sendTelegramUpdate(signal, 'TP3');
       }
     } else {
       if (price <= locked.tp1 && !signal.tp1Hit) { 
         signal.tp1Hit = locked.tp1Hit = true; 
         stats.tp1Hits++; 
         console.log(`🎯 TP1 HIT #${signal.id} - Activando trailing stop`);
+        sendTelegramUpdate(signal, 'TP1');
       }
       if (price <= locked.tp2 && !signal.tp2Hit) { 
         signal.tp2Hit = locked.tp2Hit = true; 
         stats.tp2Hits++; 
         console.log(`🎯 TP2 HIT #${signal.id}`);
+        sendTelegramUpdate(signal, 'TP2');
       }
       if (price <= locked.tp3 && !signal.tp3Hit) { 
         signal.tp3Hit = locked.tp3Hit = true; 
         stats.tp3Hits++; 
         closeSignal(signal.id, 'WIN', symbol); 
         console.log(`💎 TP3 HIT #${signal.id} - TRADE COMPLETO`);
+        sendTelegramUpdate(signal, 'TP3');
       }
     }
   }
@@ -1338,6 +1451,9 @@ function analyzeAsset(symbol) {
       if (signalHistory.length > 100) signalHistory.pop();
       
       console.log(`💎 SEÑAL #${newSignal.id} | ${config.shortName} | ${signal.action} | ${signal.model} | ${signal.score}%`);
+      
+      // Enviar a Telegram
+      sendTelegramSignal(newSignal);
     }
   }
 }
