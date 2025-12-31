@@ -7,6 +7,9 @@ import express from 'express';
 import cors from 'cors';
 import WebSocket from 'ws';
 import dotenv from 'dotenv';
+import crypto from 'crypto';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { createClient } from '@supabase/supabase-js';
 
 dotenv.config();
 
@@ -180,11 +183,190 @@ for (const symbol of Object.keys(ASSETS)) {
 let signalHistory = [];
 let signalIdCounter = 1;
 
+// =============================================
+// SISTEMA DE APRENDIZAJE ADAPTATIVO - ELISA AI
+// =============================================
+
+const LEARNING_FILE = './elisa_learning.json';
+
+// Cargar aprendizaje guardado
+function loadLearning() {
+  try {
+    if (existsSync(LEARNING_FILE)) {
+      const data = JSON.parse(readFileSync(LEARNING_FILE, 'utf-8'));
+      console.log('🧠 Aprendizaje cargado desde archivo');
+      return data;
+    }
+  } catch (e) {
+    console.log('⚠️ No se pudo cargar aprendizaje previo:', e.message);
+  }
+  return getDefaultLearning();
+}
+
+function getDefaultLearning() {
+  return {
+    scoreAdjustments: {},        // Por modelo
+    byAsset: {},                 // Por activo
+    byHour: {},                  // Por hora del día (0-23)
+    byDay: {},                   // Por día de la semana (0-6)
+    byModelAsset: {},            // Combinación modelo+activo
+    byVolatility: { high: { wins: 0, losses: 0 }, low: { wins: 0, losses: 0 } },
+    minScoreAdjust: 0,           // Ajuste dinámico del score mínimo
+    totalAnalyzed: 0,
+    lastUpdate: null,
+    version: 2
+  };
+}
+
+// Guardar aprendizaje
+function saveLearning() {
+  try {
+    learning.lastUpdate = new Date().toISOString();
+    writeFileSync(LEARNING_FILE, JSON.stringify(learning, null, 2));
+  } catch (e) {
+    console.log('⚠️ No se pudo guardar aprendizaje:', e.message);
+  }
+}
+
+// Inicializar aprendizaje
+let learning = loadLearning();
+
+// Obtener ajuste inteligente del score
+function getSmartScoreAdjustment(model, symbol, hour) {
+  let adjustment = 0;
+  
+  // 1. Ajuste por modelo (±10 max)
+  const modelAdj = learning.scoreAdjustments[model] || 0;
+  adjustment += Math.max(-10, Math.min(10, modelAdj));
+  
+  // 2. Ajuste por activo (±5 max)
+  const assetData = learning.byAsset[symbol];
+  if (assetData && assetData.total >= 5) {
+    const assetWinRate = assetData.wins / assetData.total;
+    adjustment += Math.round((assetWinRate - 0.5) * 10);
+  }
+  
+  // 3. Ajuste por hora (±5 max)
+  const hourData = learning.byHour[hour];
+  if (hourData && hourData.total >= 3) {
+    const hourWinRate = hourData.wins / hourData.total;
+    adjustment += Math.round((hourWinRate - 0.5) * 10);
+  }
+  
+  // 4. Ajuste por combinación modelo+activo
+  const comboKey = `${model}_${symbol}`;
+  const comboData = learning.byModelAsset[comboKey];
+  if (comboData && comboData.total >= 3) {
+    const comboWinRate = comboData.wins / comboData.total;
+    adjustment += Math.round((comboWinRate - 0.5) * 10);
+  }
+  
+  return Math.max(-20, Math.min(20, adjustment));
+}
+
+// Actualizar aprendizaje después de cada señal cerrada
+function updateLearning(signal, isWin) {
+  const hour = new Date(signal.timestamp).getHours();
+  const day = new Date(signal.timestamp).getDay();
+  const model = signal.model;
+  const symbol = signal.symbol;
+  const comboKey = `${model}_${symbol}`;
+  
+  // Inicializar estructuras si no existen
+  learning.byAsset[symbol] = learning.byAsset[symbol] || { wins: 0, losses: 0, total: 0 };
+  learning.byHour[hour] = learning.byHour[hour] || { wins: 0, losses: 0, total: 0 };
+  learning.byDay[day] = learning.byDay[day] || { wins: 0, losses: 0, total: 0 };
+  learning.byModelAsset[comboKey] = learning.byModelAsset[comboKey] || { wins: 0, losses: 0, total: 0 };
+  learning.scoreAdjustments[model] = learning.scoreAdjustments[model] || 0;
+  
+  if (isWin) {
+    // Victoria: aumentar confianza
+    learning.scoreAdjustments[model] = Math.min(15, learning.scoreAdjustments[model] + 2);
+    learning.byAsset[symbol].wins++;
+    learning.byHour[hour].wins++;
+    learning.byDay[day].wins++;
+    learning.byModelAsset[comboKey].wins++;
+  } else {
+    // Derrota: reducir confianza
+    learning.scoreAdjustments[model] = Math.max(-10, learning.scoreAdjustments[model] - 1);
+    learning.byAsset[symbol].losses++;
+    learning.byHour[hour].losses++;
+    learning.byDay[day].losses++;
+    learning.byModelAsset[comboKey].losses++;
+  }
+  
+  // Actualizar totales
+  learning.byAsset[symbol].total++;
+  learning.byHour[hour].total++;
+  learning.byDay[day].total++;
+  learning.byModelAsset[comboKey].total++;
+  learning.totalAnalyzed++;
+  
+  // Ajustar score mínimo dinámicamente
+  const recentWinRate = stats.wins / Math.max(1, stats.wins + stats.losses);
+  if (learning.totalAnalyzed >= 10) {
+    if (recentWinRate < 0.4) {
+      learning.minScoreAdjust = Math.min(15, learning.minScoreAdjust + 2);
+    } else if (recentWinRate > 0.7) {
+      learning.minScoreAdjust = Math.max(-10, learning.minScoreAdjust - 1);
+    }
+  }
+  
+  // Guardar cada 5 operaciones
+  if (learning.totalAnalyzed % 5 === 0) {
+    saveLearning();
+    console.log(`🧠 Aprendizaje guardado | Win Rate: ${Math.round(recentWinRate * 100)}% | Score Adj: ${learning.minScoreAdjust > 0 ? '+' : ''}${learning.minScoreAdjust}`);
+  }
+}
+
+// Obtener insights de aprendizaje
+function getLearningInsights() {
+  const insights = {
+    totalOperations: learning.totalAnalyzed,
+    bestModel: null,
+    worstModel: null,
+    bestHour: null,
+    bestAsset: null,
+    recommendations: []
+  };
+  
+  // Mejor y peor modelo
+  let bestModelWR = 0, worstModelWR = 1;
+  for (const [model, adj] of Object.entries(learning.scoreAdjustments)) {
+    const modelStats = stats.byModel[model];
+    if (modelStats && modelStats.wins + modelStats.losses >= 3) {
+      const wr = modelStats.wins / (modelStats.wins + modelStats.losses);
+      if (wr > bestModelWR) { bestModelWR = wr; insights.bestModel = { model, winRate: Math.round(wr * 100) }; }
+      if (wr < worstModelWR) { worstModelWR = wr; insights.worstModel = { model, winRate: Math.round(wr * 100) }; }
+    }
+  }
+  
+  // Mejor hora
+  let bestHourWR = 0;
+  for (const [hour, data] of Object.entries(learning.byHour)) {
+    if (data.total >= 3) {
+      const wr = data.wins / data.total;
+      if (wr > bestHourWR) { bestHourWR = wr; insights.bestHour = { hour: parseInt(hour), winRate: Math.round(wr * 100) }; }
+    }
+  }
+  
+  // Mejor activo
+  let bestAssetWR = 0;
+  for (const [symbol, data] of Object.entries(learning.byAsset)) {
+    if (data.total >= 3) {
+      const wr = data.wins / data.total;
+      if (wr > bestAssetWR) { bestAssetWR = wr; insights.bestAsset = { symbol, winRate: Math.round(wr * 100) }; }
+    }
+  }
+  
+  return insights;
+}
+
 const stats = {
   total: 0, wins: 0, losses: 0, pending: 0,
   tp1Hits: 0, tp2Hits: 0, tp3Hits: 0,
   byModel: {}, byAsset: {}, 
-  learning: { scoreAdjustments: {} }
+  learning // Referencia al sistema de aprendizaje
 };
 
 for (const symbol of Object.keys(ASSETS)) {
@@ -702,20 +884,26 @@ const SMC = {
     signals.sort((a, b) => b.baseScore - a.baseScore);
     const best = signals[0];
     
-    const adj = stats.learning.scoreAdjustments[best.model] || 0;
-    const finalScore = Math.min(100, Math.max(0, best.baseScore + adj));
+    // Usar sistema de aprendizaje inteligente
+    const hour = new Date().getHours();
+    const smartAdj = getSmartScoreAdjustment(best.model, data.symbol || Object.keys(ASSETS)[0], hour);
+    const finalScore = Math.min(100, Math.max(0, best.baseScore + smartAdj));
     
-    if (finalScore < minScore) {
+    // Score mínimo dinámico basado en aprendizaje
+    const dynamicMinScore = Math.max(55, minScore + (learning.minScoreAdjust || 0));
+    
+    if (finalScore < dynamicMinScore) {
       return {
         action: 'WAIT',
         score: finalScore,
         model: best.model,
-        reason: `Score ${finalScore}% < ${minScore}% min`,
+        reason: `Score ${finalScore}% < ${dynamicMinScore}% (min dinámico)`,
         analysis: {
           structureM5: structureM5.trend,
           structureH1: structureH1.trend,
           mtfConfluence,
-          premiumDiscount
+          premiumDiscount,
+          smartAdjustment: smartAdj
         }
       };
     }
@@ -1265,19 +1453,26 @@ function closeSignal(id, status, symbol) {
   stats.byModel[signal.model] = stats.byModel[signal.model] || { wins: 0, losses: 0 };
   stats.byAsset[signal.symbol] = stats.byAsset[signal.symbol] || { wins: 0, losses: 0, total: 0 };
   
-  if (status === 'WIN') {
+  const isWin = status === 'WIN';
+  
+  if (isWin) {
     stats.wins++;
     stats.byModel[signal.model].wins++;
     stats.byAsset[signal.symbol].wins++;
-    stats.learning.scoreAdjustments[signal.model] = (stats.learning.scoreAdjustments[signal.model] || 0) + 2;
   } else if (status === 'LOSS') {
     stats.losses++;
     stats.byModel[signal.model].losses++;
     stats.byAsset[signal.symbol].losses++;
-    stats.learning.scoreAdjustments[signal.model] = (stats.learning.scoreAdjustments[signal.model] || 0) - 1;
   }
   
+  stats.byAsset[signal.symbol].total++;
   stats.pending = signalHistory.filter(s => s.status === 'PENDING').length;
+  
+  // Actualizar sistema de aprendizaje adaptativo
+  if (status === 'WIN' || status === 'LOSS') {
+    updateLearning(signal, isWin);
+    console.log(`🧠 ELISA aprendiendo de Señal #${signal.id} | ${status} | Modelo: ${signal.model}`);
+  }
 }
 
 // =============================================
@@ -1392,14 +1587,36 @@ function connectDeriv() {
   });
   
   derivWs.on('close', () => {
-    console.log('❌ Desconectado');
+    console.log('❌ Desconectado de Deriv');
     isConnected = false;
     reconnectAttempts++;
-    setTimeout(connectDeriv, Math.min(5000 * reconnectAttempts, 30000));
+    const delay = Math.min(5000 * reconnectAttempts, 30000);
+    console.log(`🔄 Reconectando en ${delay/1000}s... (intento ${reconnectAttempts})`);
+    setTimeout(connectDeriv, delay);
   });
   
-  derivWs.on('error', (err) => console.error('WS Error:', err.message));
+  derivWs.on('error', (err) => {
+    console.error('❌ WS Error:', err.message);
+  });
 }
+
+// Keepalive - Ping cada 30 segundos para mantener conexión activa
+setInterval(() => {
+  if (derivWs?.readyState === WebSocket.OPEN) {
+    derivWs.send(JSON.stringify({ ping: 1 }));
+  }
+}, 30000);
+
+// Monitor de conexión - Verifica cada 60 segundos
+setInterval(() => {
+  if (!isConnected && derivWs?.readyState !== WebSocket.CONNECTING) {
+    console.log('⚠️ Monitor: Conexión perdida, forzando reconexión...');
+    if (derivWs) {
+      try { derivWs.close(); } catch(e) {}
+    }
+    connectDeriv();
+  }
+}, 60000);
 
 function requestH1(symbol) {
   if (derivWs?.readyState === WebSocket.OPEN) {
@@ -1573,6 +1790,300 @@ app.listen(PORT, () => {
       derivWs.send(JSON.stringify({ ping: 1 }));
     }
   }, 30000);
+});
+
+// =============================================
+// INTEGRACIÓN WOMPI - PAGOS COLOMBIA
+// =============================================
+
+const WOMPI_PUBLIC_KEY = process.env.WOMPI_PUBLIC_KEY || 'pub_prod_6weSthG7fsBGqfWDk3nwMgiuEUxH8S7U';
+const WOMPI_PRIVATE_KEY = process.env.WOMPI_PRIVATE_KEY || 'prv_prod_d2ajkQin28en8IH6efkeW6SB8AU0fCdG';
+const WOMPI_EVENTS_SECRET = process.env.WOMPI_EVENTS_SECRET || 'prod_events_qNbHzrAfNmSaU5I0pxU0Trj7XHsueyPG';
+const WOMPI_INTEGRITY_KEY = process.env.WOMPI_INTEGRITY_KEY || 'prod_integrity_iCriSAnih2uCpSAGrNHeAbcZyvRipcR3';
+
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://mtzycmqtxdvoazomipye.supabase.co';
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || '';
+
+const supabase = SUPABASE_SERVICE_KEY ? createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY) : null;
+
+// Generar firma de integridad para Wompi
+function generateWompiSignature(reference, amountCents, currency) {
+  const data = `${reference}${amountCents}${currency}${WOMPI_INTEGRITY_KEY}`;
+  return crypto.createHash('sha256').update(data).digest('hex');
+}
+
+// Obtener planes y precios
+app.get('/api/plans', async (req, res) => {
+  try {
+    if (!supabase) {
+      // Planes hardcoded si no hay Supabase
+      return res.json({
+        plans: [
+          {
+            id: 'basic',
+            name: 'Básico',
+            slug: 'basic',
+            description: 'Ideal para comenzar',
+            features: ['2 activos', '5 señales/día', '3 modelos SMC'],
+            prices: {
+              monthly: { cop: 29900, usd: 9 },
+              semiannual: { cop: 152000, usd: 46, discount: 15 },
+              annual: { cop: 269000, usd: 81, discount: 25 }
+            }
+          },
+          {
+            id: 'premium',
+            name: 'Premium',
+            slug: 'premium',
+            description: 'Para traders serios',
+            features: ['4 activos', '15 señales/día', '5 modelos SMC', 'Telegram', 'Trailing Stop'],
+            prices: {
+              monthly: { cop: 59900, usd: 19 },
+              semiannual: { cop: 305000, usd: 97, discount: 15 },
+              annual: { cop: 539000, usd: 171, discount: 25 }
+            }
+          },
+          {
+            id: 'elite',
+            name: 'Elite',
+            slug: 'elite',
+            description: 'Acceso total',
+            features: ['5 activos', 'Ilimitadas', '6 modelos SMC', 'Telegram', 'ELISA IA', 'Soporte prioritario'],
+            prices: {
+              monthly: { cop: 99900, usd: 29 },
+              semiannual: { cop: 509000, usd: 148, discount: 15 },
+              annual: { cop: 899000, usd: 261, discount: 25 }
+            }
+          }
+        ]
+      });
+    }
+
+    const { data: plans } = await supabase
+      .from('plans')
+      .select('*, plan_prices(*)');
+    
+    res.json({ plans });
+  } catch (error) {
+    console.error('Error getting plans:', error);
+    res.status(500).json({ error: 'Error obteniendo planes' });
+  }
+});
+
+// Obtener suscripción del usuario
+app.get('/api/subscription/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    
+    if (!supabase) {
+      // Trial por defecto si no hay Supabase
+      return res.json({
+        subscription: {
+          status: 'trial',
+          plan: 'premium',
+          trial_ends_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
+          limits: {
+            assets: ['stpRNG', '1HZ75V', 'frxXAUUSD', 'frxGBPUSD'],
+            signals_per_day: 15,
+            telegram: true,
+            elisa_chat: false
+          }
+        }
+      });
+    }
+
+    const { data: subscription } = await supabase
+      .from('subscriptions')
+      .select('*, plans(*)')
+      .eq('user_id', userId)
+      .single();
+    
+    if (!subscription) {
+      return res.json({ subscription: null });
+    }
+
+    // Verificar si el trial expiró
+    if (subscription.status === 'trial' && new Date(subscription.trial_ends_at) < new Date()) {
+      await supabase
+        .from('subscriptions')
+        .update({ status: 'expired' })
+        .eq('id', subscription.id);
+      subscription.status = 'expired';
+    }
+
+    res.json({ subscription });
+  } catch (error) {
+    console.error('Error getting subscription:', error);
+    res.status(500).json({ error: 'Error obteniendo suscripción' });
+  }
+});
+
+// Crear transacción Wompi
+app.post('/api/payments/wompi/create', async (req, res) => {
+  try {
+    const { userId, planSlug, period, customerEmail, customerName } = req.body;
+
+    // Obtener precio del plan
+    const prices = {
+      basic: { monthly: 29900, semiannual: 152000, annual: 269000 },
+      premium: { monthly: 59900, semiannual: 305000, annual: 539000 },
+      elite: { monthly: 99900, semiannual: 509000, annual: 899000 }
+    };
+
+    const amountCOP = prices[planSlug]?.[period];
+    if (!amountCOP) {
+      return res.status(400).json({ error: 'Plan o período inválido' });
+    }
+
+    // Generar referencia única
+    const reference = `TMP-${userId.slice(0, 8)}-${Date.now()}`;
+    const amountCents = amountCOP * 100; // Wompi usa centavos
+    const currency = 'COP';
+
+    // Generar firma de integridad
+    const signature = generateWompiSignature(reference, amountCents, currency);
+
+    // Crear registro de pago en DB
+    if (supabase) {
+      await supabase.from('payments').insert({
+        user_id: userId,
+        provider: 'wompi',
+        amount: amountCOP,
+        currency: 'COP',
+        status: 'pending',
+        metadata: { plan: planSlug, period, reference }
+      });
+    }
+
+    res.json({
+      publicKey: WOMPI_PUBLIC_KEY,
+      reference,
+      amountCents,
+      currency,
+      signature,
+      redirectUrl: `${process.env.FRONTEND_URL || 'https://trading-master-pro.vercel.app'}/payment/success`,
+      customerEmail,
+      customerName
+    });
+  } catch (error) {
+    console.error('Error creating Wompi payment:', error);
+    res.status(500).json({ error: 'Error creando pago' });
+  }
+});
+
+// Webhook de Wompi
+app.post('/api/webhooks/wompi', async (req, res) => {
+  try {
+    const event = req.body;
+    
+    console.log('📩 Webhook Wompi recibido:', event.event);
+
+    // Verificar firma del webhook
+    const checksum = req.headers['x-event-checksum'];
+    const timestamp = req.headers['x-timestamp'];
+    
+    if (checksum) {
+      const expectedChecksum = crypto
+        .createHash('sha256')
+        .update(`${event.event}${event.data?.transaction?.id}${event.data?.transaction?.status}${timestamp}${WOMPI_EVENTS_SECRET}`)
+        .digest('hex');
+      
+      if (checksum !== expectedChecksum) {
+        console.log('⚠️ Checksum inválido');
+        return res.status(400).json({ error: 'Invalid checksum' });
+      }
+    }
+
+    if (event.event === 'transaction.updated') {
+      const transaction = event.data.transaction;
+      const reference = transaction.reference;
+      const status = transaction.status;
+
+      console.log(`💳 Transacción ${reference}: ${status}`);
+
+      if (status === 'APPROVED' && supabase) {
+        // Extraer userId de la referencia (TMP-USERID-TIMESTAMP)
+        const parts = reference.split('-');
+        const userIdPrefix = parts[1];
+
+        // Buscar el pago pendiente
+        const { data: payment } = await supabase
+          .from('payments')
+          .select('*')
+          .ilike('user_id', `${userIdPrefix}%`)
+          .eq('status', 'pending')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+
+        if (payment) {
+          // Actualizar pago
+          await supabase
+            .from('payments')
+            .update({ 
+              status: 'approved',
+              provider_transaction_id: transaction.id
+            })
+            .eq('id', payment.id);
+
+          // Calcular fechas según período
+          const periods = {
+            monthly: 30,
+            semiannual: 180,
+            annual: 365
+          };
+          const period = payment.metadata?.period || 'monthly';
+          const days = periods[period];
+          
+          // Obtener plan
+          const { data: plan } = await supabase
+            .from('plans')
+            .select('id')
+            .eq('slug', payment.metadata?.plan)
+            .single();
+
+          // Actualizar suscripción
+          await supabase
+            .from('subscriptions')
+            .update({
+              plan_id: plan?.id,
+              status: 'active',
+              period,
+              current_period_start: new Date().toISOString(),
+              current_period_end: new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString(),
+              updated_at: new Date().toISOString()
+            })
+            .eq('user_id', payment.user_id);
+
+          console.log(`✅ Suscripción activada para usuario ${payment.user_id}`);
+        }
+      }
+    }
+
+    res.json({ received: true });
+  } catch (error) {
+    console.error('Error webhook Wompi:', error);
+    res.status(500).json({ error: 'Error procesando webhook' });
+  }
+});
+
+// Verificar estado de transacción Wompi
+app.get('/api/payments/wompi/verify/:transactionId', async (req, res) => {
+  try {
+    const { transactionId } = req.params;
+    
+    const response = await fetch(`https://production.wompi.co/v1/transactions/${transactionId}`, {
+      headers: {
+        'Authorization': `Bearer ${WOMPI_PRIVATE_KEY}`
+      }
+    });
+    
+    const data = await response.json();
+    res.json(data);
+  } catch (error) {
+    console.error('Error verifying transaction:', error);
+    res.status(500).json({ error: 'Error verificando transacción' });
+  }
 });
 
 export default app;
