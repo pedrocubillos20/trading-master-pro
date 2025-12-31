@@ -2086,4 +2086,224 @@ app.get('/api/payments/wompi/verify/:transactionId', async (req, res) => {
   }
 });
 
+// =============================================
+// ENDPOINT DE VELAS - Para el gráfico
+// =============================================
+app.get('/api/candles/:symbol', (req, res) => {
+  const { symbol } = req.params;
+  const data = assetData[symbol];
+  
+  if (!data) {
+    return res.status(404).json({ error: 'Asset not found', candles: [], candlesH1: [] });
+  }
+  
+  res.json({
+    symbol,
+    candles: data.candles || [],
+    candlesH1: data.candlesH1 || [],
+    price: data.price,
+    h1Loaded: data.h1Loaded || false
+  });
+});
+
+// =============================================
+// ENDPOINT ELISA CHAT - Alias para el frontend
+// =============================================
+app.post('/api/elisa/chat', (req, res) => {
+  const { message, asset } = req.body;
+  const response = Elisa.chat(message || '', asset || 'stpRNG');
+  res.json(response);
+});
+
+// =============================================
+// PANEL DE ADMINISTRADOR - USUARIOS
+// =============================================
+app.get('/api/admin/users', async (req, res) => {
+  try {
+    if (!supabase) {
+      return res.json({ 
+        users: [],
+        error: 'Supabase no configurado' 
+      });
+    }
+    
+    // Obtener usuarios de auth.users
+    const { data: authUsers, error: authError } = await supabase.auth.admin.listUsers();
+    
+    if (authError) {
+      console.error('Error fetching auth users:', authError);
+      // Intentar obtener solo de la tabla profiles
+    }
+    
+    // Obtener perfiles con suscripciones
+    const { data: profiles, error: profilesError } = await supabase
+      .from('profiles')
+      .select(`
+        id,
+        email,
+        full_name,
+        created_at,
+        updated_at
+      `)
+      .order('created_at', { ascending: false });
+    
+    if (profilesError) {
+      console.error('Error fetching profiles:', profilesError);
+    }
+    
+    // Obtener suscripciones
+    const { data: subscriptions, error: subsError } = await supabase
+      .from('subscriptions')
+      .select(`
+        id,
+        user_id,
+        plan_id,
+        status,
+        trial_ends_at,
+        current_period_start,
+        current_period_end,
+        created_at,
+        plans (
+          id,
+          name,
+          slug,
+          price
+        )
+      `);
+    
+    if (subsError) {
+      console.error('Error fetching subscriptions:', subsError);
+    }
+    
+    // Combinar datos
+    const users = (profiles || []).map(profile => {
+      const subscription = (subscriptions || []).find(s => s.user_id === profile.id);
+      const authUser = authUsers?.users?.find(u => u.id === profile.id);
+      
+      return {
+        id: profile.id,
+        email: profile.email || authUser?.email,
+        full_name: profile.full_name,
+        created_at: profile.created_at,
+        last_sign_in: authUser?.last_sign_in_at,
+        subscription: subscription ? {
+          id: subscription.id,
+          status: subscription.status,
+          plan: subscription.plans?.slug || 'trial',
+          plan_name: subscription.plans?.name || 'Trial',
+          price: subscription.plans?.price,
+          trial_ends_at: subscription.trial_ends_at,
+          current_period_start: subscription.current_period_start,
+          current_period_end: subscription.current_period_end
+        } : {
+          status: 'trial',
+          plan: 'trial',
+          plan_name: 'Trial',
+          trial_ends_at: new Date(new Date(profile.created_at).getTime() + 5 * 24 * 60 * 60 * 1000).toISOString()
+        }
+      };
+    });
+    
+    // Si no hay profiles pero hay authUsers, usar esos
+    if (users.length === 0 && authUsers?.users?.length > 0) {
+      const fallbackUsers = authUsers.users.map(user => ({
+        id: user.id,
+        email: user.email,
+        created_at: user.created_at,
+        last_sign_in: user.last_sign_in_at,
+        subscription: {
+          status: 'trial',
+          plan: 'trial',
+          plan_name: 'Trial',
+          trial_ends_at: new Date(new Date(user.created_at).getTime() + 5 * 24 * 60 * 60 * 1000).toISOString()
+        }
+      }));
+      
+      return res.json({ users: fallbackUsers, total: fallbackUsers.length });
+    }
+    
+    res.json({ 
+      users,
+      total: users.length,
+      stats: {
+        total: users.length,
+        trial: users.filter(u => u.subscription?.status === 'trial').length,
+        active: users.filter(u => u.subscription?.status === 'active').length,
+        expired: users.filter(u => u.subscription?.status === 'expired').length
+      }
+    });
+    
+  } catch (error) {
+    console.error('Error in admin users:', error);
+    res.status(500).json({ error: 'Error obteniendo usuarios', users: [] });
+  }
+});
+
+// Actualizar plan de usuario (admin)
+app.post('/api/admin/users/:userId/subscription', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { plan, status, trial_days } = req.body;
+    
+    if (!supabase) {
+      return res.status(500).json({ error: 'Supabase no configurado' });
+    }
+    
+    // Buscar plan
+    const { data: planData } = await supabase
+      .from('plans')
+      .select('id')
+      .eq('slug', plan)
+      .single();
+    
+    if (!planData) {
+      return res.status(404).json({ error: 'Plan no encontrado' });
+    }
+    
+    // Verificar si existe suscripción
+    const { data: existingSub } = await supabase
+      .from('subscriptions')
+      .select('id')
+      .eq('user_id', userId)
+      .single();
+    
+    const subscriptionData = {
+      user_id: userId,
+      plan_id: planData.id,
+      status: status || 'active',
+      current_period_start: new Date().toISOString(),
+      current_period_end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+    };
+    
+    if (trial_days) {
+      subscriptionData.trial_ends_at = new Date(Date.now() + trial_days * 24 * 60 * 60 * 1000).toISOString();
+      subscriptionData.status = 'trial';
+    }
+    
+    let result;
+    if (existingSub) {
+      result = await supabase
+        .from('subscriptions')
+        .update(subscriptionData)
+        .eq('user_id', userId)
+        .select();
+    } else {
+      result = await supabase
+        .from('subscriptions')
+        .insert(subscriptionData)
+        .select();
+    }
+    
+    if (result.error) {
+      throw result.error;
+    }
+    
+    res.json({ success: true, subscription: result.data[0] });
+    
+  } catch (error) {
+    console.error('Error updating subscription:', error);
+    res.status(500).json({ error: 'Error actualizando suscripción' });
+  }
+});
+
 export default app;

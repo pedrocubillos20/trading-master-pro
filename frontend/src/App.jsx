@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import Dashboard from './Dashboard';
 import Login from './Login';
+import AdminPanel from './AdminPanel';
 
 // =============================================
 // CONFIGURACIÓN SUPABASE
@@ -17,6 +18,9 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 export default function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  // Detectar si es ruta de admin
+  const isAdminRoute = window.location.pathname === '/admin' || window.location.hash === '#/admin';
 
   useEffect(() => {
     // Verificar sesión actual
@@ -48,6 +52,11 @@ export default function App() {
     await supabase.auth.signOut();
     setUser(null);
   };
+
+  // Si es ruta de admin, mostrar AdminPanel
+  if (isAdminRoute) {
+    return <AdminPanel />;
+  }
 
   // Pantalla de carga
   if (loading) {
