@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
 
+const API_URL = import.meta.env.VITE_API_URL || 'https://trading-master-pro-production.up.railway.app';
+
 export default function Login({ supabase, onLogin }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [mode, setMode] = useState('login'); // 'login' o 'register'
+  const [mode, setMode] = useState('login');
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -31,9 +33,26 @@ export default function Login({ supabase, onLogin }) {
         if (error) throw error;
         
         if (data.user) {
+          // Crear suscripción trial automáticamente via API
+          try {
+            await fetch(`${API_URL}/api/admin/users`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                user_id: data.user.id,
+                email: email,
+                plan_slug: 'élite',
+                status: 'trial',
+                period: 'mensual'
+              })
+            });
+          } catch (apiErr) {
+            console.log('Trial setup skipped:', apiErr);
+          }
+          
           setError('');
           setMode('login');
-          alert('✅ Cuenta creada. Por favor inicia sesión.');
+          alert('✅ Cuenta creada exitosamente. Por favor inicia sesión.');
         }
       }
     } catch (err) {
@@ -43,7 +62,9 @@ export default function Login({ supabase, onLogin }) {
       } else if (err.message.includes('Email not confirmed')) {
         setError('Por favor confirma tu email antes de iniciar sesión');
       } else if (err.message.includes('already registered')) {
-        setError('Este email ya está registrado');
+        setError('Este email ya está registrado. Intenta iniciar sesión.');
+      } else if (err.message.includes('Password should be')) {
+        setError('La contraseña debe tener al menos 6 caracteres');
       } else {
         setError(err.message || 'Error de autenticación');
       }
@@ -54,14 +75,12 @@ export default function Login({ supabase, onLogin }) {
 
   return (
     <div className="min-h-screen bg-[#06060a] flex items-center justify-center p-4">
-      {/* Background effects */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl" />
         <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl" />
       </div>
 
       <div className="relative w-full max-w-md">
-        {/* Logo */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-400 to-cyan-400 mb-4">
             <svg className="w-8 h-8 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -72,7 +91,6 @@ export default function Login({ supabase, onLogin }) {
           <p className="text-white/50 text-sm">Plataforma exclusiva para afiliados</p>
         </div>
 
-        {/* Card */}
         <div className="bg-[#0d0d12] rounded-2xl border border-white/10 p-6 shadow-2xl">
           <h2 className="text-xl font-semibold text-white mb-6 text-center">
             {mode === 'login' ? 'Iniciar Sesión' : 'Crear Cuenta'}
@@ -153,7 +171,6 @@ export default function Login({ supabase, onLogin }) {
           </div>
         </div>
 
-        {/* Footer */}
         <p className="text-center text-white/30 text-xs mt-6">
           © 2024 Trading Master Pro. Todos los derechos reservados.
         </p>
