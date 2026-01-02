@@ -259,12 +259,15 @@ export default function Dashboard({ user, onLogout }) {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Data fetching
+  // Data fetching - incluir userId para filtrar activos Elite
   useEffect(() => {
     let isCancelled = false;
     const fetchData = async () => {
       try {
-        const res = await fetch(`${API_URL}/api/dashboard`);
+        const url = user?.id 
+          ? `${API_URL}/api/dashboard?userId=${user.id}`
+          : `${API_URL}/api/dashboard`;
+        const res = await fetch(url);
         const json = await res.json();
         if (!isCancelled && mountedRef.current) {
           setData(json);
@@ -275,7 +278,7 @@ export default function Dashboard({ user, onLogout }) {
     fetchData();
     const interval = setInterval(fetchData, 3000);
     return () => { isCancelled = true; clearInterval(interval); };
-  }, [selectedAsset]);
+  }, [selectedAsset, user?.id]);
 
   useEffect(() => {
     if (!selectedAsset) return;
