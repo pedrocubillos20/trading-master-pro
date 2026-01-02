@@ -1871,83 +1871,46 @@ app.get('/api/plans', async (req, res) => {
 });
 
 // Obtener suscripción del usuario
+
 app.get('/api/subscription/:userId', async (req, res) => {
+
   try {
+
     const { userId } = req.params;
+
     
+
     if (!supabase) {
+
+      // Trial por defecto si no hay Supabase
+
       return res.json({
+
         subscription: {
+
           status: 'trial',
-          plan: 'trial',
-          trial_ends_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString()
+
+          plan: 'premium',
+
+          trial_ends_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
+
+          limits: {
+
+            assets: ['stpRNG', '1HZ75V', 'frxXAUUSD', 'frxGBPUSD'],
+
+            signals_per_day: 15,
+
+            telegram: true,
+
+            elisa_chat: false
+
+          }
+
         }
+
       });
+
     }
-
-    // Buscar en tabla "suscripciones" (español)
-    const { data: subscription, error } = await supabase
-      .from('suscripciones')
-      .select('*, planes:id_del_plan(identificacion, nombre, babosa)')
-      .eq('id_de_usuario', userId)
-      .single();
-    
-    if (error || !subscription) {
-      // Si no hay suscripción, devolver trial por defecto
-      return res.json({
-        subscription: {
-          status: 'trial',
-          plan: 'trial',
-          trial_ends_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString()
-        }
-      });
-    }
-
-    // Mapear campos español a inglés para el frontend
-    const mappedSubscription = {
-      id: subscription.identificacion,
-      user_id: subscription.id_de_usuario,
-      plan_id: subscription.id_del_plan,
-      status: subscription.estado || 'trial',
-      period: subscription.período,
-      plans: subscription.planes ? {
-        id: subscription.planes.identificacion,
-        name: subscription.planes.nombre,
-        slug: subscription.planes.babosa
-      } : null
-    };
-
-    // Verificar si el trial expiró
-    if (mappedSubscription.status === 'trial') {
-      // Calcular fecha de expiración (5 días después de creación)
-      const createdAt = new Date(subscription.created_at || Date.now());
-      const trialEnd = new Date(createdAt.getTime() + 5 * 24 * 60 * 60 * 1000);
-      
-      if (new Date() > trialEnd) {
-        mappedSubscription.status = 'expired';
-        // Actualizar en DB
-        await supabase
-          .from('suscripciones')
-          .update({ estado: 'expired' })
-          .eq('identificacion', subscription.identificacion);
-      }
-      
-      mappedSubscription.trial_ends_at = trialEnd.toISOString();
-    }
-
-    res.json({ subscription: mappedSubscription });
-  } catch (error) {
-    console.error('Error getting subscription:', error);
-    res.json({
-      subscription: {
-        status: 'trial',
-        plan: 'trial',
-        trial_ends_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString()
-      }
-    });
-  }
-});
-
     const { data: subscription } = await supabase
       .from('subscriptions')
       .select('*, plans(*)')
