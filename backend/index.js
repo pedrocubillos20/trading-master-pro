@@ -2305,5 +2305,39 @@ app.post('/api/admin/users/:userId/subscription', async (req, res) => {
     res.status(500).json({ error: 'Error actualizando suscripción' });
   }
 });
-
+// =============================================
+// ENDPOINT ADMIN - USUARIOS
+// =============================================
+app.get('/api/admin/users', async (req, res) => {
+  try {
+    if (!supabase) {
+      return res.json({ users: [], error: 'Supabase no configurado' });
+    }
+    
+    const { data: authUsers } = await supabase.auth.admin.listUsers();
+    
+    const { data: subscriptions } = await supabase
+      .from('suscripciones')
+      .select('*');
+    
+    const users = (authUsers?.users || []).map(user => {
+      const sub = (subscriptions || []).find(s => s.id_de_usuario === user.id);
+      return {
+        id: user.id,
+        email: user.email,
+        created_at: user.created_at,
+        subscription: sub ? {
+          status: sub.estado || 'trial',
+          plan: sub.id_del_plan,
+          period: sub.período
+        } : { status: 'trial', plan: 'trial' }
+      };
+    });
+    
+    res.json({ users, total: users.length });
+  } catch (error) {
+    console.error('Admin error:', error);
+    res.json({ users: [], error: error.message });
+  }
+});
 export default app;
