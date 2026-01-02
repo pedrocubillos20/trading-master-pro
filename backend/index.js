@@ -140,11 +140,17 @@ async function sendTelegramUpdate(signal, updateType) {
 // CONFIGURACIÓN DE ACTIVOS
 // =============================================
 const ASSETS = {
-  'stpRNG': { name: 'Step Index', shortName: 'Step', emoji: '📊', decimals: 2, pip: 0.01 },
-  '1HZ75V': { name: 'Volatility 75', shortName: 'V75', emoji: '📈', decimals: 2, pip: 0.01 },
-  'frxXAUUSD': { name: 'Oro (XAU/USD)', shortName: 'XAU', emoji: '🥇', decimals: 2, pip: 0.01 },
-  'frxGBPUSD': { name: 'GBP/USD', shortName: 'GBP', emoji: '💷', decimals: 5, pip: 0.0001 },
-  'cryBTCUSD': { name: 'Bitcoin', shortName: 'BTC', emoji: '₿', decimals: 2, pip: 1 }
+  // Activos base (todos los planes)
+  'stpRNG': { name: 'Step Index', shortName: 'Step', emoji: '📊', decimals: 2, pip: 0.01, type: 'synthetic' },
+  '1HZ75V': { name: 'Volatility 75', shortName: 'V75', emoji: '📈', decimals: 2, pip: 0.01, type: 'synthetic' },
+  'frxXAUUSD': { name: 'Oro (XAU/USD)', shortName: 'XAU', emoji: '🥇', decimals: 2, pip: 0.01, type: 'forex' },
+  'frxGBPUSD': { name: 'GBP/USD', shortName: 'GBP', emoji: '💷', decimals: 5, pip: 0.0001, type: 'forex' },
+  'cryBTCUSD': { name: 'Bitcoin', shortName: 'BTC', emoji: '₿', decimals: 2, pip: 1, type: 'crypto' },
+  // Activos ELITE ONLY (Boom/Crash) - Símbolos correctos de Deriv
+  'BOOM1000': { name: 'Boom 1000 Index', shortName: 'Boom1K', emoji: '🚀', decimals: 2, pip: 0.01, type: 'synthetic', eliteOnly: true },
+  'BOOM500': { name: 'Boom 500 Index', shortName: 'Boom500', emoji: '💥', decimals: 2, pip: 0.01, type: 'synthetic', eliteOnly: true },
+  'CRASH1000': { name: 'Crash 1000 Index', shortName: 'Crash1K', emoji: '📉', decimals: 2, pip: 0.01, type: 'synthetic', eliteOnly: true },
+  'CRASH500': { name: 'Crash 500 Index', shortName: 'Crash500', emoji: '💣', decimals: 2, pip: 0.01, type: 'synthetic', eliteOnly: true }
 };
 
 // =============================================
@@ -1646,7 +1652,7 @@ function analyzeAsset(symbol) {
   
   if (data.lockedSignal) return;
   
-  if (signal.action !== 'WAIT' && signal.action !== 'LOADING' && signal.score >= 60) {
+  if (signal.action !== 'WAIT' && signal.action !== 'LOADING' && signal.score >= 55) {
     const hasPending = signalHistory.some(s => s.symbol === symbol && s.status === 'PENDING');
     
     if (!hasPending) {
@@ -1693,13 +1699,45 @@ function analyzeAsset(symbol) {
 // =============================================
 // API ENDPOINTS
 // =============================================
-app.get('/', (req, res) => res.json({ name: 'Trading Master Pro', version: '12.7', connected: isConnected }));
+app.get('/', (req, res) => res.json({ name: 'Trading Master Pro', version: '13.1', connected: isConnected }));
 
-app.get('/api/dashboard', (req, res) => {
-  res.json({
-    connected: isConnected,
-    timestamp: Date.now(),
-    assets: Object.entries(assetData).map(([symbol, data]) => ({
+// Dashboard con filtro de activos por plan
+app.get('/api/dashboard', async (req, res) => {
+  const { userId } = req.query;
+  let isElite = false;
+  
+  // Verificar si el usuario tiene plan Elite
+  if (userId && supabase) {
+    try {
+      const { data: sub } = await supabase
+        .from('suscripciones')
+        .select('estado, id_del_plan')
+        .eq('id_de_usuario', userId)
+        .single();
+      
+      if (sub && (sub.estado === 'activo' || sub.estado === 'active')) {
+        // Verificar si es plan Elite
+        const { data: plan } = await supabase
+          .from('planes')
+          .select('babosa')
+          .eq('identificacion', sub.id_del_plan)
+          .single();
+        
+        isElite = plan?.babosa?.includes('élite') || plan?.babosa?.includes('elite');
+      }
+    } catch (e) {
+      console.log('Dashboard subscription check:', e.message);
+    }
+  }
+  
+  // Filtrar activos - mostrar todos para Elite, ocultar eliteOnly para otros
+  const filteredAssets = Object.entries(assetData)
+    .filter(([symbol]) => {
+      const config = ASSETS[symbol];
+      if (config?.eliteOnly && !isElite) return false;
+      return true;
+    })
+    .map(([symbol, data]) => ({
       symbol,
       ...ASSETS[symbol],
       price: data.price,
@@ -1713,10 +1751,16 @@ app.get('/api/dashboard', (req, res) => {
       demandZones: data.demandZones?.length || 0,
       supplyZones: data.supplyZones?.length || 0,
       fvgZones: data.fvgZones?.length || 0
-    })),
+    }));
+  
+  res.json({
+    connected: isConnected,
+    timestamp: Date.now(),
+    assets: filteredAssets,
     recentSignals: signalHistory.slice(0, 30),
     stats,
-    learning: stats.learning
+    learning: stats.learning,
+    isElite
   });
 });
 
