@@ -1,51 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import Pricing from './Pricing';
-import { 
-  MODULES, 
-  PLAN_ASSETS, 
-  ASSETS_INFO, 
-  PLAN_LIMITS, 
-  PLANS_INFO,
-  hasModuleAccess, 
-  hasAssetAccess,
-  getRequiredPlan 
-} from './config/plans';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://trading-master-pro-production.up.railway.app';
 
 // =============================================
-// PANTALLA DE BLOQUEO - TRIAL EXPIRADO
+// ELISA CHAT - COMPONENTE AISLADO
 // =============================================
-const ExpiredScreen = ({ onSelectPlan, user }) => (
-  <div className="fixed inset-0 bg-[#06060a] z-50 flex items-center justify-center p-4">
-    <div className="max-w-md w-full text-center">
-      <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-red-500/20 flex items-center justify-center">
-        <span className="text-4xl">⏰</span>
-      </div>
-      <h1 className="text-2xl font-bold text-white mb-3">Tu período de prueba ha terminado</h1>
-      <p className="text-white/60 mb-6">
-        Gracias por probar Trading Master Pro. Para continuar usando la plataforma, 
-        selecciona un plan que se adapte a tus necesidades.
-      </p>
-      <div className="space-y-3">
-        <button 
-          onClick={onSelectPlan}
-          className="w-full py-4 bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 rounded-xl text-black font-bold text-lg transition-all"
-        >
-          🚀 Ver Planes y Precios
-        </button>
-        <p className="text-white/40 text-sm">
-          Planes desde $29,900 COP/mes
-        </p>
-      </div>
-    </div>
-  </div>
-);
-
-// =============================================
-// ELISA CHAT - COMPONENTE
-// =============================================
-const ElisaChat = ({ selectedAsset, isMobile, subscription }) => {
+const ElisaChat = ({ selectedAsset, isMobile }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState('');
@@ -53,12 +14,13 @@ const ElisaChat = ({ selectedAsset, isMobile, subscription }) => {
   const [initialized, setInitialized] = useState(false);
   
   const messagesEndRef = useRef(null);
-  const planSlug = subscription?.plans?.slug || subscription?.plan || 'trial';
-  const hasAccess = hasModuleAccess('chat', planSlug);
+  const inputRef = useRef(null);
 
   useEffect(() => {
     if (messages.length > 0) {
-      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+      setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
     }
   }, [messages.length]);
 
@@ -69,105 +31,158 @@ const ElisaChat = ({ selectedAsset, isMobile, subscription }) => {
     setText('');
     setMessages(prev => [...prev, { role: 'user', content: messageText }]);
     setLoading(true);
-    setInitialized(true);
 
     try {
-      const res = await fetch(`${API_URL}/api/elisa/chat`, {
+      const response = await fetch(`${API_URL}/api/ai/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: messageText, asset: selectedAsset })
+        body: JSON.stringify({ question: messageText, symbol: selectedAsset || 'stpRNG' })
       });
-      const data = await res.json();
-      if (data.response) {
-        setMessages(prev => [...prev, { role: 'assistant', content: data.response }]);
-      }
-    } catch (e) {
-      setMessages(prev => [...prev, { role: 'assistant', content: '❌ Error de conexión' }]);
+      const result = await response.json();
+      setMessages(prev => [...prev, { role: 'assistant', content: result.answer }]);
+    } catch (error) {
+      setMessages(prev => [...prev, { role: 'assistant', content: '❌ Error de conexión.' }]);
     }
     setLoading(false);
   };
 
-  if (!hasAccess) return null;
+  const openChat = async () => {
+    setIsOpen(true);
+    if (!initialized) {
+      setLoading(true);
+      try {
+        const response = await fetch(`${API_URL}/api/ai/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question: 'hola', symbol: selectedAsset || 'stpRNG' })
+        });
+        const result = await response.json();
+        setMessages([{ role: 'assistant', content: result.answer }]);
+      } catch (e) {
+        setMessages([{ role: 'assistant', content: '¡Hola! 💜 Soy Elisa, tu asistente de trading.' }]);
+      }
+      setLoading(false);
+      setInitialized(true);
+    }
+    setTimeout(() => inputRef.current?.focus(), 300);
+  };
+
+  const AIIcon = ({ size = 24 }) => (
+    <svg viewBox="0 0 24 24" fill="none" width={size} height={size}>
+      <circle cx="12" cy="12" r="10" fill="url(#elisa-grad)" />
+      <path d="M8 14s1.5 2 4 2 4-2 4-2" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
+      <circle cx="9" cy="10" r="1.5" fill="white" />
+      <circle cx="15" cy="10" r="1.5" fill="white" />
+      <defs>
+        <linearGradient id="elisa-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#ec4899" />
+          <stop offset="100%" stopColor="#8b5cf6" />
+        </linearGradient>
+      </defs>
+    </svg>
+  );
 
   if (!isOpen) {
     return (
-      <button onClick={() => setIsOpen(true)}
-        className="fixed bottom-4 right-4 w-14 h-14 bg-gradient-to-br from-purple-500 to-pink-500 rounded-full shadow-lg flex items-center justify-center z-50 hover:scale-110 transition-transform">
-        <span className="text-2xl">🤖</span>
+      <button 
+        onClick={openChat}
+        className={`fixed z-[100] flex items-center gap-2 bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-400 hover:to-purple-500 text-white rounded-2xl shadow-xl transition-transform hover:scale-105 active:scale-95 ${
+          isMobile ? 'bottom-4 right-4 px-3 py-2.5' : 'bottom-6 right-6 px-4 py-3'
+        }`}
+      >
+        <AIIcon size={24} />
+        <div className="text-left">
+          <p className="font-semibold text-sm">Elisa</p>
+          {!isMobile && <p className="text-xs text-white/70">IA Assistant</p>}
+        </div>
+        <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
       </button>
     );
   }
 
   return (
-    <div className={`fixed ${isMobile ? 'inset-2' : 'bottom-4 right-4 w-96 h-[500px]'} bg-[#0d0d12] rounded-2xl border border-white/10 shadow-2xl z-50 flex flex-col`}>
-      <div className="p-3 border-b border-white/10 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center">
-            <span>🤖</span>
+    <div className={`fixed z-[100] bg-[#0d0d12] rounded-2xl shadow-2xl border border-white/10 flex flex-col ${
+      isMobile ? 'inset-2' : 'bottom-6 right-6 w-[380px]'
+    }`} style={{ height: isMobile ? 'calc(100% - 16px)' : '500px' }}>
+      <div className="flex items-center justify-between p-3 bg-gradient-to-r from-pink-500 to-purple-600 rounded-t-2xl">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
+            <AIIcon size={28} />
           </div>
           <div>
-            <h3 className="text-sm font-bold text-white">ELISA</h3>
-            <p className="text-[10px] text-white/50">Asistente IA</p>
+            <p className="font-semibold text-white">Elisa</p>
+            <p className="text-xs text-white/70">IA Trading Assistant</p>
           </div>
         </div>
-        <button onClick={() => setIsOpen(false)} className="p-2 hover:bg-white/5 rounded-lg">
-          <svg className="w-4 h-4 text-white/50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <button onClick={() => setIsOpen(false)} className="w-8 h-8 rounded-lg bg-white/20 hover:bg-white/30 flex items-center justify-center">
+          <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
           </svg>
         </button>
       </div>
 
       <div className="flex-1 overflow-y-auto p-3 space-y-3">
-        {!initialized && (
-          <div className="text-center py-8">
-            <div className="text-4xl mb-3">🤖</div>
-            <p className="text-white/60 text-sm mb-4">¡Hola! Soy ELISA</p>
-            <div className="space-y-2">
-              {['¿Cómo está el mercado?', '¿Qué señales hay?', 'Explícame SMC'].map((q, i) => (
-                <button key={i} onClick={() => sendMessage(q)}
-                  className="w-full px-3 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-sm text-white/70 text-left">
-                  {q}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
         {messages.map((msg, i) => (
           <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-[85%] px-3 py-2 rounded-xl text-sm ${
-              msg.role === 'user' ? 'bg-emerald-500 text-black' : 'bg-white/10 text-white/90'
-            }`}>{msg.content}</div>
+            {msg.role === 'assistant' && (
+              <div className="w-7 h-7 rounded-full bg-gradient-to-r from-pink-500 to-purple-600 flex items-center justify-center mr-2 flex-shrink-0">
+                <AIIcon size={18} />
+              </div>
+            )}
+            <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 ${
+              msg.role === 'user' ? 'bg-gradient-to-r from-pink-500 to-purple-600 text-white' : 'bg-white/5 text-white/90'
+            }`}>
+              <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+            </div>
           </div>
         ))}
         {loading && (
           <div className="flex justify-start">
-            <div className="bg-white/10 px-4 py-2 rounded-xl flex gap-1">
-              <div className="w-2 h-2 bg-white/50 rounded-full animate-bounce" />
-              <div className="w-2 h-2 bg-white/50 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }} />
-              <div className="w-2 h-2 bg-white/50 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
+            <div className="w-7 h-7 rounded-full bg-gradient-to-r from-pink-500 to-purple-600 flex items-center justify-center mr-2">
+              <AIIcon size={18} />
+            </div>
+            <div className="bg-white/5 rounded-2xl px-4 py-3 flex gap-1.5">
+              <div className="w-2 h-2 bg-pink-400 rounded-full animate-bounce" />
+              <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+              <div className="w-2 h-2 bg-pink-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
             </div>
           </div>
         )}
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="p-3 border-t border-white/10 flex gap-2">
-        <input type="text" value={text} onChange={e => setText(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && sendMessage()}
-          placeholder="Pregúntale a ELISA..."
-          className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder-white/30 focus:outline-none focus:border-purple-500"
-        />
-        <button onClick={() => sendMessage()} disabled={loading || !text.trim()}
-          className="px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-500 rounded-xl text-white font-medium disabled:opacity-50">
-          ➤
-        </button>
+      <div className="px-3 py-2 border-t border-white/5 flex gap-2 overflow-x-auto">
+        {['📊 Análisis', '🎯 Señal', '📈 Plan', '📦 Stats'].map((btn) => (
+          <button key={btn} onClick={() => sendMessage(btn.split(' ')[1])} disabled={loading}
+            className="flex-shrink-0 px-3 py-1.5 bg-white/5 hover:bg-pink-500/20 rounded-full text-xs text-white/60 hover:text-white disabled:opacity-50">
+            {btn}
+          </button>
+        ))}
+      </div>
+
+      <div className="p-3 border-t border-white/5">
+        <div className="flex gap-2">
+          <input ref={inputRef} type="text" value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }}}
+            placeholder="Pregunta lo que quieras..."
+            disabled={loading}
+            className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-white/30 focus:outline-none focus:border-pink-500 disabled:opacity-50"
+            style={{ fontSize: '16px' }} autoComplete="off" />
+          <button onClick={() => sendMessage()} disabled={!text.trim() || loading}
+            className="w-12 h-12 bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-400 hover:to-purple-500 disabled:opacity-40 text-white rounded-xl flex items-center justify-center flex-shrink-0">
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M12 5l7 7-7 7" />
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
   );
 };
 
 // =============================================
-// DASHBOARD PRINCIPAL
+// DASHBOARD PRINCIPAL v14.1
 // =============================================
 export default function Dashboard({ user, onLogout }) {
   const [data, setData] = useState(null);
@@ -181,66 +196,58 @@ export default function Dashboard({ user, onLogout }) {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showPricing, setShowPricing] = useState(false);
   const [subscription, setSubscription] = useState(null);
-  const [isExpired, setIsExpired] = useState(false);
   
   const mountedRef = useRef(true);
   
-  const planSlug = useMemo(() => {
-    if (!subscription) return 'trial';
-    if (subscription.status === 'expired') return 'expired';
-    if (subscription.status === 'active') return subscription.plans?.slug || subscription.plan || 'basic';
-    return subscription.plan || 'trial';
-  }, [subscription]);
+  useEffect(() => { return () => { mountedRef.current = false; }; }, []);
 
+  // Cargar suscripción del usuario
   useEffect(() => {
-    if (subscription?.status === 'trial' && subscription?.trial_ends_at) {
-      if (new Date() > new Date(subscription.trial_ends_at)) setIsExpired(true);
-    }
-    if (subscription?.status === 'expired') setIsExpired(true);
-  }, [subscription]);
+    if (!user?.id) return;
+    
+    const fetchSubscription = async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/subscription/${user.id}`);
+        const json = await res.json();
+        if (mountedRef.current) {
+          setSubscription(json.subscription);
+        }
+      } catch (e) { 
+        console.error('Subscription error:', e);
+        // Default trial si hay error
+        setSubscription({
+          status: 'trial',
+          plan: 'premium',
+          trial_ends_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString()
+        });
+      }
+    };
+    
+    fetchSubscription();
+  }, [user?.id]);
 
+  // Calcular días restantes de trial
   const trialDaysLeft = useMemo(() => {
     if (subscription?.status !== 'trial' || !subscription?.trial_ends_at) return null;
     const diff = new Date(subscription.trial_ends_at) - new Date();
     return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
   }, [subscription]);
 
-  const availableAssets = useMemo(() => {
-    if (!data?.assets) return [];
-    const effectivePlan = isExpired ? 'expired' : planSlug;
-    const allowedSymbols = PLAN_ASSETS[effectivePlan] || PLAN_ASSETS.trial;
-    return data.assets.filter(a => allowedSymbols.includes(a.symbol));
-  }, [data?.assets, planSlug, isExpired]);
-
-  const pendingSignals = useMemo(() => availableAssets.filter(a => a.lockedSignal), [availableAssets]);
-
-  useEffect(() => { return () => { mountedRef.current = false; }; }, []);
-
-  useEffect(() => {
-    if (!user?.id) return;
-    const fetchSubscription = async () => {
-      try {
-        const res = await fetch(`${API_URL}/api/subscription/${user.id}`);
-        const json = await res.json();
-        if (mountedRef.current && json.subscription) {
-          setSubscription(json.subscription);
-        } else {
-          setSubscription({
-            status: 'trial',
-            plan: 'trial',
-            trial_ends_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString()
-          });
-        }
-      } catch (e) { 
-        setSubscription({
-          status: 'trial',
-          plan: 'trial',
-          trial_ends_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString()
-        });
-      }
-    };
-    fetchSubscription();
-  }, [user?.id]);
+  // VERIFICAR SI EL USUARIO TIENE ACCESO
+  const isAccessAllowed = useMemo(() => {
+    if (!subscription) return true; // Mientras carga, permitir acceso
+    const status = subscription.status?.toLowerCase();
+    // Acceso permitido si: activo, active, o trial con días restantes
+    if (status === 'activo' || status === 'active') return true;
+    if (status === 'trial') {
+      // Trial tiene acceso si aún tiene días o si no hay fecha de expiración definida
+      if (!subscription.trial_ends_at) return true;
+      const diff = new Date(subscription.trial_ends_at) - new Date();
+      return diff > 0;
+    }
+    // Expired = sin acceso
+    return status !== 'expired';
+  }, [subscription]);
   
   useEffect(() => {
     const handleResize = () => {
@@ -252,6 +259,7 @@ export default function Dashboard({ user, onLogout }) {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  // Data fetching
   useEffect(() => {
     let isCancelled = false;
     const fetchData = async () => {
@@ -260,25 +268,21 @@ export default function Dashboard({ user, onLogout }) {
         const json = await res.json();
         if (!isCancelled && mountedRef.current) {
           setData(json);
-          if (!selectedAsset && json.assets?.length) {
-            const allowedSymbols = PLAN_ASSETS[planSlug] || PLAN_ASSETS.trial;
-            const firstAllowed = json.assets.find(a => allowedSymbols.includes(a.symbol));
-            if (firstAllowed) setSelectedAsset(firstAllowed.symbol);
-          }
+          if (!selectedAsset && json.assets?.length) setSelectedAsset(json.assets[0].symbol);
         }
       } catch (e) { console.error('Fetch error:', e); }
     };
     fetchData();
     const interval = setInterval(fetchData, 3000);
     return () => { isCancelled = true; clearInterval(interval); };
-  }, [selectedAsset, planSlug]);
+  }, [selectedAsset]);
 
   useEffect(() => {
     if (!selectedAsset) return;
     let isCancelled = false;
     const fetchCandles = async () => {
       try {
-        const res = await fetch(`${API_URL}/api/candles/${selectedAsset}`);
+        const res = await fetch(`${API_URL}/api/analyze/${selectedAsset}`);
         const json = await res.json();
         if (!isCancelled && mountedRef.current) {
           if (json.candles?.length) setCandles(json.candles);
@@ -287,554 +291,644 @@ export default function Dashboard({ user, onLogout }) {
       } catch (e) { console.error('Candles error:', e); }
     };
     fetchCandles();
-    const interval = setInterval(fetchCandles, 5000);
+    const interval = setInterval(fetchCandles, 4000);
     return () => { isCancelled = true; clearInterval(interval); };
   }, [selectedAsset]);
 
-  const currentAsset = useMemo(() => data?.assets?.find(a => a.symbol === selectedAsset), [data?.assets, selectedAsset]);
-  const currentCandles = timeframe === 'H1' ? candlesH1 : candles;
-  const checkModuleAccess = (moduleId) => isExpired ? false : hasModuleAccess(moduleId, planSlug);
-
-  const handleModuleClick = (moduleId) => {
-    if (isExpired) { setShowPricing(true); return; }
-    const module = MODULES.find(m => m.id === moduleId);
-    if (module?.comingSoon) { alert('🚧 Próximamente'); return; }
-    if (!checkModuleAccess(moduleId)) { setShowPricing(true); return; }
-    setActiveSection(moduleId);
-    if (isMobile) setSidebarOpen(false);
+  const markSignal = async (id, status) => {
+    try {
+      await fetch(`${API_URL}/api/signals/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      });
+    } catch (e) { console.error(e); }
   };
 
-  // GRÁFICO DE VELAS
-  const CandleChart = ({ candles: chartCandles, height = 200 }) => {
+  const currentAsset = useMemo(() => data?.assets?.find(a => a.symbol === selectedAsset), [data?.assets, selectedAsset]);
+  const lockedSignal = currentAsset?.lockedSignal;
+  const pendingSignals = useMemo(() => data?.recentSignals?.filter(s => s.status === 'PENDING') || [], [data?.recentSignals]);
+  const closedSignals = useMemo(() => data?.recentSignals?.filter(s => s.status !== 'PENDING') || [], [data?.recentSignals]);
+
+  const modelColors = {
+    'MTF_CONFLUENCE': { bg: 'bg-purple-500/20', text: 'text-purple-400', label: 'MTF' },
+    'CHOCH_PULLBACK': { bg: 'bg-cyan-500/20', text: 'text-cyan-400', label: 'CHoCH' },
+    'LIQUIDITY_SWEEP': { bg: 'bg-yellow-500/20', text: 'text-yellow-400', label: 'LIQ' },
+    'BOS_CONTINUATION': { bg: 'bg-blue-500/20', text: 'text-blue-400', label: 'BOS' },
+    'FVG_ENTRY': { bg: 'bg-orange-500/20', text: 'text-orange-400', label: 'FVG' },
+    'ORDER_FLOW': { bg: 'bg-pink-500/20', text: 'text-pink-400', label: 'OF' }
+  };
+  const getModelStyle = (model) => modelColors[model] || { bg: 'bg-white/10', text: 'text-white/60', label: '?' };
+
+  // Chart Component
+  const Chart = ({ height = 300 }) => {
     const containerRef = useRef(null);
     const [width, setWidth] = useState(600);
-
+    
     useEffect(() => {
-      if (containerRef.current) {
-        setWidth(containerRef.current.getBoundingClientRect().width);
-      }
-      const handleResize = () => {
-        if (containerRef.current) setWidth(containerRef.current.getBoundingClientRect().width);
-      };
-      window.addEventListener('resize', handleResize);
-      return () => window.removeEventListener('resize', handleResize);
+      const updateWidth = () => { if (containerRef.current) setWidth(containerRef.current.offsetWidth || 600); };
+      updateWidth();
+      window.addEventListener('resize', updateWidth);
+      return () => window.removeEventListener('resize', updateWidth);
     }, []);
 
-    if (!chartCandles || chartCandles.length === 0) {
+    const displayCandles = timeframe === 'H1' ? candlesH1 : candles;
+    
+    if (!displayCandles?.length) {
       return (
-        <div ref={containerRef} className="w-full flex items-center justify-center" style={{ height }}>
+        <div ref={containerRef} style={{ height }} className="flex items-center justify-center">
           <div className="text-center">
             <div className="w-8 h-8 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin mx-auto mb-2" />
-            <p className="text-white/40 text-sm">Cargando gráfico...</p>
+            <p className="text-white/40 text-sm">Cargando {timeframe}...</p>
           </div>
         </div>
       );
     }
-    
-    const displayCandles = chartCandles.slice(-60);
-    const padding = { top: 10, right: 60, bottom: 20, left: 50 };
-    const chartWidth = width - padding.left - padding.right;
-    const chartHeight = height - padding.top - padding.bottom;
-    
-    const highs = displayCandles.map(c => c.high);
-    const lows = displayCandles.map(c => c.low);
-    const maxPrice = Math.max(...highs);
-    const minPrice = Math.min(...lows);
-    const priceRange = maxPrice - minPrice || 1;
-    
-    const candleWidth = chartWidth / displayCandles.length;
-    const getY = price => padding.top + chartHeight - ((price - minPrice) / priceRange) * chartHeight;
-    const getX = index => padding.left + index * candleWidth + candleWidth / 2;
 
-    const priceLevels = Array.from({length: 5}, (_, i) => minPrice + (priceRange * i / 4));
+    const padding = { top: 10, right: isMobile ? 45 : 60, bottom: 20, left: 5 };
+    const chartW = width - padding.left - padding.right;
+    const chartH = height - padding.top - padding.bottom;
+    const visibleCandles = displayCandles.slice(-(isMobile ? 30 : 50));
+    const candleW = Math.max(3, (chartW / visibleCandles.length) * 0.7);
+    const gap = (chartW / visibleCandles.length) - candleW;
+    const prices = visibleCandles.flatMap(c => [c.high, c.low]);
+    const minP = Math.min(...prices);
+    const maxP = Math.max(...prices);
+    const pad = (maxP - minP) * 0.1;
+    const adjMin = minP - pad;
+    const adjMax = maxP + pad;
+    const scale = chartH / (adjMax - adjMin);
+    const getY = (p) => padding.top + (adjMax - p) * scale;
+    const lastPrice = visibleCandles[visibleCandles.length - 1]?.close;
     const decimals = currentAsset?.decimals || 2;
-    
+    const signal = lockedSignal;
+
     return (
       <div ref={containerRef} className="w-full">
         <svg width={width} height={height}>
-          {priceLevels.map((price, i) => (
-            <g key={i}>
-              <line x1={padding.left} y1={getY(price)} x2={width - padding.right} y2={getY(price)}
-                stroke="rgba(255,255,255,0.05)" strokeDasharray="4,4" />
-              <text x={padding.left - 5} y={getY(price) + 4} fill="rgba(255,255,255,0.3)" fontSize="10" textAnchor="end">
-                {price.toFixed(decimals)}
-              </text>
-            </g>
-          ))}
-          {displayCandles.map((candle, i) => {
-            const x = getX(i);
-            const isGreen = candle.close >= candle.open;
-            const color = isGreen ? '#10b981' : '#ef4444';
-            const bodyTop = getY(Math.max(candle.open, candle.close));
-            const bodyBottom = getY(Math.min(candle.open, candle.close));
-            const bodyHeight = Math.max(1, bodyBottom - bodyTop);
+          {[0, 0.25, 0.5, 0.75, 1].map((pct, i) => {
+            const price = adjMax - ((adjMax - adjMin) * pct);
             return (
               <g key={i}>
-                <line x1={x} y1={getY(candle.high)} x2={x} y2={getY(candle.low)} stroke={color} strokeWidth="1" />
-                <rect x={x - candleWidth * 0.35} y={bodyTop} width={candleWidth * 0.7} height={bodyHeight} fill={color} rx="1" />
+                <line x1={padding.left} y1={getY(price)} x2={width - padding.right} y2={getY(price)} stroke="rgba(255,255,255,0.03)" />
+                <text x={width - padding.right + 4} y={getY(price) + 3} fill="rgba(255,255,255,0.25)" fontSize={isMobile ? "8" : "9"} fontFamily="monospace">
+                  {price.toFixed(decimals)}
+                </text>
               </g>
             );
           })}
-          {displayCandles.length > 0 && (
+          {visibleCandles.map((c, i) => {
+            const x = padding.left + i * (candleW + gap);
+            const isGreen = c.close >= c.open;
+            const top = getY(Math.max(c.open, c.close));
+            const bottom = getY(Math.min(c.open, c.close));
+            const color = isGreen ? '#10b981' : '#ef4444';
+            return (
+              <g key={i}>
+                <line x1={x + candleW / 2} y1={getY(c.high)} x2={x + candleW / 2} y2={getY(c.low)} stroke={color} strokeWidth="1" />
+                <rect x={x} y={top} width={candleW} height={Math.max(1, bottom - top)} fill={color} rx="0.5" />
+              </g>
+            );
+          })}
+          {lastPrice && (
             <g>
-              <line x1={padding.left} y1={getY(displayCandles[displayCandles.length - 1].close)}
-                x2={width - padding.right} y2={getY(displayCandles[displayCandles.length - 1].close)}
-                stroke="#10b981" strokeWidth="1" strokeDasharray="4,2" />
-              <rect x={width - padding.right + 2} y={getY(displayCandles[displayCandles.length - 1].close) - 10}
-                width="55" height="20" fill="#10b981" rx="4" />
-              <text x={width - padding.right + 30} y={getY(displayCandles[displayCandles.length - 1].close) + 4}
-                fill="black" fontSize="10" fontWeight="bold" textAnchor="middle">
-                {displayCandles[displayCandles.length - 1].close.toFixed(decimals)}
+              <line x1={padding.left} y1={getY(lastPrice)} x2={width - padding.right} y2={getY(lastPrice)} stroke="#10b981" strokeWidth="1" strokeDasharray="3,3" opacity="0.5" />
+              <rect x={width - padding.right - 2} y={getY(lastPrice) - 9} width={isMobile ? 42 : 56} height="18" fill="#10b981" rx="3" />
+              <text x={width - padding.right + (isMobile ? 18 : 25)} y={getY(lastPrice) + 4} fill="black" fontSize={isMobile ? "9" : "10"} fontFamily="monospace" textAnchor="middle" fontWeight="bold">
+                {lastPrice.toFixed(decimals)}
               </text>
             </g>
+          )}
+          {signal && timeframe === 'M5' && (
+            <>
+              <line x1={padding.left} y1={getY(signal.entry)} x2={width - padding.right} y2={getY(signal.entry)} stroke="#3b82f6" strokeWidth="1.5" strokeDasharray="4,2" />
+              <line x1={padding.left} y1={getY(signal.tp1)} x2={width - padding.right} y2={getY(signal.tp1)} stroke="#10b981" strokeWidth="1" opacity={signal.tp1Hit ? 1 : 0.4} />
+              <line x1={padding.left} y1={getY(signal.tp2)} x2={width - padding.right} y2={getY(signal.tp2)} stroke="#10b981" strokeWidth="1" opacity={signal.tp2Hit ? 1 : 0.3} />
+              <line x1={padding.left} y1={getY(signal.tp3)} x2={width - padding.right} y2={getY(signal.tp3)} stroke="#10b981" strokeWidth="1" opacity={signal.tp3Hit ? 1 : 0.2} />
+              <line x1={padding.left} y1={getY(signal.stop)} x2={width - padding.right} y2={getY(signal.stop)} stroke="#ef4444" strokeWidth="1.5" />
+            </>
           )}
         </svg>
       </div>
     );
   };
 
-  // SIDEBAR
-  const Sidebar = () => {
-    const planInfo = PLANS_INFO[planSlug] || PLANS_INFO.trial;
-    return (
-      <>
-        {isMobile && sidebarOpen && <div className="fixed inset-0 bg-black/50 z-40" onClick={() => setSidebarOpen(false)} />}
-        <aside className={`fixed left-0 top-0 h-full bg-[#0a0a0f] border-r border-white/5 z-40 transition-all duration-300 flex flex-col ${
-          sidebarOpen ? (isMobile ? 'w-64' : 'w-56') : 'w-0 overflow-hidden'
-        }`}>
-          <div className="h-14 flex items-center justify-between px-3 border-b border-white/5 shrink-0">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-400 to-cyan-400 flex items-center justify-center">
-                <svg className="w-4 h-4 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-                </svg>
-              </div>
-              <div>
-                <span className="font-bold text-sm text-white block leading-tight">TradingPro</span>
-                <span className="text-[10px] text-white/40">SMC Institucional</span>
-              </div>
-            </div>
-            <button onClick={() => setSidebarOpen(false)} className="p-1.5 hover:bg-white/5 rounded-lg">
-              <svg className="w-4 h-4 text-white/50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+  // Sidebar
+  const Sidebar = () => (
+    <>
+      {isMobile && sidebarOpen && <div className="fixed inset-0 bg-black/50 z-40" onClick={() => setSidebarOpen(false)} />}
+      <aside className={`fixed left-0 top-0 h-full bg-[#0a0a0f] border-r border-white/5 z-40 transition-all duration-300 ${
+        sidebarOpen ? (isMobile ? 'w-64' : 'w-48') : 'w-0 overflow-hidden'
+      }`}>
+        <div className="h-12 flex items-center justify-between px-3 border-b border-white/5">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-emerald-400 to-cyan-400 flex items-center justify-center">
+              <svg className="w-4 h-4 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
               </svg>
-            </button>
-          </div>
-
-          <div className="px-3 py-2 border-b border-white/5 shrink-0">
-            <div className={`flex items-center gap-2 px-3 py-2 rounded-lg ${isExpired ? 'bg-red-500/20 border border-red-500/30' : `bg-gradient-to-r ${planInfo.color} bg-opacity-20`}`}>
-              <span className="text-lg">{isExpired ? '⚠️' : planInfo.badge}</span>
-              <div className="flex-1">
-                <p className="text-xs font-bold text-white">{isExpired ? 'Expirado' : planInfo.name}</p>
-                {subscription?.status === 'trial' && trialDaysLeft !== null && !isExpired && (
-                  <p className="text-[10px] text-white/70">{trialDaysLeft} días restantes</p>
-                )}
-              </div>
-              <button onClick={() => setShowPricing(true)} className="text-[10px] px-2 py-1 bg-white/20 hover:bg-white/30 rounded text-white font-medium">
-                {isExpired ? 'Activar' : 'Upgrade'}
-              </button>
             </div>
+            <span className="font-bold text-sm text-white">TradingPro</span>
           </div>
-
-          <div className="flex-1 overflow-y-auto">
-            <nav className="p-2">
-              <p className="text-[10px] uppercase text-white/30 px-3 py-2 font-medium">Principal</p>
-              {MODULES.filter(m => ['dashboard', 'signals', 'chat', 'stats'].includes(m.id)).map(module => {
-                const hasAccess = checkModuleAccess(module.id);
-                const isActive = activeSection === module.id;
-                return (
-                  <button key={module.id} onClick={() => handleModuleClick(module.id)}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all mb-1 ${
-                      isActive ? 'bg-emerald-500/15 text-emerald-400' : hasAccess ? 'text-white/60 hover:bg-white/5' : 'text-white/30 hover:bg-white/5'
-                    }`}>
-                    <span className={hasAccess ? '' : 'grayscale opacity-50'}>{module.icon}</span>
-                    <span className="text-sm flex-1 text-left">{module.label}</span>
-                    {!hasAccess && <span className="text-[9px] text-white/30">🔒</span>}
-                    {module.id === 'signals' && pendingSignals.length > 0 && hasAccess && (
-                      <span className="px-1.5 py-0.5 text-[10px] font-bold bg-emerald-500 text-black rounded-full">{pendingSignals.length}</span>
-                    )}
-                  </button>
-                );
-              })}
-
-              <p className="text-[10px] uppercase text-white/30 px-3 py-2 mt-3 font-medium">Herramientas</p>
-              {MODULES.filter(m => ['alerts', 'backtesting'].includes(m.id)).map(module => (
-                <button key={module.id} onClick={() => handleModuleClick(module.id)}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all mb-1 ${
-                    activeSection === module.id ? 'bg-emerald-500/15 text-emerald-400' : 'text-white/30 hover:bg-white/5'
-                  }`}>
-                  <span className="grayscale opacity-50">{module.icon}</span>
-                  <span className="text-sm flex-1 text-left">{module.label}</span>
-                  {module.comingSoon && <span className="text-[9px] px-1.5 py-0.5 bg-purple-500/20 text-purple-400 rounded">Soon</span>}
-                </button>
-              ))}
-
-              <p className="text-[10px] uppercase text-white/30 px-3 py-2 mt-3 font-medium">Elite</p>
-              {MODULES.filter(m => ['mentor', 'replay', 'ambassador'].includes(m.id)).map(module => (
-                <button key={module.id} onClick={() => handleModuleClick(module.id)}
-                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all mb-1 text-white/30 hover:bg-white/5">
-                  <span className="grayscale opacity-50">{module.icon}</span>
-                  <span className="text-sm flex-1 text-left">{module.label}</span>
-                  <span className="text-[9px] px-1.5 py-0.5 bg-purple-500/20 text-purple-400 rounded">Soon</span>
-                </button>
-              ))}
-
-              <p className="text-[10px] uppercase text-white/30 px-3 py-2 mt-3 font-medium">Cuenta</p>
-              {MODULES.filter(m => ['settings', 'billing'].includes(m.id)).map(module => (
-                <button key={module.id} onClick={() => handleModuleClick(module.id)}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all mb-1 ${
-                    activeSection === module.id ? 'bg-emerald-500/15 text-emerald-400' : 'text-white/60 hover:bg-white/5'
-                  }`}>
-                  <span>{module.icon}</span>
-                  <span className="text-sm">{module.label}</span>
-                </button>
-              ))}
-            </nav>
-
-            <div className="p-2 border-t border-white/5">
-              <p className="text-[10px] uppercase text-white/30 px-3 py-2 font-medium">Mercados ({availableAssets.length})</p>
-              <div className="space-y-1 max-h-[200px] overflow-y-auto">
-                {availableAssets.map(asset => (
-                  <button key={asset.symbol} onClick={() => { setSelectedAsset(asset.symbol); if (isMobile) setSidebarOpen(false); }}
-                    className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-                      selectedAsset === asset.symbol ? 'bg-white/10 text-white' : 'text-white/50 hover:bg-white/5'
-                    }`}>
-                    <span>{asset.emoji}</span>
-                    <div className="flex-1 text-left">
-                      <span className="text-xs font-medium block">{asset.shortName}</span>
-                      <span className="text-[10px] text-white/40 font-mono">{asset.price?.toFixed(2)}</span>
-                    </div>
-                    {asset.lockedSignal && (
-                      <span className={`px-1.5 py-0.5 text-[9px] font-bold rounded ${
-                        asset.lockedSignal.action === 'LONG' ? 'bg-emerald-500 text-black' : 'bg-red-500 text-white'
-                      }`}>{asset.lockedSignal.action}</span>
-                    )}
-                  </button>
-                ))}
-              </div>
-              {planSlug !== 'elite' && !isExpired && (
-                <button onClick={() => setShowPricing(true)}
-                  className="w-full mt-2 px-3 py-2 border border-dashed border-white/10 rounded-lg text-white/30 text-xs hover:border-white/20 transition-all">
-                  + Más activos
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div className="p-3 border-t border-white/5 shrink-0">
-            <div className="flex items-center gap-2">
-              <div className={`w-2 h-2 rounded-full ${data?.connected ? 'bg-emerald-400 animate-pulse' : 'bg-red-400'}`} />
-              <span className="text-xs text-white/40">{data?.connected ? 'Conectado' : 'Desconectado'}</span>
-            </div>
-          </div>
-        </aside>
-      </>
-    );
-  };
-
-  // HEADER
-  const Header = () => {
-    const planInfo = PLANS_INFO[planSlug] || PLANS_INFO.trial;
-    return (
-      <header className="h-12 bg-[#0a0a0f] border-b border-white/5 flex items-center justify-between px-3 sticky top-0 z-30">
-        <div className="flex items-center gap-3">
-          {!sidebarOpen && (
-            <button onClick={() => setSidebarOpen(true)} className="p-2 hover:bg-white/5 rounded-lg">
-              <svg className="w-5 h-5 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-              </svg>
-            </button>
-          )}
-          <h2 className="text-sm font-medium text-white capitalize">{MODULES.find(m => m.id === activeSection)?.label || 'Dashboard'}</h2>
-        </div>
-        
-        <div className="flex items-center gap-2">
-          <div className={`hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-lg ${isExpired ? 'bg-red-500/20' : `bg-gradient-to-r ${planInfo.color} bg-opacity-20`}`}>
-            <span className="text-sm">{isExpired ? '⚠️' : planInfo.badge}</span>
-            <span className="text-xs text-white font-medium">{isExpired ? 'Expirado' : planInfo.name}</span>
-            {trialDaysLeft !== null && !isExpired && <span className="text-[10px] text-white/70">({trialDaysLeft}d)</span>}
-          </div>
-
-          <button onClick={() => setShowPricing(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg text-white text-xs font-medium">
-            ⚡ <span className="hidden sm:inline">{isExpired ? 'Activar' : 'Upgrade'}</span>
+          <button onClick={() => setSidebarOpen(false)} className="p-1.5 hover:bg-white/5 rounded-lg">
+            <svg className="w-4 h-4 text-white/50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
           </button>
-
-          <div className="flex bg-white/5 rounded-lg p-0.5">
-            {['M5', 'H1'].map(tf => (
-              <button key={tf} onClick={() => setTimeframe(tf)}
-                className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
-                  timeframe === tf ? 'bg-emerald-500 text-black' : 'text-white/50'
-                }`}>{tf}</button>
-            ))}
-          </div>
-
-          <div className="relative">
-            <button onClick={() => setShowUserMenu(!showUserMenu)} className="flex items-center gap-2 px-2 py-1.5 hover:bg-white/5 rounded-lg">
-              <div className="w-7 h-7 rounded-full bg-gradient-to-br from-emerald-400 to-cyan-400 flex items-center justify-center">
-                <span className="text-black text-xs font-bold">{user?.email?.charAt(0).toUpperCase() || 'U'}</span>
-              </div>
-            </button>
-            {showUserMenu && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => setShowUserMenu(false)} />
-                <div className="absolute right-0 top-full mt-2 w-56 bg-[#0d0d12] border border-white/10 rounded-xl shadow-xl z-50 overflow-hidden">
-                  <div className="p-3 border-b border-white/5">
-                    <p className="text-xs text-white/50">Conectado como</p>
-                    <p className="text-sm text-white font-medium truncate">{user?.email}</p>
-                  </div>
-                  <div className="p-1">
-                    <button onClick={() => { handleModuleClick('settings'); setShowUserMenu(false); }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-white/70 hover:bg-white/5 rounded-lg text-sm">
-                      ⚙️ Configuración
-                    </button>
-                    <button onClick={() => { handleModuleClick('billing'); setShowUserMenu(false); }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-white/70 hover:bg-white/5 rounded-lg text-sm">
-                      💳 Plan & Pagos
-                    </button>
-                    <button onClick={onLogout}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-red-400 hover:bg-red-500/10 rounded-lg text-sm">
-                      🚪 Cerrar Sesión
-                    </button>
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
         </div>
-      </header>
-    );
-  };
 
-  // SECCIONES
-  const DashboardSection = () => (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {[
-          { label: 'Señales Activas', value: pendingSignals.length, color: 'text-emerald-400' },
-          { label: 'Win Rate', value: `${data?.stats?.winRate || 0}%`, color: 'text-white' },
-          { label: 'Activos', value: availableAssets.length, color: 'text-white' },
-          { label: 'Plan', value: PLANS_INFO[planSlug]?.name || 'Trial', color: 'text-white' }
-        ].map((stat, i) => (
-          <div key={i} className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
-            <p className="text-white/50 text-xs mb-1">{stat.label}</p>
-            <p className={`text-2xl font-bold ${stat.color}`}>{stat.value}</p>
-          </div>
-        ))}
-      </div>
-
-      {currentAsset && (
-        <div className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <span className="text-xl">{currentAsset.emoji}</span>
-              <div>
-                <h3 className="text-white font-bold">{currentAsset.name}</h3>
-                <p className="text-white/50 text-sm font-mono">{currentAsset.price?.toFixed(currentAsset.decimals || 2)}</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              {currentAsset.lockedSignal && (
-                <div className={`px-3 py-1.5 rounded-lg ${currentAsset.lockedSignal.action === 'LONG' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
-                  <span className="font-bold">{currentAsset.lockedSignal.action}</span>
-                </div>
+        <nav className="p-2 space-y-1">
+          {[
+            { id: 'dashboard', icon: '🏠', label: 'Dashboard' },
+            { id: 'signals', icon: '🔔', label: 'Señales', badge: pendingSignals.length },
+            { id: 'models', icon: '🧠', label: 'Modelos' },
+            { id: 'history', icon: '📜', label: 'Historial' },
+            { id: 'stats', icon: '📈', label: 'Stats' },
+          ].map(item => (
+            <button key={item.id}
+              onClick={() => { setActiveSection(item.id); if (isMobile) setSidebarOpen(false); }}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
+                activeSection === item.id ? 'bg-emerald-500/15 text-emerald-400' : 'text-white/60 hover:bg-white/5'
+              }`}>
+              <span>{item.icon}</span>
+              <span className="text-sm">{item.label}</span>
+              {item.badge > 0 && (
+                <span className="ml-auto px-1.5 py-0.5 text-[10px] font-bold bg-emerald-500 text-black rounded-full">{item.badge}</span>
               )}
-              <span className="text-xs text-white/40 bg-white/5 px-2 py-1 rounded">{timeframe}</span>
-            </div>
-          </div>
-          <CandleChart candles={currentCandles} height={250} />
-        </div>
-      )}
+            </button>
+          ))}
+        </nav>
 
-      {pendingSignals.length > 0 && (
-        <div className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
-          <h3 className="text-white font-bold mb-3">📈 Señales Activas</h3>
-          <div className="space-y-2">
-            {pendingSignals.map(asset => (
-              <div key={asset.symbol} onClick={() => setSelectedAsset(asset.symbol)}
-                className="flex items-center justify-between p-3 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10">
-                <div className="flex items-center gap-3">
-                  <span className="text-xl">{asset.emoji}</span>
-                  <div>
-                    <p className="text-white font-medium">{asset.shortName}</p>
-                    <p className="text-white/50 text-xs">{asset.lockedSignal.model}</p>
+        <div className="p-2 border-t border-white/5">
+          <p className="text-[10px] uppercase text-white/30 mb-2 px-3">Mercados</p>
+          <div className="space-y-1 max-h-[300px] overflow-y-auto">
+            {data?.assets?.map(asset => (
+              <button key={asset.symbol}
+                onClick={() => { setSelectedAsset(asset.symbol); if (isMobile) setSidebarOpen(false); }}
+                className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
+                  selectedAsset === asset.symbol ? 'bg-white/10 text-white' : 'text-white/50 hover:bg-white/5'
+                }`}>
+                <span>{asset.emoji}</span>
+                <div className="flex-1 text-left">
+                  <div className="flex items-center gap-1">
+                    <span className="text-xs font-medium">{asset.shortName}</span>
+                    {asset.h1Loaded && <span className="text-[8px] px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-400">H1</span>}
+                    {!asset.isActive && asset.type === 'forex' && (
+                      <span className="text-[8px] px-1 py-0.5 rounded bg-yellow-500/20 text-yellow-400">⏰</span>
+                    )}
                   </div>
+                  <span className="text-[10px] text-white/40 font-mono">{asset.price?.toFixed(2) || '---'}</span>
                 </div>
-                <div className={`px-3 py-1 rounded-lg font-bold ${asset.lockedSignal.action === 'LONG' ? 'bg-emerald-500 text-black' : 'bg-red-500 text-white'}`}>
-                  {asset.lockedSignal.action}
-                </div>
-              </div>
+                {asset.lockedSignal && (
+                  <span className={`px-1.5 py-0.5 text-[9px] font-bold rounded ${
+                    asset.lockedSignal.action === 'LONG' ? 'bg-emerald-500 text-black' : 'bg-red-500 text-white'
+                  }`}>{asset.lockedSignal.action}</span>
+                )}
+              </button>
             ))}
           </div>
         </div>
-      )}
+
+        <div className="absolute bottom-0 left-0 right-0 p-3 border-t border-white/5">
+          <div className="flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full ${data?.connected ? 'bg-emerald-400' : 'bg-red-400'}`} />
+            <span className="text-xs text-white/40">{data?.connected ? 'Conectado' : 'Offline'}</span>
+          </div>
+        </div>
+      </aside>
+    </>
+  );
+
+  // Header
+  const Header = () => (
+    <header className="h-12 bg-[#0a0a0f] border-b border-white/5 flex items-center justify-between px-3 sticky top-0 z-30">
+      <div className="flex items-center gap-3">
+        {!sidebarOpen && (
+          <button onClick={() => setSidebarOpen(true)} className="p-2 hover:bg-white/5 rounded-lg">
+            <svg className="w-5 h-5 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
+        )}
+        <h2 className="text-sm font-medium text-white capitalize">{activeSection}</h2>
+        <span className="text-[10px] px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded hidden sm:inline">6 Modelos SMC</span>
+      </div>
+      
+      <div className="flex items-center gap-2 sm:gap-3">
+        {/* Badge de suscripción */}
+        {subscription?.status === 'trial' && trialDaysLeft !== null && (
+          <button 
+            onClick={() => setShowPricing(true)}
+            className="flex items-center gap-1.5 px-2 py-1 bg-amber-500/20 hover:bg-amber-500/30 rounded-lg transition-colors"
+          >
+            <span className="text-amber-400 text-xs">⏳</span>
+            <span className="text-amber-400 text-xs font-medium">
+              {trialDaysLeft > 0 ? `${trialDaysLeft} días trial` : 'Trial expirado'}
+            </span>
+          </button>
+        )}
+        {(subscription?.status === 'active' || subscription?.status === 'activo') && (
+          <span className="flex items-center gap-1.5 px-2 py-1 bg-emerald-500/20 rounded-lg">
+            <span className="text-emerald-400 text-xs">✓</span>
+            <span className="text-emerald-400 text-xs font-medium capitalize">{subscription?.plan_name || subscription?.plans?.name || subscription?.plan || 'Pro'}</span>
+          </span>
+        )}
+        {subscription?.status === 'expired' && (
+          <button 
+            onClick={() => setShowPricing(true)}
+            className="flex items-center gap-1.5 px-2 py-1 bg-red-500/20 hover:bg-red-500/30 rounded-lg transition-colors animate-pulse"
+          >
+            <span className="text-red-400 text-xs">⚠️</span>
+            <span className="text-red-400 text-xs font-medium">Renovar</span>
+          </button>
+        )}
+
+        {/* Botón Upgrade - solo si no es Elite y no expirado */}
+        {subscription?.status !== 'expired' && 
+         !subscription?.plan?.includes('elite') && 
+         !subscription?.plan?.includes('élite') && 
+         subscription?.plan_name !== 'Elite' && (
+          <button 
+            onClick={() => setShowPricing(true)}
+            className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-400 hover:to-pink-400 rounded-lg transition-all text-white text-xs font-medium"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+            Upgrade
+          </button>
+        )}
+
+        <div className="flex bg-white/5 rounded-lg p-0.5">
+          {['M5', 'H1'].map(tf => (
+            <button key={tf} onClick={() => setTimeframe(tf)}
+              className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
+                timeframe === tf ? 'bg-emerald-500 text-black' : 'text-white/50 hover:text-white'
+              }`}>{tf}</button>
+          ))}
+        </div>
+
+        <div className="relative">
+          <button onClick={() => setShowUserMenu(!showUserMenu)}
+            className="flex items-center gap-2 px-2 py-1.5 hover:bg-white/5 rounded-lg transition-colors">
+            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-emerald-400 to-cyan-400 flex items-center justify-center">
+              <span className="text-black text-xs font-bold">{user?.email?.charAt(0).toUpperCase() || 'U'}</span>
+            </div>
+            <svg className={`w-4 h-4 text-white/50 transition-transform ${showUserMenu ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          {showUserMenu && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setShowUserMenu(false)} />
+              <div className="absolute right-0 top-full mt-2 w-56 bg-[#0d0d12] border border-white/10 rounded-xl shadow-xl z-50 overflow-hidden">
+                <div className="p-3 border-b border-white/5">
+                  <p className="text-xs text-white/50">Conectado como</p>
+                  <p className="text-sm text-white font-medium truncate">{user?.email}</p>
+                  {subscription && (
+                    <p className="text-xs text-emerald-400 mt-1 capitalize">
+                      Plan: {subscription?.plan_name || subscription?.plans?.name || subscription?.plan || subscription?.status}
+                    </p>
+                  )}
+                </div>
+                <div className="p-1">
+                  <button onClick={() => { setShowPricing(true); setShowUserMenu(false); }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-white/70 hover:bg-white/5 rounded-lg transition-colors text-sm">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                    </svg>
+                    Gestionar Suscripción
+                  </button>
+                  <button onClick={onLogout}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-red-400 hover:bg-red-500/10 rounded-lg transition-colors text-sm">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                    </svg>
+                    Cerrar Sesión
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </header>
+  );
+
+  // Small Components
+  const StatsCard = ({ title, value, icon }) => (
+    <div className="rounded-xl p-3 bg-[#0f0f14]">
+      <div className="text-lg mb-1">{icon}</div>
+      <p className="text-xl font-bold text-white">{value}</p>
+      <p className="text-[10px] text-white/50">{title}</p>
     </div>
   );
 
-  const SignalsSection = () => (
-    <div className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
-      <h3 className="text-white font-bold mb-4">📈 Señales IA</h3>
-      {pendingSignals.length === 0 ? (
-        <div className="text-center py-8">
-          <span className="text-4xl block mb-3">🔍</span>
-          <p className="text-white/50">Sin señales activas</p>
+  const SignalCard = ({ signal: s }) => {
+    const ms = getModelStyle(s.model);
+    return (
+      <div className="rounded-xl p-3 bg-[#0f0f14]">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <span className="text-base">{s.emoji}</span>
+            <div>
+              <p className="text-xs font-medium text-white">{s.assetName}</p>
+              <span className={`px-1 py-0.5 text-[8px] rounded ${ms.bg} ${ms.text}`}>{ms.label}</span>
+            </div>
+          </div>
+          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+            s.action === 'LONG' ? 'bg-emerald-500 text-black' : 'bg-red-500 text-white'
+          }`}>{s.action}</span>
         </div>
-      ) : (
-        <div className="space-y-3">
-          {pendingSignals.map(asset => (
-            <div key={asset.symbol} className="p-4 bg-white/5 rounded-xl">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-3">
-                  <span className="text-2xl">{asset.emoji}</span>
-                  <div>
-                    <p className="text-white font-bold">{asset.name}</p>
-                    <p className="text-white/50 text-sm">{asset.lockedSignal.model}</p>
-                  </div>
-                </div>
-                <div className={`px-4 py-2 rounded-xl font-bold ${asset.lockedSignal.action === 'LONG' ? 'bg-emerald-500 text-black' : 'bg-red-500 text-white'}`}>
-                  {asset.lockedSignal.action}
-                </div>
-              </div>
-              <div className="grid grid-cols-3 gap-3 text-sm">
-                <div className="bg-black/20 rounded-lg p-2">
-                  <p className="text-white/50 text-xs">Entrada</p>
-                  <p className="text-white font-mono">{asset.lockedSignal.entry?.toFixed(2)}</p>
-                </div>
-                <div className="bg-black/20 rounded-lg p-2">
-                  <p className="text-white/50 text-xs">SL</p>
-                  <p className="text-red-400 font-mono">{asset.lockedSignal.sl?.toFixed(2)}</p>
-                </div>
-                <div className="bg-black/20 rounded-lg p-2">
-                  <p className="text-white/50 text-xs">TP</p>
-                  <p className="text-emerald-400 font-mono">{asset.lockedSignal.tp?.toFixed(2)}</p>
-                </div>
-              </div>
+        <div className="flex gap-1 mb-2">
+          {['tp1', 'tp2', 'tp3'].map(tp => (
+            <div key={tp} className={`flex-1 rounded p-1 text-center ${s[`${tp}Hit`] ? 'bg-emerald-500/20' : 'bg-white/5'}`}>
+              <p className={`text-[8px] ${s[`${tp}Hit`] ? 'text-emerald-400' : 'text-white/40'}`}>{tp.toUpperCase()}</p>
             </div>
           ))}
         </div>
+        {s.status === 'PENDING' && (
+          <div className="flex gap-1">
+            <button onClick={() => markSignal(s.id, 'WIN')} className="flex-1 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 rounded text-[10px]">✓ Win</button>
+            <button onClick={() => markSignal(s.id, 'LOSS')} className="flex-1 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded text-[10px]">✗ Loss</button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Price Card
+  const PriceCard = () => {
+    if (!currentAsset) return null;
+    const signal = lockedSignal;
+    
+    return (
+      <div className="rounded-xl bg-[#0f0f14] overflow-hidden">
+        <div className="p-3 border-b border-white/5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-xl">{currentAsset.emoji}</div>
+              <div>
+                <h3 className="font-bold text-white text-sm">{currentAsset.name}</h3>
+                <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                    currentAsset.structureM5 === 'BULLISH' ? 'bg-emerald-500/20 text-emerald-400' :
+                    currentAsset.structureM5 === 'BEARISH' ? 'bg-red-500/20 text-red-400' : 'bg-white/10 text-white/50'
+                  }`}>M5: {currentAsset.structureM5}</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                    currentAsset.structureH1 === 'BULLISH' ? 'bg-emerald-500/20 text-emerald-400' :
+                    currentAsset.structureH1 === 'BEARISH' ? 'bg-red-500/20 text-red-400' :
+                    currentAsset.structureH1 === 'LOADING' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-white/10 text-white/50'
+                  }`}>H1: {currentAsset.structureH1}</span>
+                  {currentAsset.mtfConfluence && <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400">✨ MTF</span>}
+                  {!currentAsset.isActive && currentAsset.type === 'forex' && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-400">⏰ {currentAsset.scheduleMessage}</span>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="text-right">
+              <p className="font-bold font-mono text-white text-lg">{currentAsset.price?.toFixed(currentAsset.decimals) || '---'}</p>
+              <p className="text-[10px] text-white/40">📦 {currentAsset.demandZones}D / {currentAsset.supplyZones}S</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="p-2"><Chart height={isMobile ? 220 : 280} /></div>
+
+        {signal && (
+          <div className="p-3 border-t border-white/5" style={{ background: signal.action === 'LONG' ? 'rgba(16,185,129,0.05)' : 'rgba(239,68,68,0.05)' }}>
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <span className={`px-2 py-1 rounded-lg font-bold text-sm ${signal.action === 'LONG' ? 'bg-emerald-500 text-black' : 'bg-red-500 text-white'}`}>{signal.action}</span>
+                <span className={`px-1.5 py-0.5 rounded text-[10px] ${getModelStyle(signal.model).bg} ${getModelStyle(signal.model).text}`}>{signal.model}</span>
+                {signal.trailingActive && <span className="px-1.5 py-0.5 rounded text-[10px] bg-blue-500/20 text-blue-400">🔄</span>}
+              </div>
+              <div className="text-xl font-bold text-white">{signal.score}%</div>
+            </div>
+            <div className={`grid gap-2 ${isMobile ? 'grid-cols-3' : 'grid-cols-5'}`}>
+              <div className="bg-blue-500/20 rounded p-2 text-center">
+                <p className="text-[8px] text-blue-400">ENTRY</p>
+                <p className="text-[10px] font-mono text-blue-400 font-bold">{signal.entry}</p>
+              </div>
+              {['tp1', 'tp2', 'tp3'].map(tp => (
+                <div key={tp} className={`rounded p-2 text-center ${signal[`${tp}Hit`] ? 'bg-emerald-500/30' : 'bg-emerald-500/10'}`}>
+                  <p className="text-[8px] text-emerald-400">{tp.toUpperCase()} {signal[`${tp}Hit`] && '✓'}</p>
+                  <p className="text-[10px] font-mono text-emerald-400">{signal[tp]}</p>
+                </div>
+              ))}
+              <div className="bg-red-500/20 rounded p-2 text-center">
+                <p className="text-[8px] text-red-400">SL</p>
+                <p className="text-[10px] font-mono text-red-400 font-bold">{signal.stop}</p>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Sections
+  const DashboardSection = () => {
+    const wr = data?.stats?.wins + data?.stats?.losses > 0 ? Math.round(data.stats.wins / (data.stats.wins + data.stats.losses) * 100) : 0;
+    return (
+      <div className="space-y-4">
+        {/* Forex Schedule Banner */}
+        {data?.forexStatus && !data.forexStatus.active && (
+          <div className="p-3 rounded-xl bg-yellow-500/10 border border-yellow-500/20">
+            <div className="flex items-center gap-2">
+              <span className="text-yellow-400">⏰</span>
+              <div>
+                <p className="text-yellow-400 text-sm font-medium">Forex (XAU, GBP): {data.forexStatus.message}</p>
+                <p className="text-yellow-400/60 text-xs">Horario de trading: 7:00 AM - 12:00 PM Colombia</p>
+              </div>
+            </div>
+          </div>
+        )}
+        <div className={`grid gap-3 ${isMobile ? 'grid-cols-2' : 'grid-cols-4'}`}>
+          <StatsCard title="Win Rate" value={`${wr}%`} icon="📊" />
+          <StatsCard title="Activas" value={pendingSignals.length} icon="🎯" />
+          <StatsCard title="Wins" value={data?.stats?.wins || 0} icon="✅" />
+          <StatsCard title="TP3" value={data?.stats?.tp3Hits || 0} icon="💎" />
+        </div>
+        <PriceCard />
+        {pendingSignals.length > 0 && (
+          <div>
+            <h3 className="text-xs font-medium text-white mb-2">Señales Activas</h3>
+            <div className={`grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-3'}`}>
+              {pendingSignals.slice(0, 3).map(s => <SignalCard key={s.id} signal={s} />)}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const SignalsSection = () => (
+    <div className="space-y-4">
+      <h3 className="text-sm font-medium text-white">Señales Activas ({pendingSignals.length})</h3>
+      {pendingSignals.length > 0 ? (
+        <div className={`grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-3'}`}>
+          {pendingSignals.map(s => <SignalCard key={s.id} signal={s} />)}
+        </div>
+      ) : (
+        <div className="text-center py-12 rounded-xl bg-[#0f0f14]">
+          <p className="text-white/50">Sin señales activas</p>
+        </div>
       )}
     </div>
   );
 
-  const StatsSection = () => (
-    <div className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
-      <h3 className="text-white font-bold mb-4">📊 Estadísticas</h3>
-      <div className="grid grid-cols-2 gap-4">
+  const ModelsSection = () => (
+    <div className="space-y-4">
+      <h3 className="text-sm font-medium text-white">6 Modelos SMC</h3>
+      <div className={`grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-2'}`}>
         {[
-          { label: 'Win Rate', value: `${data?.stats?.winRate || 0}%`, color: 'text-emerald-400' },
-          { label: 'Total Trades', value: data?.stats?.totalTrades || 0, color: 'text-white' },
-          { label: 'Profit Factor', value: data?.stats?.profitFactor || '0.00', color: 'text-cyan-400' },
-          { label: 'Señales Hoy', value: pendingSignals.length, color: 'text-white' }
-        ].map((stat, i) => (
-          <div key={i} className="bg-white/5 rounded-xl p-4">
-            <p className="text-white/50 text-sm mb-1">{stat.label}</p>
-            <p className={`text-3xl font-bold ${stat.color}`}>{stat.value}</p>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-
-  const SettingsSection = () => (
-    <div className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
-      <h3 className="text-white font-bold mb-4">⚙️ Configuración</h3>
-      <div className="space-y-4">
-        <div className="bg-white/5 rounded-xl p-4">
-          <p className="text-white font-medium mb-2">Cuenta</p>
-          <p className="text-white/50 text-sm">{user?.email}</p>
-        </div>
-      </div>
-    </div>
-  );
-
-  const BillingSection = () => {
-    const planInfo = PLANS_INFO[planSlug] || PLANS_INFO.trial;
-    return (
-      <div className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
-        <h3 className="text-white font-bold mb-4">💳 Plan & Pagos</h3>
-        <div className={`rounded-xl p-4 mb-4 ${isExpired ? 'bg-red-500/20' : `bg-gradient-to-r ${planInfo.color} bg-opacity-20`}`}>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <span className="text-3xl">{isExpired ? '⚠️' : planInfo.badge}</span>
-              <div>
-                <p className="text-white font-bold text-lg">{isExpired ? 'Expirado' : planInfo.name}</p>
-                {trialDaysLeft !== null && !isExpired && <p className="text-white/70 text-sm">{trialDaysLeft} días restantes</p>}
+          { name: 'MTF_CONFLUENCE', score: 95, desc: 'H1+M5 alineados' },
+          { name: 'CHOCH_PULLBACK', score: 90, desc: 'Cambio de carácter' },
+          { name: 'LIQUIDITY_SWEEP', score: 85, desc: 'Caza de stops' },
+          { name: 'BOS_CONTINUATION', score: 80, desc: 'Ruptura estructura' },
+          { name: 'FVG_ENTRY', score: 75, desc: 'Fair Value Gap' },
+          { name: 'ORDER_FLOW', score: 70, desc: 'Momentum' }
+        ].map(m => {
+          const style = getModelStyle(m.name);
+          const ms = data?.stats?.byModel?.[m.name] || { wins: 0, losses: 0 };
+          const wr = ms.wins + ms.losses > 0 ? Math.round(ms.wins / (ms.wins + ms.losses) * 100) : 0;
+          return (
+            <div key={m.name} className="rounded-xl p-4 bg-[#0f0f14]">
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <p className={`text-sm font-medium ${style.text}`}>{m.name}</p>
+                  <p className="text-[10px] text-white/40">{m.desc}</p>
+                </div>
+                <span className="text-lg font-bold text-white">{m.score}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="flex-1 h-1.5 bg-white/10 rounded-full">
+                  <div className="h-full rounded-full bg-gradient-to-r from-pink-500 to-purple-500" style={{ width: `${wr}%` }} />
+                </div>
+                <span className="text-[10px] text-white/60">{wr}%</span>
               </div>
             </div>
-            <button onClick={() => setShowPricing(true)} className="px-4 py-2 bg-white/20 hover:bg-white/30 rounded-lg text-white font-medium">
-              {isExpired ? 'Ver Planes' : 'Cambiar'}
-            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  const HistorySection = () => (
+    <div className="space-y-4">
+      <h3 className="text-sm font-medium text-white">Historial</h3>
+      <div className="rounded-xl bg-[#0f0f14] overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[400px]">
+            <thead>
+              <tr className="border-b border-white/5">
+                <th className="p-3 text-left text-[10px] text-white/50">Activo</th>
+                <th className="p-3 text-left text-[10px] text-white/50">Tipo</th>
+                <th className="p-3 text-left text-[10px] text-white/50">Score</th>
+                <th className="p-3 text-left text-[10px] text-white/50">Resultado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {closedSignals.slice(0, 15).map(s => (
+                <tr key={s.id} className="border-b border-white/5">
+                  <td className="p-3 text-xs text-white">{s.emoji} {s.assetName}</td>
+                  <td className="p-3"><span className={`px-1.5 py-0.5 rounded text-[9px] ${s.action === 'LONG' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>{s.action}</span></td>
+                  <td className="p-3 text-[10px] text-white/50">{s.score}%</td>
+                  <td className="p-3"><span className={`px-1.5 py-0.5 rounded text-[9px] ${s.status === 'WIN' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>{s.status}</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {closedSignals.length === 0 && <p className="p-6 text-center text-xs text-white/40">Sin historial</p>}
+      </div>
+    </div>
+  );
+
+  const StatsSection = () => {
+    const wr = data?.stats?.wins + data?.stats?.losses > 0 ? Math.round(data.stats.wins / (data.stats.wins + data.stats.losses) * 100) : 0;
+    return (
+      <div className="space-y-4">
+        <h3 className="text-sm font-medium text-white">Estadísticas</h3>
+        <div className={`grid gap-3 ${isMobile ? 'grid-cols-2' : 'grid-cols-4'}`}>
+          <StatsCard title="Total" value={data?.stats?.total || 0} icon="📊" />
+          <StatsCard title="Wins" value={data?.stats?.wins || 0} icon="✅" />
+          <StatsCard title="Losses" value={data?.stats?.losses || 0} icon="❌" />
+          <StatsCard title="Win Rate" value={`${wr}%`} icon="🎯" />
+        </div>
+        <div className="rounded-xl p-4 bg-[#0f0f14]">
+          <h4 className="text-xs font-medium text-white mb-3">TPs Alcanzados</h4>
+          <div className="grid grid-cols-3 gap-3">
+            {['TP1', 'TP2', 'TP3'].map((tp, i) => (
+              <div key={tp} className="text-center">
+                <p className="text-2xl font-bold text-emerald-400">{data?.stats?.[`tp${i+1}Hits`] || 0}</p>
+                <p className="text-[10px] text-white/40">{tp}</p>
+              </div>
+            ))}
           </div>
         </div>
-        <button onClick={() => setShowPricing(true)}
-          className="w-full py-3 bg-gradient-to-r from-purple-500 to-pink-500 rounded-xl text-white font-bold">
-          🚀 Ver todos los planes
-        </button>
       </div>
     );
   };
 
-  const LockedModule = ({ moduleId }) => {
-    const module = MODULES.find(m => m.id === moduleId);
+  // PANTALLA DE BLOQUEO - Solo para usuarios sin acceso
+  if (!isAccessAllowed) {
     return (
-      <div className="text-center py-12">
-        <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-white/5 flex items-center justify-center">
-          <span className="text-2xl">🔒</span>
-        </div>
-        <h3 className="text-white font-bold text-lg mb-2">{module?.label} bloqueado</h3>
-        <p className="text-white/50 mb-4">Actualiza tu plan para acceder</p>
-        <button onClick={() => setShowPricing(true)}
-          className="px-6 py-3 bg-gradient-to-r from-purple-500 to-pink-500 rounded-xl text-white font-bold">
-          🚀 Ver Planes
-        </button>
+      <div className="min-h-screen bg-[#06060a] flex flex-col">
+        <Sidebar />
+        <main className={`flex-1 transition-all duration-300 ${sidebarOpen && !isMobile ? 'ml-48' : 'ml-0'}`}>
+          <Header />
+          <div className="flex-1 flex items-center justify-center p-8">
+            <div className="text-center max-w-md">
+              <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-gradient-to-r from-amber-500/20 to-orange-500/20 flex items-center justify-center">
+                <span className="text-4xl">🔓</span>
+              </div>
+              <h2 className="text-2xl font-bold text-white mb-3">Suscripción Expirada</h2>
+              <p className="text-white/60 mb-6">Tu período de prueba ha terminado. Actualiza tu plan para continuar accediendo a todas las funciones.</p>
+              <button 
+                onClick={() => setShowPricing(true)}
+                className="px-8 py-3 bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-black font-bold rounded-xl transition-all transform hover:scale-105"
+              >
+                💎 Ver Planes
+              </button>
+            </div>
+          </div>
+        </main>
+        {showPricing && (
+          <Pricing 
+            user={user} 
+            subscription={subscription}
+            onClose={() => setShowPricing(false)} 
+          />
+        )}
       </div>
-    );
-  };
-
-  const ComingSoon = ({ moduleId }) => {
-    const module = MODULES.find(m => m.id === moduleId);
-    return (
-      <div className="text-center py-12">
-        <span className="text-4xl block mb-4">{module?.icon}</span>
-        <h3 className="text-white font-bold text-lg mb-2">{module?.label}</h3>
-        <span className="inline-block px-4 py-2 bg-purple-500/20 text-purple-400 rounded-full text-sm">🚧 Próximamente</span>
-      </div>
-    );
-  };
-
-  const renderSection = () => {
-    const module = MODULES.find(m => m.id === activeSection);
-    if (module?.comingSoon) return <ComingSoon moduleId={activeSection} />;
-    if (!checkModuleAccess(activeSection) && !['settings', 'billing'].includes(activeSection)) return <LockedModule moduleId={activeSection} />;
-    switch (activeSection) {
-      case 'dashboard': return <DashboardSection />;
-      case 'signals': return <SignalsSection />;
-      case 'stats': return <StatsSection />;
-      case 'settings': return <SettingsSection />;
-      case 'billing': return <BillingSection />;
-      case 'chat': return <div className="text-center py-12 text-white/50">Usa el botón flotante 🤖</div>;
-      default: return <DashboardSection />;
-    }
-  };
-
-  if (isExpired && !showPricing) {
-    return (
-      <>
-        <ExpiredScreen onSelectPlan={() => setShowPricing(true)} user={user} />
-        {showPricing && <Pricing user={user} subscription={subscription} onClose={() => setShowPricing(false)} />}
-      </>
     );
   }
 
   return (
     <div className="min-h-screen bg-[#06060a]">
       <Sidebar />
-      <main className={`transition-all duration-300 ${sidebarOpen && !isMobile ? 'ml-56' : 'ml-0'}`}>
+      <main className={`transition-all duration-300 ${sidebarOpen && !isMobile ? 'ml-48' : 'ml-0'}`}>
         <Header />
-        <div className="p-3 pb-24">{renderSection()}</div>
+        <div className="p-3 pb-24">
+          {activeSection === 'dashboard' && <DashboardSection />}
+          {activeSection === 'signals' && <SignalsSection />}
+          {activeSection === 'models' && <ModelsSection />}
+          {activeSection === 'history' && <HistorySection />}
+          {activeSection === 'stats' && <StatsSection />}
+        </div>
       </main>
-      <ElisaChat selectedAsset={selectedAsset} isMobile={isMobile} subscription={subscription} />
-      {showPricing && <Pricing user={user} subscription={subscription} onClose={() => setShowPricing(false)} />}
+      <ElisaChat selectedAsset={selectedAsset} isMobile={isMobile} />
+      
+      {/* Modal de Precios */}
+      {showPricing && (
+        <Pricing 
+          user={user} 
+          subscription={subscription}
+          onClose={() => setShowPricing(false)} 
+        />
+      )}
     </div>
   );
 }
