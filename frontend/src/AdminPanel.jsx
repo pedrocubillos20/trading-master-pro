@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://trading-master-pro-production.up.railway.app';
 
-// Contraseña de admin (cambiar en producción)
 const ADMIN_PASSWORD = 'TradingPro2024Admin!';
 
 export default function AdminPanel() {
@@ -13,6 +12,8 @@ export default function AdminPanel() {
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
+  const [showAddUser, setShowAddUser] = useState(false);
+  const [newUser, setNewUser] = useState({ user_id: '', email: '', plan: 'elite', status: 'active', period: 'anual' });
 
   const handleLogin = (e) => {
     e.preventDefault();
@@ -25,15 +26,11 @@ export default function AdminPanel() {
   };
 
   useEffect(() => {
-    if (localStorage.getItem('adminAuth') === 'true') {
-      setAuthenticated(true);
-    }
+    if (localStorage.getItem('adminAuth') === 'true') setAuthenticated(true);
   }, []);
 
   useEffect(() => {
-    if (authenticated) {
-      fetchUsers();
-    }
+    if (authenticated) fetchUsers();
   }, [authenticated]);
 
   const fetchUsers = async () => {
@@ -43,300 +40,191 @@ export default function AdminPanel() {
       const data = await res.json();
       if (data.users) {
         setUsers(data.users);
-        calculateStats(data.users);
+        setStats(data.stats || {});
       }
     } catch (e) {
-      console.error('Error fetching users:', e);
+      console.error('Error:', e);
     }
     setLoading(false);
   };
 
-  const calculateStats = (usersList) => {
-    const total = usersList.length;
-    const trial = usersList.filter(u => u.subscription?.status === 'trial').length;
-    const active = usersList.filter(u => u.subscription?.status === 'active').length;
-    const expired = usersList.filter(u => u.subscription?.status === 'expired').length;
-    const basic = usersList.filter(u => u.subscription?.plan === 'basic').length;
-    const premium = usersList.filter(u => u.subscription?.plan === 'premium').length;
-    const elite = usersList.filter(u => u.subscription?.plan === 'elite').length;
-    
-    const revenue = usersList.reduce((acc, u) => {
-      if (u.subscription?.status === 'active') {
-        const prices = { basic: 29900, premium: 59900, elite: 99900 };
-        return acc + (prices[u.subscription?.plan] || 0);
+  const addUser = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch(`${API_URL}/api/admin/users`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: newUser.user_id,
+          email: newUser.email,
+          plan_slug: newUser.plan,
+          status: newUser.status,
+          period: newUser.period
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert('✅ Usuario agregado/actualizado');
+        setShowAddUser(false);
+        setNewUser({ user_id: '', email: '', plan: 'elite', status: 'active', period: 'anual' });
+        fetchUsers();
+      } else {
+        alert('Error: ' + (data.error || 'Error desconocido'));
       }
-      return acc;
-    }, 0);
-
-    setStats({ total, trial, active, expired, basic, premium, elite, revenue });
+    } catch (e) {
+      alert('Error: ' + e.message);
+    }
   };
 
-  const filteredUsers = users.filter(user => {
-    const matchesFilter = filter === 'all' || user.subscription?.status === filter || user.subscription?.plan === filter;
-    const matchesSearch = user.email?.toLowerCase().includes(search.toLowerCase());
-    return matchesFilter && matchesSearch;
+  const deleteUser = async (userId) => {
+    if (!confirm('¿Eliminar suscripción de este usuario?')) return;
+    try {
+      await fetch(`${API_URL}/api/admin/users/${userId}`, { method: 'DELETE' });
+      fetchUsers();
+    } catch (e) {
+      alert('Error: ' + e.message);
+    }
+  };
+
+  const copyEmails = (filterFn) => {
+    const emails = users.filter(filterFn).map(u => u.email).filter(Boolean).join('\n');
+    navigator.clipboard.writeText(emails);
+    alert(`✅ ${emails.split('\n').length} emails copiados`);
+  };
+
+  const exportCSV = () => {
+    const csv = 'Email,Status,Plan,Period,Created\n' + users.map(u => 
+      `${u.email},${u.subscription?.status},${u.subscription?.plan},${u.subscription?.period},${u.created_at}`
+    ).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'usuarios.csv';
+    a.click();
+  };
+
+  const filteredUsers = users.filter(u => {
+    const matchFilter = filter === 'all' || u.subscription?.status === filter || u.subscription?.plan?.includes(filter);
+    const matchSearch = !search || u.email?.toLowerCase().includes(search.toLowerCase());
+    return matchFilter && matchSearch;
   });
 
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'trial': return 'bg-amber-500/20 text-amber-400';
-      case 'active': return 'bg-emerald-500/20 text-emerald-400';
-      case 'expired': return 'bg-red-500/20 text-red-400';
-      default: return 'bg-white/10 text-white/50';
-    }
-  };
+  const formatDate = (d) => d ? new Date(d).toLocaleDateString('es-CO') : '-';
 
-  const getPlanColor = (plan) => {
-    switch (plan) {
-      case 'basic': return 'bg-slate-500/20 text-slate-400';
-      case 'premium': return 'bg-cyan-500/20 text-cyan-400';
-      case 'elite': return 'bg-purple-500/20 text-purple-400';
-      default: return 'bg-white/10 text-white/50';
-    }
-  };
-
-  const formatDate = (date) => {
-    if (!date) return '-';
-    return new Date(date).toLocaleDateString('es-CO', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric'
-    });
-  };
-
-  const handleLogout = () => {
-    localStorage.removeItem('adminAuth');
-    setAuthenticated(false);
-  };
-
-  // Login Screen
   if (!authenticated) {
     return (
       <div className="min-h-screen bg-[#06060a] flex items-center justify-center p-4">
-        <div className="w-full max-w-md">
-          <div className="bg-[#0d0d12] rounded-2xl border border-white/10 p-8">
-            <div className="text-center mb-8">
-              <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-emerald-400 to-cyan-400 flex items-center justify-center">
-                <span className="text-3xl">👨‍💼</span>
-              </div>
-              <h1 className="text-2xl font-bold text-white">Admin Panel</h1>
-              <p className="text-white/50 mt-2">Trading Master Pro</p>
-            </div>
-
-            <form onSubmit={handleLogin} className="space-y-4">
-              <div>
-                <label className="text-white/50 text-sm block mb-2">Contraseña</label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Ingresa la contraseña"
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-white/30 focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-              <button
-                type="submit"
-                className="w-full py-3 bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 rounded-xl text-black font-bold transition-all"
-              >
-                Acceder
-              </button>
-            </form>
+        <div className="w-full max-w-md bg-[#0d0d12] rounded-2xl border border-white/10 p-8">
+          <div className="text-center mb-8">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-emerald-400 to-cyan-400 flex items-center justify-center text-3xl">👨‍💼</div>
+            <h1 className="text-2xl font-bold text-white">Admin Panel</h1>
           </div>
+          <form onSubmit={handleLogin} className="space-y-4">
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Contraseña" className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white" />
+            <button className="w-full py-3 bg-gradient-to-r from-emerald-500 to-cyan-500 rounded-xl text-black font-bold">Acceder</button>
+          </form>
         </div>
       </div>
     );
   }
 
-  // Admin Dashboard
   return (
     <div className="min-h-screen bg-[#06060a]">
-      {/* Header */}
       <header className="bg-[#0a0a0f] border-b border-white/5 px-4 py-3 sticky top-0 z-10">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-400 to-cyan-400 flex items-center justify-center">
-              <span className="text-xl">👨‍💼</span>
-            </div>
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-400 to-cyan-400 flex items-center justify-center text-xl">👨‍💼</div>
             <div>
               <h1 className="text-lg font-bold text-white">Admin Panel</h1>
               <p className="text-xs text-white/50">Trading Master Pro</p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={fetchUsers}
-              className="px-4 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-white/70 text-sm transition-all"
-            >
-              🔄 Actualizar
-            </button>
-            <button
-              onClick={handleLogout}
-              className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 rounded-lg text-red-400 text-sm transition-all"
-            >
-              Salir
-            </button>
+          <div className="flex gap-2">
+            <button onClick={() => setShowAddUser(true)} className="px-4 py-2 bg-emerald-500/20 hover:bg-emerald-500/30 rounded-lg text-emerald-400 text-sm">➕ Agregar</button>
+            <button onClick={fetchUsers} className="px-4 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-white/70 text-sm">🔄 Actualizar</button>
+            <button onClick={() => { localStorage.removeItem('adminAuth'); setAuthenticated(false); }} className="px-4 py-2 bg-red-500/20 rounded-lg text-red-400 text-sm">Salir</button>
           </div>
         </div>
       </header>
 
       <div className="max-w-7xl mx-auto p-4 space-y-6">
-        {/* Stats Cards */}
+        {/* Stats */}
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
-          <div className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
-            <p className="text-white/50 text-xs mb-1">Total Usuarios</p>
-            <p className="text-2xl font-bold text-white">{stats.total || 0}</p>
-          </div>
-          <div className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
-            <p className="text-white/50 text-xs mb-1">En Trial</p>
-            <p className="text-2xl font-bold text-amber-400">{stats.trial || 0}</p>
-          </div>
-          <div className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
-            <p className="text-white/50 text-xs mb-1">Activos</p>
-            <p className="text-2xl font-bold text-emerald-400">{stats.active || 0}</p>
-          </div>
-          <div className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
-            <p className="text-white/50 text-xs mb-1">Expirados</p>
-            <p className="text-2xl font-bold text-red-400">{stats.expired || 0}</p>
-          </div>
-          <div className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
-            <p className="text-white/50 text-xs mb-1">Plan Básico</p>
-            <p className="text-2xl font-bold text-slate-400">{stats.basic || 0}</p>
-          </div>
-          <div className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
-            <p className="text-white/50 text-xs mb-1">Plan Premium</p>
-            <p className="text-2xl font-bold text-cyan-400">{stats.premium || 0}</p>
-          </div>
-          <div className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
-            <p className="text-white/50 text-xs mb-1">Plan Elite</p>
-            <p className="text-2xl font-bold text-purple-400">{stats.elite || 0}</p>
-          </div>
-          <div className="bg-[#0d0d12] rounded-xl p-4 border border-emerald-500/20">
-            <p className="text-white/50 text-xs mb-1">Ingresos/mes</p>
-            <p className="text-xl font-bold text-emerald-400">${(stats.revenue || 0).toLocaleString()}</p>
-          </div>
+          {[
+            { label: 'Total', value: stats.total || 0, color: 'text-white' },
+            { label: 'Trial', value: stats.trial || 0, color: 'text-amber-400' },
+            { label: 'Activos', value: stats.active || 0, color: 'text-emerald-400' },
+            { label: 'Expirados', value: stats.expired || 0, color: 'text-red-400' },
+            { label: 'Básico', value: stats.basic || 0, color: 'text-slate-400' },
+            { label: 'Premium', value: stats.premium || 0, color: 'text-cyan-400' },
+            { label: 'Elite', value: stats.elite || 0, color: 'text-purple-400' },
+            { label: 'Ingresos/mes', value: `$${((stats.active || 0) * 99900).toLocaleString()}`, color: 'text-emerald-400' },
+          ].map((s, i) => (
+            <div key={i} className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
+              <p className="text-white/50 text-xs mb-1">{s.label}</p>
+              <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
+            </div>
+          ))}
         </div>
 
-        {/* Filters & Search */}
-        <div className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
-          <div className="flex flex-col sm:flex-row gap-4">
-            <div className="flex-1">
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="🔍 Buscar por email..."
-                className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-white placeholder-white/30 focus:outline-none focus:border-emerald-500"
-              />
-            </div>
-            <div className="flex gap-2 flex-wrap">
-              {[
-                { key: 'all', label: 'Todos' },
-                { key: 'trial', label: '🟡 Trial' },
-                { key: 'active', label: '🟢 Activos' },
-                { key: 'expired', label: '🔴 Expirados' },
-                { key: 'basic', label: '🥉 Básico' },
-                { key: 'premium', label: '🥈 Premium' },
-                { key: 'elite', label: '🥇 Elite' },
-              ].map(f => (
-                <button
-                  key={f.key}
-                  onClick={() => setFilter(f.key)}
-                  className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-                    filter === f.key 
-                      ? 'bg-emerald-500 text-black' 
-                      : 'bg-white/5 text-white/60 hover:bg-white/10'
-                  }`}
-                >
-                  {f.label}
-                </button>
-              ))}
-            </div>
-          </div>
+        {/* Filters */}
+        <div className="flex flex-wrap gap-3 items-center">
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="🔍 Buscar por email..." className="flex-1 min-w-[200px] bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-white text-sm" />
+          {['all', 'trial', 'active', 'expired', 'básico', 'premium', 'elite'].map(f => (
+            <button key={f} onClick={() => setFilter(f)} className={`px-3 py-2 rounded-lg text-sm ${filter === f ? 'bg-emerald-500 text-black' : 'bg-white/5 text-white/70'}`}>
+              {f === 'all' ? 'Todos' : f.charAt(0).toUpperCase() + f.slice(1)}
+            </button>
+          ))}
         </div>
 
         {/* Users Table */}
         <div className="bg-[#0d0d12] rounded-xl border border-white/5 overflow-hidden">
-          <div className="p-4 border-b border-white/5">
+          <div className="p-4 border-b border-white/5 flex justify-between items-center">
             <h2 className="text-white font-bold">👥 Usuarios ({filteredUsers.length})</h2>
           </div>
           
           {loading ? (
-            <div className="p-8 text-center">
-              <div className="w-8 h-8 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin mx-auto mb-2" />
-              <p className="text-white/50">Cargando usuarios...</p>
-            </div>
+            <div className="p-8 text-center text-white/50">Cargando...</div>
           ) : filteredUsers.length === 0 ? (
-            <div className="p-8 text-center">
-              <span className="text-4xl block mb-2">🔍</span>
-              <p className="text-white/50">No se encontraron usuarios</p>
-            </div>
+            <div className="p-8 text-center text-white/50">No se encontraron usuarios</div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full">
+              <table className="w-full text-sm">
                 <thead className="bg-white/5">
                   <tr>
-                    <th className="text-left p-4 text-white/50 text-xs font-medium">Email</th>
-                    <th className="text-left p-4 text-white/50 text-xs font-medium">Estado</th>
-                    <th className="text-left p-4 text-white/50 text-xs font-medium">Plan</th>
-                    <th className="text-left p-4 text-white/50 text-xs font-medium">Registro</th>
-                    <th className="text-left p-4 text-white/50 text-xs font-medium">Trial Expira</th>
-                    <th className="text-left p-4 text-white/50 text-xs font-medium">Acciones</th>
+                    <th className="text-left p-3 text-white/50 font-medium">Email</th>
+                    <th className="text-left p-3 text-white/50 font-medium">Estado</th>
+                    <th className="text-left p-3 text-white/50 font-medium">Plan</th>
+                    <th className="text-left p-3 text-white/50 font-medium">Período</th>
+                    <th className="text-left p-3 text-white/50 font-medium">Registro</th>
+                    <th className="text-left p-3 text-white/50 font-medium">Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredUsers.map((user, i) => (
-                    <tr key={user.id || i} className="border-t border-white/5 hover:bg-white/5">
-                      <td className="p-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-emerald-400 to-cyan-400 flex items-center justify-center">
-                            <span className="text-black text-xs font-bold">
-                              {user.email?.charAt(0).toUpperCase() || '?'}
-                            </span>
-                          </div>
-                          <div>
-                            <p className="text-white text-sm font-medium">{user.email}</p>
-                            <p className="text-white/40 text-xs">ID: {user.id?.slice(0, 8)}...</p>
-                          </div>
-                        </div>
+                  {filteredUsers.map(user => (
+                    <tr key={user.id} className="border-t border-white/5 hover:bg-white/5">
+                      <td className="p-3 text-white">{user.email || user.id?.slice(0,8)}</td>
+                      <td className="p-3">
+                        <span className={`px-2 py-1 rounded text-xs ${
+                          user.subscription?.status === 'active' || user.subscription?.status === 'activo' ? 'bg-emerald-500/20 text-emerald-400' :
+                          user.subscription?.status === 'trial' ? 'bg-amber-500/20 text-amber-400' :
+                          'bg-red-500/20 text-red-400'
+                        }`}>{user.subscription?.status || 'trial'}</span>
                       </td>
-                      <td className="p-4">
-                        <span className={`px-2 py-1 rounded-lg text-xs font-medium ${getStatusColor(user.subscription?.status)}`}>
-                          {user.subscription?.status || 'Sin suscripción'}
-                        </span>
+                      <td className="p-3">
+                        <span className={`px-2 py-1 rounded text-xs ${
+                          user.subscription?.plan?.includes('elite') || user.subscription?.plan?.includes('élite') ? 'bg-purple-500/20 text-purple-400' :
+                          user.subscription?.plan?.includes('premium') ? 'bg-cyan-500/20 text-cyan-400' :
+                          'bg-slate-500/20 text-slate-400'
+                        }`}>{user.subscription?.plan_name || user.subscription?.plan || 'Trial'}</span>
                       </td>
-                      <td className="p-4">
-                        <span className={`px-2 py-1 rounded-lg text-xs font-medium ${getPlanColor(user.subscription?.plan)}`}>
-                          {user.subscription?.plan || '-'}
-                        </span>
-                      </td>
-                      <td className="p-4 text-white/60 text-sm">
-                        {formatDate(user.created_at)}
-                      </td>
-                      <td className="p-4 text-white/60 text-sm">
-                        {user.subscription?.status === 'trial' 
-                          ? formatDate(user.subscription?.trial_ends_at)
-                          : '-'
-                        }
-                      </td>
-                      <td className="p-4">
-                        <div className="flex gap-2">
-                          <button 
-                            onClick={() => {
-                              const subject = encodeURIComponent('Trading Master Pro - Oferta Especial');
-                              const body = encodeURIComponent(`Hola,\n\nTe contactamos de Trading Master Pro...\n\nSaludos`);
-                              window.open(`mailto:${user.email}?subject=${subject}&body=${body}`);
-                            }}
-                            className="px-3 py-1 bg-emerald-500/20 hover:bg-emerald-500/30 rounded text-emerald-400 text-xs"
-                          >
-                            📧 Email
-                          </button>
-                          <button 
-                            onClick={() => navigator.clipboard.writeText(user.email)}
-                            className="px-3 py-1 bg-white/5 hover:bg-white/10 rounded text-white/60 text-xs"
-                          >
-                            📋 Copiar
-                          </button>
-                        </div>
+                      <td className="p-3 text-white/70">{user.subscription?.period || '-'}</td>
+                      <td className="p-3 text-white/50">{formatDate(user.created_at)}</td>
+                      <td className="p-3 flex gap-2">
+                        <button onClick={() => { setNewUser({ user_id: user.id, email: user.email, plan: 'elite', status: 'active', period: 'anual' }); setShowAddUser(true); }} className="p-1 hover:bg-white/10 rounded text-cyan-400">✏️</button>
+                        <button onClick={() => deleteUser(user.id)} className="p-1 hover:bg-white/10 rounded text-red-400">🗑️</button>
+                        <button onClick={() => navigator.clipboard.writeText(user.email)} className="p-1 hover:bg-white/10 rounded text-white/50">📋</button>
                       </td>
                     </tr>
                   ))}
@@ -347,93 +235,78 @@ export default function AdminPanel() {
         </div>
 
         {/* Marketing Actions */}
-        <div className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
+        <div className="bg-[#0d0d12] rounded-xl border border-white/5 p-4">
           <h3 className="text-white font-bold mb-4">🎯 Acciones de Marketing</h3>
-          <div className="grid sm:grid-cols-3 gap-4">
-            <button 
-              onClick={() => {
-                const trialUsers = users.filter(u => u.subscription?.status === 'trial');
-                const emails = trialUsers.map(u => u.email).join(',');
-                navigator.clipboard.writeText(emails);
-                alert(`${trialUsers.length} emails copiados`);
-              }}
-              className="p-4 bg-amber-500/10 hover:bg-amber-500/20 rounded-xl border border-amber-500/20 transition-all"
-            >
-              <span className="text-2xl block mb-2">🟡</span>
-              <p className="text-white font-medium">Copiar emails Trial</p>
-              <p className="text-white/50 text-sm">{stats.trial || 0} usuarios</p>
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+            <button onClick={() => copyEmails(u => u.subscription?.status === 'trial')} className="p-4 bg-amber-500/10 hover:bg-amber-500/20 rounded-xl text-amber-400">
+              <div className="text-2xl mb-2">🟡</div>
+              <div className="font-bold">Copiar emails Trial</div>
+              <div className="text-sm opacity-70">{stats.trial || 0} usuarios</div>
             </button>
-            
-            <button 
-              onClick={() => {
-                const expiredUsers = users.filter(u => u.subscription?.status === 'expired');
-                const emails = expiredUsers.map(u => u.email).join(',');
-                navigator.clipboard.writeText(emails);
-                alert(`${expiredUsers.length} emails copiados`);
-              }}
-              className="p-4 bg-red-500/10 hover:bg-red-500/20 rounded-xl border border-red-500/20 transition-all"
-            >
-              <span className="text-2xl block mb-2">🔴</span>
-              <p className="text-white font-medium">Copiar emails Expirados</p>
-              <p className="text-white/50 text-sm">{stats.expired || 0} usuarios</p>
+            <button onClick={() => copyEmails(u => u.subscription?.status === 'expired')} className="p-4 bg-red-500/10 hover:bg-red-500/20 rounded-xl text-red-400">
+              <div className="text-2xl mb-2">🔴</div>
+              <div className="font-bold">Copiar emails Expirados</div>
+              <div className="text-sm opacity-70">{stats.expired || 0} usuarios</div>
             </button>
-            
-            <button 
-              onClick={() => {
-                const allEmails = users.map(u => u.email).join(',');
-                navigator.clipboard.writeText(allEmails);
-                alert(`${users.length} emails copiados`);
-              }}
-              className="p-4 bg-emerald-500/10 hover:bg-emerald-500/20 rounded-xl border border-emerald-500/20 transition-all"
-            >
-              <span className="text-2xl block mb-2">📧</span>
-              <p className="text-white font-medium">Copiar todos los emails</p>
-              <p className="text-white/50 text-sm">{stats.total || 0} usuarios</p>
+            <button onClick={() => copyEmails(() => true)} className="p-4 bg-white/5 hover:bg-white/10 rounded-xl text-white/70">
+              <div className="text-2xl mb-2">📧</div>
+              <div className="font-bold">Copiar todos los emails</div>
+              <div className="text-sm opacity-70">{stats.total || 0} usuarios</div>
             </button>
-          </div>
-        </div>
-
-        {/* Export */}
-        <div className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
-          <h3 className="text-white font-bold mb-4">📊 Exportar Datos</h3>
-          <div className="flex gap-3">
-            <button
-              onClick={() => {
-                const csv = [
-                  'Email,Estado,Plan,Registro,Trial Expira',
-                  ...users.map(u => 
-                    `${u.email},${u.subscription?.status || '-'},${u.subscription?.plan || '-'},${u.created_at || '-'},${u.subscription?.trial_ends_at || '-'}`
-                  )
-                ].join('\n');
-                
-                const blob = new Blob([csv], { type: 'text/csv' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `usuarios_tradingpro_${new Date().toISOString().split('T')[0]}.csv`;
-                a.click();
-              }}
-              className="px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-white text-sm"
-            >
-              📥 Exportar CSV
-            </button>
-            <button
-              onClick={() => {
-                const json = JSON.stringify(users, null, 2);
-                const blob = new Blob([json], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `usuarios_tradingpro_${new Date().toISOString().split('T')[0]}.json`;
-                a.click();
-              }}
-              className="px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-white text-sm"
-            >
-              📥 Exportar JSON
+            <button onClick={exportCSV} className="p-4 bg-emerald-500/10 hover:bg-emerald-500/20 rounded-xl text-emerald-400">
+              <div className="text-2xl mb-2">📥</div>
+              <div className="font-bold">Exportar CSV</div>
+              <div className="text-sm opacity-70">Descargar datos</div>
             </button>
           </div>
         </div>
       </div>
+
+      {/* Modal Agregar Usuario */}
+      {showAddUser && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+          <div className="bg-[#0d0d12] rounded-2xl border border-white/10 p-6 w-full max-w-md">
+            <h2 className="text-xl font-bold text-white mb-4">➕ Agregar/Editar Usuario</h2>
+            <form onSubmit={addUser} className="space-y-4">
+              <div>
+                <label className="text-white/50 text-sm block mb-1">User ID (de Supabase Auth)</label>
+                <input value={newUser.user_id} onChange={(e) => setNewUser({...newUser, user_id: e.target.value})} placeholder="ej: e7229c80-ea49-478c-..." className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-white text-sm" required />
+              </div>
+              <div>
+                <label className="text-white/50 text-sm block mb-1">Email (opcional)</label>
+                <input value={newUser.email} onChange={(e) => setNewUser({...newUser, email: e.target.value})} placeholder="usuario@email.com" className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-white text-sm" />
+              </div>
+              <div>
+                <label className="text-white/50 text-sm block mb-1">Plan</label>
+                <select value={newUser.plan} onChange={(e) => setNewUser({...newUser, plan: e.target.value})} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-white text-sm">
+                  <option value="básico">Básico</option>
+                  <option value="de primera calidad">Premium</option>
+                  <option value="élite">Elite</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-white/50 text-sm block mb-1">Estado</label>
+                <select value={newUser.status} onChange={(e) => setNewUser({...newUser, status: e.target.value})} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-white text-sm">
+                  <option value="activo">Activo</option>
+                  <option value="trial">Trial</option>
+                  <option value="expired">Expirado</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-white/50 text-sm block mb-1">Período</label>
+                <select value={newUser.period} onChange={(e) => setNewUser({...newUser, period: e.target.value})} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-white text-sm">
+                  <option value="mensual">Mensual</option>
+                  <option value="anual">Anual</option>
+                </select>
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={() => setShowAddUser(false)} className="flex-1 py-2 bg-white/10 rounded-xl text-white">Cancelar</button>
+                <button type="submit" className="flex-1 py-2 bg-emerald-500 rounded-xl text-black font-bold">Guardar</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
