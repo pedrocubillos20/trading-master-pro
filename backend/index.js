@@ -1876,20 +1876,77 @@ app.get('/api/subscription/:userId', async (req, res) => {
     const { userId } = req.params;
     
     if (!supabase) {
-      // Trial por defecto si no hay Supabase
       return res.json({
         subscription: {
           status: 'trial',
-          plan: 'premium',
-          trial_ends_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
-          limits: {
-            assets: ['stpRNG', '1HZ75V', 'frxXAUUSD', 'frxGBPUSD'],
-            signals_per_day: 15,
-            telegram: true,
-            elisa_chat: false
-          }
+          plan: 'trial',
+          trial_ends_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString()
         }
       });
+    }
+
+    // Buscar en tabla "suscripciones" (español)
+    const { data: subscription, error } = await supabase
+      .from('suscripciones')
+      .select('*, planes:id_del_plan(identificacion, nombre, babosa)')
+      .eq('id_de_usuario', userId)
+      .single();
+    
+    if (error || !subscription) {
+      // Si no hay suscripción, devolver trial por defecto
+      return res.json({
+        subscription: {
+          status: 'trial',
+          plan: 'trial',
+          trial_ends_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString()
+        }
+      });
+    }
+
+    // Mapear campos español a inglés para el frontend
+    const mappedSubscription = {
+      id: subscription.identificacion,
+      user_id: subscription.id_de_usuario,
+      plan_id: subscription.id_del_plan,
+      status: subscription.estado || 'trial',
+      period: subscription.período,
+      plans: subscription.planes ? {
+        id: subscription.planes.identificacion,
+        name: subscription.planes.nombre,
+        slug: subscription.planes.babosa
+      } : null
+    };
+
+    // Verificar si el trial expiró
+    if (mappedSubscription.status === 'trial') {
+      // Calcular fecha de expiración (5 días después de creación)
+      const createdAt = new Date(subscription.created_at || Date.now());
+      const trialEnd = new Date(createdAt.getTime() + 5 * 24 * 60 * 60 * 1000);
+      
+      if (new Date() > trialEnd) {
+        mappedSubscription.status = 'expired';
+        // Actualizar en DB
+        await supabase
+          .from('suscripciones')
+          .update({ estado: 'expired' })
+          .eq('identificacion', subscription.identificacion);
+      }
+      
+      mappedSubscription.trial_ends_at = trialEnd.toISOString();
+    }
+
+    res.json({ subscription: mappedSubscription });
+  } catch (error) {
+    console.error('Error getting subscription:', error);
+    res.json({
+      subscription: {
+        status: 'trial',
+        plan: 'trial',
+        trial_ends_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString()
+      }
+    });
+  }
+});
     }
 
     const { data: subscription } = await supabase
@@ -2306,7 +2363,7 @@ app.post('/api/admin/users/:userId/subscription', async (req, res) => {
   }
 });
 // =============================================
-// ENDPOINT ADMIN - USUARIOS
+// PANEL ADMIN - OBTENER USUARIOS
 // =============================================
 app.get('/api/admin/users', async (req, res) => {
   try {
@@ -2314,29 +2371,62 @@ app.get('/api/admin/users', async (req, res) => {
       return res.json({ users: [], error: 'Supabase no configurado' });
     }
     
-    const { data: authUsers } = await supabase.auth.admin.listUsers();
+    // Obtener usuarios de auth
+    const { data: authData, error: authError } = await supabase.auth.admin.listUsers();
     
-    const { data: subscriptions } = await supabase
+    if (authError) {
+      console.error('Error auth.admin.listUsers:', authError);
+    }
+    
+    const authUsers = authData?.users || [];
+    
+    // Obtener suscripciones
+    const { data: suscripciones } = await supabase
       .from('suscripciones')
+      .select('*, planes:id_del_plan(nombre, babosa)');
+    
+    // Obtener planes para mapear IDs
+    const { data: planes } = await supabase
+      .from('planes')
       .select('*');
     
-    const users = (authUsers?.users || []).map(user => {
-      const sub = (subscriptions || []).find(s => s.id_de_usuario === user.id);
+    // Combinar datos
+    const users = authUsers.map(user => {
+      const sub = (suscripciones || []).find(s => s.id_de_usuario === user.id);
+      const plan = sub?.planes || (planes || []).find(p => p.identificacion === sub?.id_del_plan);
+      
       return {
         id: user.id,
         email: user.email,
         created_at: user.created_at,
+        last_sign_in: user.last_sign_in_at,
         subscription: sub ? {
-          status: sub.estado || 'trial',
-          plan: sub.id_del_plan,
+          status: sub.estado || 'active',
+          plan: plan?.babosa || plan?.nombre?.toLowerCase() || 'unknown',
+          plan_name: plan?.nombre || 'Desconocido',
           period: sub.período
-        } : { status: 'trial', plan: 'trial' }
+        } : {
+          status: 'trial',
+          plan: 'trial',
+          plan_name: 'Trial',
+          trial_ends_at: new Date(new Date(user.created_at).getTime() + 5 * 24 * 60 * 60 * 1000).toISOString()
+        }
       };
     });
     
-    res.json({ users, total: users.length });
+    res.json({ 
+      users,
+      total: users.length,
+      stats: {
+        total: users.length,
+        trial: users.filter(u => u.subscription?.status === 'trial').length,
+        active: users.filter(u => u.subscription?.status === 'active' || u.subscription?.status === 'activo').length,
+        expired: users.filter(u => u.subscription?.status === 'expired').length
+      }
+    });
+    
   } catch (error) {
-    console.error('Admin error:', error);
+    console.error('Error admin users:', error);
     res.json({ users: [], error: error.message });
   }
 });
