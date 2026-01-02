@@ -1798,14 +1798,11 @@ app.listen(PORT, () => {
 
 const WOMPI_PUBLIC_KEY = process.env.WOMPI_PUBLIC_KEY || 'pub_prod_6weSthG7fsBGqfWDk3nwMgiuEUxH8S7U';
 const WOMPI_PRIVATE_KEY = process.env.WOMPI_PRIVATE_KEY || 'prv_prod_d2ajkQin28en8IH6efkeW6SB8AU0fCdG';
-
-const WOMPI_PUBLIC_KEY = process.env.WOMPI_PUBLIC_KEY || 'pub_prod_6weSthG7fsBGqfWDk3nwMgiuEUxH8S7U';
-const WOMPI_PRIVATE_KEY = process.env.WOMPI_PRIVATE_KEY || 'prv_prod_d2ajkQin28en8IH6efkeW6SB8AU0fCdG';
 const WOMPI_EVENTS_SECRET = process.env.WOMPI_EVENTS_SECRET || 'prod_events_qNbHzrAfNmSaU5I0pxU0Trj7XHsueyPG';
 const WOMPI_INTEGRITY_KEY = process.env.WOMPI_INTEGRITY_KEY || 'prod_integrity_iCriSAnih2uCpSAGrNHeAbcZyvRipcR3';
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://mtzycmqtxdvoazomipye.supabase.co';
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || '';
 
 const supabase = SUPABASE_SERVICE_KEY ? createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY) : null;
 
@@ -1819,6 +1816,7 @@ function generateWompiSignature(reference, amountCents, currency) {
 app.get('/api/plans', async (req, res) => {
   try {
     if (!supabase) {
+      // Planes hardcoded si no hay Supabase
       return res.json({
         plans: [
           {
@@ -1862,8 +1860,8 @@ app.get('/api/plans', async (req, res) => {
     }
 
     const { data: plans } = await supabase
-      .from('planes')
-      .select('*');
+      .from('plans')
+      .select('*, plan_prices(*)');
     
     res.json({ plans });
   } catch (error) {
@@ -1887,14 +1885,15 @@ app.get('/api/subscription/:userId', async (req, res) => {
       });
     }
 
-    // Buscar en tabla "suscripciones"
+    // Buscar en tabla "suscripciones" (español)
     const { data: subscription, error } = await supabase
       .from('suscripciones')
-      .select('*')
+      .select('*, planes:id_del_plan(identificacion, nombre, babosa)')
       .eq('id_de_usuario', userId)
       .single();
     
     if (error || !subscription) {
+      // Si no hay suscripción, devolver trial por defecto
       return res.json({
         subscription: {
           status: 'trial',
@@ -1904,26 +1903,37 @@ app.get('/api/subscription/:userId', async (req, res) => {
       });
     }
 
-    // Obtener info del plan
-    const { data: plan } = await supabase
-      .from('planes')
-      .select('*')
-      .eq('identificacion', subscription.id_del_plan)
-      .single();
-
-    // Mapear campos español a inglés
+    // Mapear campos español a inglés para el frontend
     const mappedSubscription = {
       id: subscription.identificacion,
       user_id: subscription.id_de_usuario,
       plan_id: subscription.id_del_plan,
-      status: subscription.estado || 'active',
+      status: subscription.estado || 'trial',
       period: subscription.período,
-      plans: plan ? {
-        id: plan.identificacion,
-        name: plan.nombre,
-        slug: plan.babosa
+      plans: subscription.planes ? {
+        id: subscription.planes.identificacion,
+        name: subscription.planes.nombre,
+        slug: subscription.planes.babosa
       } : null
     };
+
+    // Verificar si el trial expiró
+    if (mappedSubscription.status === 'trial') {
+      // Calcular fecha de expiración (5 días después de creación)
+      const createdAt = new Date(subscription.created_at || Date.now());
+      const trialEnd = new Date(createdAt.getTime() + 5 * 24 * 60 * 60 * 1000);
+      
+      if (new Date() > trialEnd) {
+        mappedSubscription.status = 'expired';
+        // Actualizar en DB
+        await supabase
+          .from('suscripciones')
+          .update({ estado: 'expired' })
+          .eq('identificacion', subscription.identificacion);
+      }
+      
+      mappedSubscription.trial_ends_at = trialEnd.toISOString();
+    }
 
     res.json({ subscription: mappedSubscription });
   } catch (error) {
@@ -1938,11 +1948,38 @@ app.get('/api/subscription/:userId', async (req, res) => {
   }
 });
 
+    const { data: subscription } = await supabase
+      .from('subscriptions')
+      .select('*, plans(*)')
+      .eq('user_id', userId)
+      .single();
+    
+    if (!subscription) {
+      return res.json({ subscription: null });
+    }
+
+    // Verificar si el trial expiró
+    if (subscription.status === 'trial' && new Date(subscription.trial_ends_at) < new Date()) {
+      await supabase
+        .from('subscriptions')
+        .update({ status: 'expired' })
+        .eq('id', subscription.id);
+      subscription.status = 'expired';
+    }
+
+    res.json({ subscription });
+  } catch (error) {
+    console.error('Error getting subscription:', error);
+    res.status(500).json({ error: 'Error obteniendo suscripción' });
+  }
+});
+
 // Crear transacción Wompi
 app.post('/api/payments/wompi/create', async (req, res) => {
   try {
     const { userId, planSlug, period, customerEmail, customerName } = req.body;
 
+    // Obtener precio del plan
     const prices = {
       basic: { monthly: 29900, semiannual: 152000, annual: 269000 },
       premium: { monthly: 59900, semiannual: 305000, annual: 539000 },
@@ -1954,19 +1991,23 @@ app.post('/api/payments/wompi/create', async (req, res) => {
       return res.status(400).json({ error: 'Plan o período inválido' });
     }
 
+    // Generar referencia única
     const reference = `TMP-${userId.slice(0, 8)}-${Date.now()}`;
-    const amountCents = amountCOP * 100;
+    const amountCents = amountCOP * 100; // Wompi usa centavos
     const currency = 'COP';
+
+    // Generar firma de integridad
     const signature = generateWompiSignature(reference, amountCents, currency);
 
+    // Crear registro de pago en DB
     if (supabase) {
-      await supabase.from('pagos').insert({
-        id_de_usuario: userId,
-        proveedor: 'wompi',
-        monto: amountCOP,
-        moneda: 'COP',
-        estado: 'pending',
-        referencia: reference
+      await supabase.from('payments').insert({
+        user_id: userId,
+        provider: 'wompi',
+        amount: amountCOP,
+        currency: 'COP',
+        status: 'pending',
+        metadata: { plan: planSlug, period, reference }
       });
     }
 
@@ -1990,22 +2031,88 @@ app.post('/api/payments/wompi/create', async (req, res) => {
 app.post('/api/webhooks/wompi', async (req, res) => {
   try {
     const event = req.body;
+    
     console.log('📩 Webhook Wompi recibido:', event.event);
+
+    // Verificar firma del webhook
+    const checksum = req.headers['x-event-checksum'];
+    const timestamp = req.headers['x-timestamp'];
+    
+    if (checksum) {
+      const expectedChecksum = crypto
+        .createHash('sha256')
+        .update(`${event.event}${event.data?.transaction?.id}${event.data?.transaction?.status}${timestamp}${WOMPI_EVENTS_SECRET}`)
+        .digest('hex');
+      
+      if (checksum !== expectedChecksum) {
+        console.log('⚠️ Checksum inválido');
+        return res.status(400).json({ error: 'Invalid checksum' });
+      }
+    }
 
     if (event.event === 'transaction.updated') {
       const transaction = event.data.transaction;
       const reference = transaction.reference;
       const status = transaction.status;
 
+      console.log(`💳 Transacción ${reference}: ${status}`);
+
       if (status === 'APPROVED' && supabase) {
-        const userId = reference.split('-')[1];
-        
-        await supabase
-          .from('suscripciones')
-          .update({ estado: 'active' })
-          .eq('id_de_usuario', userId);
+        // Extraer userId de la referencia (TMP-USERID-TIMESTAMP)
+        const parts = reference.split('-');
+        const userIdPrefix = parts[1];
+
+        // Buscar el pago pendiente
+        const { data: payment } = await supabase
+          .from('payments')
+          .select('*')
+          .ilike('user_id', `${userIdPrefix}%`)
+          .eq('status', 'pending')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+
+        if (payment) {
+          // Actualizar pago
+          await supabase
+            .from('payments')
+            .update({ 
+              status: 'approved',
+              provider_transaction_id: transaction.id
+            })
+            .eq('id', payment.id);
+
+          // Calcular fechas según período
+          const periods = {
+            monthly: 30,
+            semiannual: 180,
+            annual: 365
+          };
+          const period = payment.metadata?.period || 'monthly';
+          const days = periods[period];
           
-        console.log(`✅ Suscripción activada para usuario ${userId}`);
+          // Obtener plan
+          const { data: plan } = await supabase
+            .from('plans')
+            .select('id')
+            .eq('slug', payment.metadata?.plan)
+            .single();
+
+          // Actualizar suscripción
+          await supabase
+            .from('subscriptions')
+            .update({
+              plan_id: plan?.id,
+              status: 'active',
+              period,
+              current_period_start: new Date().toISOString(),
+              current_period_end: new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString(),
+              updated_at: new Date().toISOString()
+            })
+            .eq('user_id', payment.user_id);
+
+          console.log(`✅ Suscripción activada para usuario ${payment.user_id}`);
+        }
       }
     }
 
@@ -2016,13 +2123,15 @@ app.post('/api/webhooks/wompi', async (req, res) => {
   }
 });
 
-// Verificar transacción Wompi
+// Verificar estado de transacción Wompi
 app.get('/api/payments/wompi/verify/:transactionId', async (req, res) => {
   try {
     const { transactionId } = req.params;
     
     const response = await fetch(`https://production.wompi.co/v1/transactions/${transactionId}`, {
-      headers: { 'Authorization': `Bearer ${WOMPI_PRIVATE_KEY}` }
+      headers: {
+        'Authorization': `Bearer ${WOMPI_PRIVATE_KEY}`
+      }
     });
     
     const data = await response.json();
@@ -2034,7 +2143,7 @@ app.get('/api/payments/wompi/verify/:transactionId', async (req, res) => {
 });
 
 // =============================================
-// ENDPOINT DE VELAS
+// ENDPOINT DE VELAS - Para el gráfico
 // =============================================
 app.get('/api/candles/:symbol', (req, res) => {
   const { symbol } = req.params;
@@ -2054,7 +2163,7 @@ app.get('/api/candles/:symbol', (req, res) => {
 });
 
 // =============================================
-// ENDPOINT ELISA CHAT
+// ENDPOINT ELISA CHAT - Alias para el frontend
 // =============================================
 app.post('/api/elisa/chat', (req, res) => {
   const { message, asset } = req.body;
@@ -2062,6 +2171,196 @@ app.post('/api/elisa/chat', (req, res) => {
   res.json(response);
 });
 
+// =============================================
+// PANEL DE ADMINISTRADOR - USUARIOS
+// =============================================
+app.get('/api/admin/users', async (req, res) => {
+  try {
+    if (!supabase) {
+      return res.json({ 
+        users: [],
+        error: 'Supabase no configurado' 
+      });
+    }
+    
+    // Obtener usuarios de auth.users
+    const { data: authUsers, error: authError } = await supabase.auth.admin.listUsers();
+    
+    if (authError) {
+      console.error('Error fetching auth users:', authError);
+      // Intentar obtener solo de la tabla profiles
+    }
+    
+    // Obtener perfiles con suscripciones
+    const { data: profiles, error: profilesError } = await supabase
+      .from('profiles')
+      .select(`
+        id,
+        email,
+        full_name,
+        created_at,
+        updated_at
+      `)
+      .order('created_at', { ascending: false });
+    
+    if (profilesError) {
+      console.error('Error fetching profiles:', profilesError);
+    }
+    
+    // Obtener suscripciones
+    const { data: subscriptions, error: subsError } = await supabase
+      .from('subscriptions')
+      .select(`
+        id,
+        user_id,
+        plan_id,
+        status,
+        trial_ends_at,
+        current_period_start,
+        current_period_end,
+        created_at,
+        plans (
+          id,
+          name,
+          slug,
+          price
+        )
+      `);
+    
+    if (subsError) {
+      console.error('Error fetching subscriptions:', subsError);
+    }
+    
+    // Combinar datos
+    const users = (profiles || []).map(profile => {
+      const subscription = (subscriptions || []).find(s => s.user_id === profile.id);
+      const authUser = authUsers?.users?.find(u => u.id === profile.id);
+      
+      return {
+        id: profile.id,
+        email: profile.email || authUser?.email,
+        full_name: profile.full_name,
+        created_at: profile.created_at,
+        last_sign_in: authUser?.last_sign_in_at,
+        subscription: subscription ? {
+          id: subscription.id,
+          status: subscription.status,
+          plan: subscription.plans?.slug || 'trial',
+          plan_name: subscription.plans?.name || 'Trial',
+          price: subscription.plans?.price,
+          trial_ends_at: subscription.trial_ends_at,
+          current_period_start: subscription.current_period_start,
+          current_period_end: subscription.current_period_end
+        } : {
+          status: 'trial',
+          plan: 'trial',
+          plan_name: 'Trial',
+          trial_ends_at: new Date(new Date(profile.created_at).getTime() + 5 * 24 * 60 * 60 * 1000).toISOString()
+        }
+      };
+    });
+    
+    // Si no hay profiles pero hay authUsers, usar esos
+    if (users.length === 0 && authUsers?.users?.length > 0) {
+      const fallbackUsers = authUsers.users.map(user => ({
+        id: user.id,
+        email: user.email,
+        created_at: user.created_at,
+        last_sign_in: user.last_sign_in_at,
+        subscription: {
+          status: 'trial',
+          plan: 'trial',
+          plan_name: 'Trial',
+          trial_ends_at: new Date(new Date(user.created_at).getTime() + 5 * 24 * 60 * 60 * 1000).toISOString()
+        }
+      }));
+      
+      return res.json({ users: fallbackUsers, total: fallbackUsers.length });
+    }
+    
+    res.json({ 
+      users,
+      total: users.length,
+      stats: {
+        total: users.length,
+        trial: users.filter(u => u.subscription?.status === 'trial').length,
+        active: users.filter(u => u.subscription?.status === 'active').length,
+        expired: users.filter(u => u.subscription?.status === 'expired').length
+      }
+    });
+    
+  } catch (error) {
+    console.error('Error in admin users:', error);
+    res.status(500).json({ error: 'Error obteniendo usuarios', users: [] });
+  }
+});
+
+// Actualizar plan de usuario (admin)
+app.post('/api/admin/users/:userId/subscription', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { plan, status, trial_days } = req.body;
+    
+    if (!supabase) {
+      return res.status(500).json({ error: 'Supabase no configurado' });
+    }
+    
+    // Buscar plan
+    const { data: planData } = await supabase
+      .from('plans')
+      .select('id')
+      .eq('slug', plan)
+      .single();
+    
+    if (!planData) {
+      return res.status(404).json({ error: 'Plan no encontrado' });
+    }
+    
+    // Verificar si existe suscripción
+    const { data: existingSub } = await supabase
+      .from('subscriptions')
+      .select('id')
+      .eq('user_id', userId)
+      .single();
+    
+    const subscriptionData = {
+      user_id: userId,
+      plan_id: planData.id,
+      status: status || 'active',
+      current_period_start: new Date().toISOString(),
+      current_period_end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+    };
+    
+    if (trial_days) {
+      subscriptionData.trial_ends_at = new Date(Date.now() + trial_days * 24 * 60 * 60 * 1000).toISOString();
+      subscriptionData.status = 'trial';
+    }
+    
+    let result;
+    if (existingSub) {
+      result = await supabase
+        .from('subscriptions')
+        .update(subscriptionData)
+        .eq('user_id', userId)
+        .select();
+    } else {
+      result = await supabase
+        .from('subscriptions')
+        .insert(subscriptionData)
+        .select();
+    }
+    
+    if (result.error) {
+      throw result.error;
+    }
+    
+    res.json({ success: true, subscription: result.data[0] });
+    
+  } catch (error) {
+    console.error('Error updating subscription:', error);
+    res.status(500).json({ error: 'Error actualizando suscripción' });
+  }
+});
 // =============================================
 // PANEL ADMIN - OBTENER USUARIOS
 // =============================================
@@ -2083,9 +2382,9 @@ app.get('/api/admin/users', async (req, res) => {
     // Obtener suscripciones
     const { data: suscripciones } = await supabase
       .from('suscripciones')
-      .select('*');
+      .select('*, planes:id_del_plan(nombre, babosa)');
     
-    // Obtener planes
+    // Obtener planes para mapear IDs
     const { data: planes } = await supabase
       .from('planes')
       .select('*');
@@ -2093,7 +2392,7 @@ app.get('/api/admin/users', async (req, res) => {
     // Combinar datos
     const users = authUsers.map(user => {
       const sub = (suscripciones || []).find(s => s.id_de_usuario === user.id);
-      const plan = sub ? (planes || []).find(p => p.identificacion === sub.id_del_plan) : null;
+      const plan = sub?.planes || (planes || []).find(p => p.identificacion === sub?.id_del_plan);
       
       return {
         id: user.id,
@@ -2102,7 +2401,7 @@ app.get('/api/admin/users', async (req, res) => {
         last_sign_in: user.last_sign_in_at,
         subscription: sub ? {
           status: sub.estado || 'active',
-          plan: plan?.babosa || 'unknown',
+          plan: plan?.babosa || plan?.nombre?.toLowerCase() || 'unknown',
           plan_name: plan?.nombre || 'Desconocido',
           period: sub.período
         } : {
@@ -2130,5 +2429,4 @@ app.get('/api/admin/users', async (req, res) => {
     res.json({ users: [], error: error.message });
   }
 });
-
 export default app;
