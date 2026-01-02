@@ -7,9 +7,9 @@ import express from 'express';
 import cors from 'cors';
 import WebSocket from 'ws';
 import dotenv from 'dotenv';
+import { createClient } from '@supabase/supabase-js';
 import crypto from 'crypto';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
-import { createClient } from '@supabase/supabase-js';
 
 dotenv.config();
 
@@ -1763,37 +1763,7 @@ app.post('/api/ai/chat', (req, res) => {
 });
 
 // =============================================
-// INICIO
-// =============================================
-app.listen(PORT, () => {
-  console.log(`
-╔════════════════════════════════════════════╗
-║     TRADING MASTER PRO v13.0               ║
-║     Trailing Stop + Elisa IA               ║
-╠════════════════════════════════════════════╣
-║  Puerto: ${PORT}                               ║
-╚════════════════════════════════════════════╝
-  `);
-  
-  connectDeriv();
-  
-  setInterval(() => {
-    if (derivWs?.readyState === WebSocket.OPEN) {
-      for (const symbol of Object.keys(ASSETS)) {
-        requestH1(symbol);
-      }
-    }
-  }, 120000);
-  
-  setInterval(() => {
-    if (derivWs?.readyState === WebSocket.OPEN) {
-      derivWs.send(JSON.stringify({ ping: 1 }));
-    }
-  }, 30000);
-});
-
-// =============================================
-// INTEGRACIÓN WOMPI Y SUPABASE
+// INTEGRACIÓN SUPABASE + WOMPI + ADMIN
 // =============================================
 
 const WOMPI_PUBLIC_KEY = process.env.WOMPI_PUBLIC_KEY || 'pub_prod_6weSthG7fsBGqfWDk3nwMgiuEUxH8S7U';
@@ -1812,7 +1782,7 @@ function generateWompiSignature(reference, amountCents, currency) {
 }
 
 // =============================================
-// PLANES - Usa tabla "planes" en español
+// PLANES
 // =============================================
 app.get('/api/plans', async (req, res) => {
   try {
@@ -1833,13 +1803,13 @@ app.get('/api/plans', async (req, res) => {
 });
 
 // =============================================
-// SUSCRIPCIÓN DEL USUARIO - Tabla "suscripciones"
+// SUSCRIPCIÓN DEL USUARIO
 // =============================================
 app.get('/api/subscription/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
     
-    // Default: Trial con acceso completo por 5 días
+    // Default: Trial con acceso completo
     const defaultSub = {
       status: 'trial',
       plan: 'elite',
@@ -1855,7 +1825,6 @@ app.get('/api/subscription/:userId', async (req, res) => {
     
     if (!supabase) return res.json({ subscription: defaultSub });
 
-    // Buscar en tabla "suscripciones" (español)
     const { data: sub, error } = await supabase
       .from('suscripciones')
       .select('*')
@@ -1863,45 +1832,41 @@ app.get('/api/subscription/:userId', async (req, res) => {
       .single();
     
     if (error || !sub) {
-      // No tiene suscripción = Trial automático
       return res.json({ subscription: defaultSub });
     }
 
-    // Buscar plan en tabla "planes"
     const { data: plan } = await supabase
       .from('planes')
       .select('*')
       .eq('identificacion', sub.id_del_plan)
       .single();
 
-    // Calcular si el trial expiró
     let status = sub.estado || 'active';
     if (status === 'trial') {
       const createdAt = new Date(sub.created_at || Date.now());
       const trialEnd = new Date(createdAt.getTime() + 5 * 24 * 60 * 60 * 1000);
       if (new Date() > trialEnd) {
         status = 'expired';
-        // Actualizar en DB
         await supabase.from('suscripciones').update({ estado: 'expired' }).eq('identificacion', sub.identificacion);
       }
     }
 
-    const subscription = {
-      id: sub.identificacion,
-      user_id: sub.id_de_usuario,
-      status: status,
-      plan: plan?.babosa || 'elite',
-      plan_name: plan?.nombre || 'Elite',
-      period: sub.período,
-      features: {
-        assets: ['stpRNG', '1HZ75V', 'frxXAUUSD', 'frxGBPUSD', 'cryBTCUSD'],
-        signals: true,
-        elisa_chat: true,
-        telegram: status === 'active' || status === 'activo'
+    res.json({
+      subscription: {
+        id: sub.identificacion,
+        user_id: sub.id_de_usuario,
+        status: status,
+        plan: plan?.babosa || 'elite',
+        plan_name: plan?.nombre || 'Elite',
+        period: sub.período,
+        features: {
+          assets: ['stpRNG', '1HZ75V', 'frxXAUUSD', 'frxGBPUSD', 'cryBTCUSD'],
+          signals: true,
+          elisa_chat: true,
+          telegram: status === 'activo'
+        }
       }
-    };
-
-    res.json({ subscription });
+    });
   } catch (error) {
     console.error('Error getting subscription:', error);
     res.json({ subscription: { status: 'trial', plan: 'elite' } });
@@ -1914,7 +1879,11 @@ app.get('/api/subscription/:userId', async (req, res) => {
 app.post('/api/payments/wompi/create', async (req, res) => {
   try {
     const { userId, planSlug, period, customerEmail, customerName } = req.body;
-    const prices = { basico: { monthly: 29900, annual: 269000 }, premium: { monthly: 59900, annual: 539000 }, elite: { monthly: 99900, annual: 899000 } };
+    const prices = { 
+      basico: { monthly: 29900, annual: 269000 }, 
+      premium: { monthly: 59900, annual: 539000 }, 
+      elite: { monthly: 99900, annual: 899000 } 
+    };
     const amountCOP = prices[planSlug]?.[period];
     if (!amountCOP) return res.status(400).json({ error: 'Plan o período inválido' });
 
@@ -1922,7 +1891,16 @@ app.post('/api/payments/wompi/create', async (req, res) => {
     const amountCents = amountCOP * 100;
     const signature = generateWompiSignature(reference, amountCents, 'COP');
 
-    res.json({ publicKey: WOMPI_PUBLIC_KEY, reference, amountCents, currency: 'COP', signature, redirectUrl: 'https://trading-master-pro.vercel.app/payment/success', customerEmail, customerName });
+    res.json({ 
+      publicKey: WOMPI_PUBLIC_KEY, 
+      reference, 
+      amountCents, 
+      currency: 'COP', 
+      signature, 
+      redirectUrl: 'https://trading-master-pro.vercel.app/payment/success', 
+      customerEmail, 
+      customerName 
+    });
   } catch (error) {
     res.status(500).json({ error: 'Error creando pago' });
   }
@@ -1933,11 +1911,10 @@ app.post('/api/webhooks/wompi', async (req, res) => {
     const event = req.body;
     console.log('📩 Webhook Wompi:', event.event);
     
-    if (event.event === 'transaction.updated' && event.data.transaction.status === 'APPROVED' && supabase) {
+    if (event.event === 'transaction.updated' && event.data?.transaction?.status === 'APPROVED' && supabase) {
       const reference = event.data.transaction.reference;
       const userId = reference.split('-')[1];
       
-      // Activar suscripción
       await supabase.from('suscripciones').update({ estado: 'activo' }).eq('id_de_usuario', userId);
       console.log(`✅ Suscripción activada: ${userId}`);
     }
@@ -1959,26 +1936,12 @@ app.get('/api/payments/wompi/verify/:transactionId', async (req, res) => {
 });
 
 // =============================================
-// ENDPOINTS ADICIONALES
-// =============================================
-app.get('/api/candles/:symbol', (req, res) => {
-  const data = assetData[req.params.symbol];
-  if (!data) return res.status(404).json({ error: 'Asset not found', candles: [] });
-  res.json({ symbol: req.params.symbol, candles: data.candles || [], candlesH1: data.candlesH1 || [], price: data.price });
-});
-
-app.post('/api/elisa/chat', (req, res) => {
-  res.json(Elisa.chat(req.body.message || '', req.body.asset || 'stpRNG'));
-});
-
-// =============================================
-// PANEL ADMIN - OBTENER USUARIOS (SIN PERMISOS ADMIN)
+// ADMIN PANEL - OBTENER USUARIOS
 // =============================================
 app.get('/api/admin/users', async (req, res) => {
   try {
     if (!supabase) return res.json({ users: [], error: 'Supabase no configurado' });
     
-    // Obtener suscripciones de la tabla "suscripciones"
     const { data: suscripciones, error: subError } = await supabase
       .from('suscripciones')
       .select('*')
@@ -1986,10 +1949,8 @@ app.get('/api/admin/users', async (req, res) => {
     
     if (subError) console.error('Error suscripciones:', subError);
     
-    // Obtener planes de la tabla "planes"
     const { data: planes } = await supabase.from('planes').select('*');
     
-    // Intentar obtener usuarios de auth (puede fallar sin permisos admin)
     let authUsers = [];
     try {
       const { data: authData, error: authError } = await supabase.auth.admin.listUsers();
@@ -2000,7 +1961,6 @@ app.get('/api/admin/users', async (req, res) => {
     
     let users = [];
     
-    // Si tenemos usuarios de auth, combinar con suscripciones
     if (authUsers.length > 0) {
       users = authUsers.map(user => {
         const sub = (suscripciones || []).find(s => s.id_de_usuario === user.id);
@@ -2020,7 +1980,6 @@ app.get('/api/admin/users', async (req, res) => {
         };
       });
     } else {
-      // Fallback: crear lista desde suscripciones
       users = (suscripciones || []).map(sub => {
         const plan = (planes || []).find(p => p.identificacion === sub.id_del_plan);
         return {
@@ -2037,7 +1996,6 @@ app.get('/api/admin/users', async (req, res) => {
       });
     }
     
-    // Calcular stats
     const stats = {
       total: users.length,
       trial: users.filter(u => u.subscription?.status === 'trial').length,
@@ -2065,7 +2023,6 @@ app.post('/api/admin/users', async (req, res) => {
     if (!supabase) return res.status(500).json({ error: 'Supabase no configurado' });
     if (!user_id) return res.status(400).json({ error: 'user_id es requerido' });
     
-    // Buscar plan por slug (babosa)
     const { data: plan } = await supabase
       .from('planes')
       .select('identificacion')
@@ -2080,7 +2037,6 @@ app.post('/api/admin/users', async (req, res) => {
       email: email || null
     };
     
-    // Ver si ya existe
     const { data: existing } = await supabase
       .from('suscripciones')
       .select('identificacion')
@@ -2139,6 +2095,60 @@ app.delete('/api/admin/users/:userId', async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
+});
+
+// Endpoint adicional para candles
+app.get('/api/candles/:symbol', (req, res) => {
+  const data = assetData[req.params.symbol];
+  if (!data) return res.status(404).json({ error: 'Asset not found', candles: [] });
+  res.json({ symbol: req.params.symbol, candles: data.candles || [], candlesH1: data.candlesH1 || [], price: data.price });
+});
+
+// Endpoint adicional para Elisa chat (alias)
+app.post('/api/elisa/chat', (req, res) => {
+  res.json(Elisa.chat(req.body.message || req.body.question || '', req.body.asset || req.body.symbol || 'stpRNG'));
+});
+
+// Health check
+app.get('/api/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    supabase: !!supabase,
+    deriv: derivWs?.readyState === 1 ? 'connected' : 'disconnected',
+    assets: Object.keys(assetData).length,
+    signals: signalHistory.length
+  });
+});
+
+
+// =============================================
+// INICIO
+// =============================================
+app.listen(PORT, () => {
+  console.log(`
+╔════════════════════════════════════════════╗
+║     TRADING MASTER PRO v13.0               ║
+║     Trailing Stop + Elisa IA               ║
+╠════════════════════════════════════════════╣
+║  Puerto: ${PORT}                               ║
+╚════════════════════════════════════════════╝
+  `);
+  
+  connectDeriv();
+  
+  setInterval(() => {
+    if (derivWs?.readyState === WebSocket.OPEN) {
+      for (const symbol of Object.keys(ASSETS)) {
+        requestH1(symbol);
+      }
+    }
+  }, 120000);
+  
+  setInterval(() => {
+    if (derivWs?.readyState === WebSocket.OPEN) {
+      derivWs.send(JSON.stringify({ ping: 1 }));
+    }
+  }, 30000);
 });
 
 export default app;
