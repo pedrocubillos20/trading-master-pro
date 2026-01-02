@@ -13,7 +13,7 @@ export default function AdminPanel() {
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [showAddUser, setShowAddUser] = useState(false);
-  const [newUser, setNewUser] = useState({ user_id: '', email: '', plan: 'elite', status: 'active', period: 'anual' });
+  const [newUser, setNewUser] = useState({ user_id: '', email: '', plan: 'elite', status: 'activo', period: 'anual' });
 
   const handleLogin = (e) => {
     e.preventDefault();
@@ -66,7 +66,7 @@ export default function AdminPanel() {
       if (data.success) {
         alert('✅ Usuario agregado/actualizado');
         setShowAddUser(false);
-        setNewUser({ user_id: '', email: '', plan: 'elite', status: 'active', period: 'anual' });
+        setNewUser({ user_id: '', email: '', plan: 'elite', status: 'activo', period: 'anual' });
         fetchUsers();
       } else {
         alert('Error: ' + (data.error || 'Error desconocido'));
@@ -222,7 +222,7 @@ export default function AdminPanel() {
                       <td className="p-3 text-white/70">{user.subscription?.period || '-'}</td>
                       <td className="p-3 text-white/50">{formatDate(user.created_at)}</td>
                       <td className="p-3 flex gap-2">
-                        <button onClick={() => { setNewUser({ user_id: user.id, email: user.email, plan: 'elite', status: 'active', period: 'anual' }); setShowAddUser(true); }} className="p-1 hover:bg-white/10 rounded text-cyan-400">✏️</button>
+                        <button onClick={() => { setNewUser({ user_id: user.id, email: user.email, plan: 'elite', status: 'activo', period: 'anual' }); setShowAddUser(true); }} className="p-1 hover:bg-white/10 rounded text-cyan-400">✏️</button>
                         <button onClick={() => deleteUser(user.id)} className="p-1 hover:bg-white/10 rounded text-red-400">🗑️</button>
                         <button onClick={() => navigator.clipboard.writeText(user.email)} className="p-1 hover:bg-white/10 rounded text-white/50">📋</button>
                       </td>
