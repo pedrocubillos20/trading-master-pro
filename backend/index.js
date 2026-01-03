@@ -1,6 +1,7 @@
 // =============================================
-// TRADING MASTER PRO v13.1 - PLATAFORMA COMPLETA
+// TRADING MASTER PRO v13.2 - PLATAFORMA COMPLETA
 // Motor SMC + ELISA IA + Telegram + Supabase + Admin
+// v13.2: Filtros optimizados para reducir señales falsas
 // =============================================
 
 import express from 'express';
@@ -10,6 +11,36 @@ import dotenv from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
 
 dotenv.config();
+
+// =============================================
+// CONFIGURACIÓN DE FILTROS v13.2
+// Para reducir señales de 100+/día a ~10-15/día
+// =============================================
+const SIGNAL_CONFIG = {
+  // Score mínimo para generar señal (antes: 60, ahora: 75)
+  MIN_SCORE: 75,
+  
+  // Cooldown entre análisis del mismo activo (antes: 2000ms, ahora: 30000ms)
+  ANALYSIS_COOLDOWN: 30000, // 30 segundos
+  
+  // Cooldown después de cerrar una señal antes de abrir otra (NUEVO)
+  POST_SIGNAL_COOLDOWN: 300000, // 5 minutos
+  
+  // Requiere MTF Confluence para la mayoría de modelos (NUEVO)
+  REQUIRE_MTF_CONFLUENCE: true,
+  
+  // Modelos que pueden operar SIN MTF Confluence (solo los más fuertes)
+  MODELS_WITHOUT_MTF: ['MTF_CONFLUENCE', 'CHOCH_PULLBACK'],
+  
+  // Máximo de señales pendientes simultáneas totales
+  MAX_PENDING_TOTAL: 5,
+  
+  // Horas de operación (evitar horas muertas) - en UTC
+  TRADING_HOURS: {
+    start: 7,  // 7:00 UTC (2:00 AM Colombia)
+    end: 21   // 21:00 UTC (4:00 PM Colombia)
+  }
+};
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -82,31 +113,121 @@ const memoryStore = {
   subscriptions: new Map()
 };
 
-// Función helper para obtener/guardar suscripciones
-// Adaptado para la estructura de Supabase: identificacion, id_de_usuario, id_del_plan, estado, periodo
+// =============================================
+// MAPEO DE PLANES (id_del_plan UUID -> nombre)
+// =============================================
+const PLAN_MAP = {
+  // Mapeo de UUIDs de planes a nombres (actualiza estos con tus UUIDs reales)
+  'free': 'free',
+  'trial': 'free',
+  'ensayo': 'free',
+  'basico': 'basico',
+  'premium': 'premium',
+  'elite': 'elite'
+};
+
+// Función para determinar el plan basado en id_del_plan o estado
+function determinePlan(supabaseData) {
+  if (!supabaseData) return 'free';
+  
+  // Si el estado es 'activo', verificar el período para determinar el plan
+  if (supabaseData.estado === 'activo') {
+    // Si tiene período anual, probablemente es Elite
+    if (supabaseData['período'] === 'anual' || supabaseData.periodo === 'anual') {
+      return 'elite';
+    }
+    // Si es mensual, verificar si hay más info
+    if (supabaseData['período'] === 'mensual' || supabaseData.periodo === 'mensual') {
+      return 'premium'; // Por defecto mensual activo = premium
+    }
+    return 'premium';
+  }
+  
+  // Si está en ensayo/trial
+  if (supabaseData.estado === 'ensayo' || supabaseData.estado === 'trial') {
+    return 'free';
+  }
+  
+  // Fallback
+  return supabaseData.plan || 'free';
+}
+
+// Función para calcular días restantes del trial
+function calculateTrialDaysLeft(createdAt) {
+  if (!createdAt) return 5;
+  const created = new Date(createdAt);
+  const now = new Date();
+  const diffTime = now - created;
+  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+  return Math.max(0, 5 - diffDays);
+}
+
+// =============================================
+// FUNCIONES DE SUSCRIPCIÓN ADAPTADAS A TU SUPABASE
+// Columnas reales: identificación, id_del_plan, estado, período, correo electrónico
+// =============================================
+
 async function getSubscription(userId) {
   if (supabase) {
     try {
-      const { data, error } = await supabase
+      // Intentar buscar por correo electrónico (que es lo que usas como identificador)
+      let data = null;
+      let error = null;
+      
+      // Primero intentar buscar por "correo electrónico" (con espacio)
+      const result1 = await supabase
         .from('suscripciones')
         .select('*')
-        .eq('id_de_usuario', userId)
+        .eq('correo electrónico', userId)
         .single();
       
-      if (error && error.code !== 'PGRST116') {
-        console.log('Supabase getSubscription error:', error.message);
+      if (result1.data) {
+        data = result1.data;
+      } else {
+        // Si no encuentra, intentar por correo_electronico (con guión bajo)
+        const result2 = await supabase
+          .from('suscripciones')
+          .select('*')
+          .eq('correo_electronico', userId)
+          .single();
+        
+        if (result2.data) {
+          data = result2.data;
+        } else {
+          // Intentar por id_de_usuario si existe esa columna
+          const result3 = await supabase
+            .from('suscripciones')
+            .select('*')
+            .eq('id_de_usuario', userId)
+            .single();
+          
+          if (result3.data) {
+            data = result3.data;
+          }
+        }
       }
       
-      // Normalizar datos para el backend
       if (data) {
+        // Normalizar datos para el backend
+        const plan = determinePlan(data);
+        const trialDaysLeft = data.estado === 'ensayo' || data.estado === 'trial' 
+          ? calculateTrialDaysLeft(data.created_at || data.fecha_registro)
+          : null;
+        
         return {
-          ...data,
-          plan: data.plan || 'free',
-          estado: data.estado || 'trial',
-          email: data.email || null,
-          trial_ends_at: data.trial_ends_at || null
+          identificacion: data.identificación || data.identificacion || data.id,
+          id_de_usuario: data['correo electrónico'] || data.correo_electronico || data.id_de_usuario || userId,
+          email: data['correo electrónico'] || data.correo_electronico || data.email || userId,
+          plan: plan,
+          estado: data.estado === 'activo' ? 'active' : (data.estado === 'ensayo' ? 'trial' : data.estado),
+          periodo: data['período'] || data.periodo || 'mensual',
+          trial_ends_at: data.trial_ends_at || null,
+          trial_days_left: trialDaysLeft,
+          created_at: data.created_at || data.fecha_registro,
+          raw: data // Guardar datos originales por si acaso
         };
       }
+      
       return null;
     } catch (e) {
       console.log('getSubscription error:', e.message);
@@ -119,54 +240,80 @@ async function getSubscription(userId) {
 async function saveSubscription(subData) {
   if (supabase) {
     try {
-      // Preparar datos para Supabase
-      const dataToSave = {
-        id_de_usuario: subData.id_de_usuario,
-        estado: subData.estado || 'trial',
-        periodo: subData.periodo || 'mensual',
-        plan: subData.plan || 'free',
-        email: subData.email || null,
-        trial_ends_at: subData.trial_ends_at || null,
-        updated_at: new Date().toISOString()
-      };
+      // Preparar datos para Supabase con las columnas correctas
+      const dataToSave = {};
+      
+      // Mapear campos según lo que acepta tu Supabase
+      if (subData.email || subData.id_de_usuario) {
+        dataToSave['correo electrónico'] = subData.email || subData.id_de_usuario;
+      }
+      if (subData.estado) {
+        dataToSave.estado = subData.estado === 'trial' ? 'ensayo' : 
+                           subData.estado === 'active' ? 'activo' : subData.estado;
+      }
+      if (subData.periodo) {
+        dataToSave['período'] = subData.periodo;
+      }
       
       // Verificar si existe
-      const { data: existing, error: findError } = await supabase
+      const email = subData.email || subData.id_de_usuario;
+      const { data: existing } = await supabase
         .from('suscripciones')
-        .select('identificacion')
-        .eq('id_de_usuario', subData.id_de_usuario)
+        .select('identificación, identificacion')
+        .or(`correo electrónico.eq.${email},correo_electronico.eq.${email},id_de_usuario.eq.${email}`)
         .single();
       
       if (existing) {
         // Actualizar existente
+        const id = existing['identificación'] || existing.identificacion;
         const result = await supabase
           .from('suscripciones')
           .update(dataToSave)
-          .eq('id_de_usuario', subData.id_de_usuario)
+          .eq('identificación', id)
           .select();
         
         if (result.error) {
           console.log('Supabase update error:', result.error.message);
-        } else {
-          console.log(`✅ Suscripción actualizada: ${subData.id_de_usuario} -> ${subData.plan}`);
+          // Intentar con identificacion sin tilde
+          const result2 = await supabase
+            .from('suscripciones')
+            .update(dataToSave)
+            .eq('identificacion', id)
+            .select();
+          if (result2.error) {
+            console.log('Supabase update error (retry):', result2.error.message);
+          }
+          return result2;
         }
+        console.log(`✅ Suscripción actualizada: ${email}`);
         return result;
       } else {
-        // Insertar nuevo
-        dataToSave.created_at = new Date().toISOString();
-        if (!dataToSave.trial_ends_at && dataToSave.estado === 'trial') {
-          dataToSave.trial_ends_at = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString();
-        }
+        // Insertar nuevo - usar estructura mínima
+        const insertData = {
+          'correo electrónico': email,
+          'estado': 'ensayo',
+          'período': 'mensual'
+        };
         
         const result = await supabase
           .from('suscripciones')
-          .insert(dataToSave)
+          .insert(insertData)
           .select();
         
         if (result.error) {
           console.log('Supabase insert error:', result.error.message);
+          // Guardar en memoria como fallback
+          memoryStore.subscriptions.set(email, {
+            id_de_usuario: email,
+            email: email,
+            plan: 'free',
+            estado: 'trial',
+            periodo: 'mensual',
+            created_at: new Date().toISOString(),
+            trial_ends_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString()
+          });
         } else {
-          console.log(`✅ Suscripción creada: ${subData.id_de_usuario} -> ${subData.plan}`);
+          console.log(`✅ Suscripción creada: ${email}`);
         }
         return result;
       }
@@ -177,9 +324,12 @@ async function saveSubscription(subData) {
   }
   
   // Guardar en memoria (fallback)
-  memoryStore.subscriptions.set(subData.id_de_usuario, {
+  const id = subData.email || subData.id_de_usuario;
+  memoryStore.subscriptions.set(id, {
     ...subData,
-    created_at: subData.created_at || new Date().toISOString()
+    id_de_usuario: id,
+    created_at: subData.created_at || new Date().toISOString(),
+    trial_ends_at: subData.trial_ends_at || new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString()
   });
   return { data: [subData] };
 }
@@ -197,12 +347,23 @@ async function getAllSubscriptions() {
         return [];
       }
       
-      // Normalizar datos
-      return (data || []).map(sub => ({
-        ...sub,
-        plan: sub.plan || 'free',
-        estado: sub.estado || 'trial'
-      }));
+      // Normalizar datos para el admin panel
+      return (data || []).map(sub => {
+        const plan = determinePlan(sub);
+        const email = sub['correo electrónico'] || sub.correo_electronico || sub.email || sub.id_de_usuario;
+        const trialDaysLeft = sub.estado === 'ensayo' ? calculateTrialDaysLeft(sub.created_at) : null;
+        
+        return {
+          identificacion: sub['identificación'] || sub.identificacion || sub.id,
+          id_de_usuario: email,
+          email: email,
+          plan: plan,
+          estado: sub.estado === 'activo' ? 'active' : (sub.estado === 'ensayo' ? 'trial' : sub.estado),
+          periodo: sub['período'] || sub.periodo || 'mensual',
+          trial_days_left: trialDaysLeft,
+          created_at: sub.created_at || sub.fecha_registro
+        };
+      });
     } catch (e) {
       console.log('getAllSubscriptions error:', e.message);
       return [];
@@ -214,10 +375,25 @@ async function getAllSubscriptions() {
 async function deleteSubscription(userId) {
   if (supabase) {
     try {
-      const result = await supabase
+      // Intentar eliminar por diferentes campos
+      let result = await supabase
         .from('suscripciones')
         .delete()
-        .eq('id_de_usuario', userId);
+        .eq('correo electrónico', userId);
+      
+      if (result.error) {
+        result = await supabase
+          .from('suscripciones')
+          .delete()
+          .eq('correo_electronico', userId);
+      }
+      
+      if (result.error) {
+        result = await supabase
+          .from('suscripciones')
+          .delete()
+          .eq('id_de_usuario', userId);
+      }
       
       if (result.error) {
         console.log('Supabase delete error:', result.error.message);
@@ -301,7 +477,11 @@ for (const symbol of Object.keys(ASSETS)) {
     demandZonesH1: [],
     supplyZonesH1: [],
     premiumDiscount: 'EQUILIBRIUM',
-    h1Loaded: false
+    h1Loaded: false,
+    // Campos nuevos v13.2 para control de cooldowns
+    lastSignalClosed: 0,
+    lastSignalTime: 0,
+    mtfConfluence: false
   };
 }
 
@@ -736,12 +916,21 @@ const SMC = {
     }
     
     if (choch && pullback && choch.side === pullback.side) {
-      signals.push({
-        model: 'CHOCH_PULLBACK',
-        baseScore: 90,
-        pullback,
-        reason: `${choch.type} + Pullback`
-      });
+      // v13.2: H1 no debe estar en contra
+      const h1NotAgainst = (choch.side === 'BUY' && structureH1.trend !== 'BEARISH') ||
+                          (choch.side === 'SELL' && structureH1.trend !== 'BULLISH');
+      
+      if (h1NotAgainst) {
+        let score = 85;
+        if (mtfConfluence) score += 5; // Bonus si tiene MTF
+        
+        signals.push({
+          model: 'CHOCH_PULLBACK',
+          baseScore: score,
+          pullback,
+          reason: `${choch.type} + Pullback${mtfConfluence ? ' + MTF' : ''}`
+        });
+      }
     }
     
     const last3 = candlesM5.slice(-3);
@@ -752,41 +941,47 @@ const SMC = {
         return false;
       });
       
-      if (swept && pullback) {
+      if (swept && pullback && mtfConfluence) { // v13.2: Requiere MTF
         const side = level.type === 'EQUAL_HIGHS' ? 'SELL' : 'BUY';
         if (pullback.side === side) {
           signals.push({
             model: 'LIQUIDITY_SWEEP',
-            baseScore: 85,
+            baseScore: 82, // v13.2: Ajustado
             pullback,
-            reason: `Sweep ${level.type}`
+            reason: `Sweep ${level.type} + MTF`
           });
         }
       }
     }
     
-    if (bos && pullback && bos.side === pullback.side) {
+    if (bos && pullback && bos.side === pullback.side && mtfConfluence) { // v13.2: Requiere MTF
       signals.push({
         model: 'BOS_CONTINUATION',
         baseScore: 80,
         pullback,
-        reason: `${bos.type} + Pullback`
+        reason: `${bos.type} + Pullback + MTF`
       });
     }
     
     const price = candlesM5[candlesM5.length - 1].close;
     const lastCandle = candlesM5[candlesM5.length - 1];
     
-    // *** MODELO ZONE_TOUCH - Señales cuando el precio toca una zona ***
-    for (const zone of demandZones) {
-      const touchingZone = lastCandle.low <= zone.high * 1.002 && lastCandle.low >= zone.low * 0.998;
-      const closeAboveZone = lastCandle.close > zone.mid;
-      
-      if (touchingZone && closeAboveZone) {
-        // Verificar que H1 no esté en contra
-        const h1Supports = !h1Loaded || structureH1.trend !== 'BEARISH';
+    // *** MODELO ZONE_TOUCH v13.2 - MUY RESTRINGIDO ***
+    // Requiere: MTF + Premium/Discount correcto + Rechazo fuerte
+    if (mtfConfluence) { // v13.2: Solo si hay MTF Confluence
+      for (const zone of demandZones) {
+        const touchingZone = lastCandle.low <= zone.high * 1.002 && lastCandle.low >= zone.low * 0.998;
+        const closeAboveZone = lastCandle.close > zone.mid;
         
-        if (h1Supports) {
+        // v13.2: Requiere rechazo fuerte (wick > 50% del cuerpo)
+        const wickSize = lastCandle.close - lastCandle.low;
+        const bodySize = Math.abs(lastCandle.close - lastCandle.open);
+        const strongRejection = wickSize > bodySize * 0.5;
+        
+        // v13.2: Requiere H1 BULLISH + DISCOUNT
+        if (touchingZone && closeAboveZone && strongRejection && 
+            structureH1.trend === 'BULLISH' && premiumDiscount === 'DISCOUNT') {
+          
           const zonePb = {
             side: 'BUY',
             entry: lastCandle.close,
@@ -796,28 +991,28 @@ const SMC = {
             tp3: lastCandle.close + avgRange * 4
           };
           
-          let bonus = 0;
-          if (premiumDiscount === 'DISCOUNT') bonus = 10;
-          if (mtfConfluence && structureH1.trend === 'BULLISH') bonus += 10;
-          
           signals.push({
             model: 'ZONE_TOUCH',
-            baseScore: 70 + bonus,
+            baseScore: 78, // v13.2: Score fijo
             pullback: zonePb,
-            reason: `Toque zona demanda${bonus > 0 ? ' + ' + premiumDiscount : ''}`
+            reason: `Zona demanda + MTF + DISCOUNT + Rechazo fuerte`
           });
         }
       }
-    }
-    
-    for (const zone of supplyZones) {
-      const touchingZone = lastCandle.high >= zone.low * 0.998 && lastCandle.high <= zone.high * 1.002;
-      const closeBelowZone = lastCandle.close < zone.mid;
       
-      if (touchingZone && closeBelowZone) {
-        const h1Supports = !h1Loaded || structureH1.trend !== 'BULLISH';
+      for (const zone of supplyZones) {
+        const touchingZone = lastCandle.high >= zone.low * 0.998 && lastCandle.high <= zone.high * 1.002;
+        const closeBelowZone = lastCandle.close < zone.mid;
         
-        if (h1Supports) {
+        // v13.2: Requiere rechazo fuerte (wick > 50% del cuerpo)
+        const wickSize = lastCandle.high - lastCandle.close;
+        const bodySize = Math.abs(lastCandle.close - lastCandle.open);
+        const strongRejection = wickSize > bodySize * 0.5;
+        
+        // v13.2: Requiere H1 BEARISH + PREMIUM
+        if (touchingZone && closeBelowZone && strongRejection && 
+            structureH1.trend === 'BEARISH' && premiumDiscount === 'PREMIUM') {
+          
           const zonePb = {
             side: 'SELL',
             entry: lastCandle.close,
@@ -827,15 +1022,11 @@ const SMC = {
             tp3: lastCandle.close - avgRange * 4
           };
           
-          let bonus = 0;
-          if (premiumDiscount === 'PREMIUM') bonus = 10;
-          if (mtfConfluence && structureH1.trend === 'BEARISH') bonus += 10;
-          
           signals.push({
             model: 'ZONE_TOUCH',
-            baseScore: 70 + bonus,
+            baseScore: 78, // v13.2: Score fijo
             pullback: zonePb,
-            reason: `Toque zona supply${bonus > 0 ? ' + ' + premiumDiscount : ''}`
+            reason: `Zona supply + MTF + PREMIUM + Rechazo fuerte`
           });
         }
       }
@@ -843,16 +1034,19 @@ const SMC = {
     
     for (const fvg of fvgZones) {
       const inFVG = price >= fvg.low * 0.999 && price <= fvg.high * 1.001;
-      if (inFVG && pullback && fvg.side === pullback.side) {
+      if (inFVG && pullback && fvg.side === pullback.side && mtfConfluence) { // v13.2: Requiere MTF
         signals.push({
           model: 'FVG_ENTRY',
-          baseScore: 75,
+          baseScore: 77, // v13.2: Ajustado
           pullback,
-          reason: `En ${fvg.type}`
+          reason: `En ${fvg.type} + MTF`
         });
       }
     }
     
+    // v13.2: ORDER_FLOW DESACTIVADO - Generaba demasiadas señales falsas
+    // Si quieres reactivarlo, descomenta el bloque siguiente
+    /*
     if (orderFlow.momentum !== 'NEUTRAL' && orderFlow.strength >= 50 && pullback) {
       const flowMatch = (orderFlow.momentum === 'BULLISH' && pullback.side === 'BUY') ||
                         (orderFlow.momentum === 'BEARISH' && pullback.side === 'SELL');
@@ -868,6 +1062,7 @@ const SMC = {
         });
       }
     }
+    */
     
     if (signals.length === 0) {
       let reason = 'Esperando setup';
@@ -1446,7 +1641,10 @@ function closeSignal(id, status, symbol) {
   signal.status = status;
   signal.closedAt = new Date().toISOString();
   
-  if (symbol && assetData[symbol]) assetData[symbol].lockedSignal = null;
+  if (symbol && assetData[symbol]) {
+    assetData[symbol].lockedSignal = null;
+    assetData[symbol].lastSignalClosed = Date.now(); // v13.2: Registrar tiempo de cierre para cooldown
+  }
   
   stats.byModel[signal.model] = stats.byModel[signal.model] || { wins: 0, losses: 0 };
   stats.byAsset[signal.symbol] = stats.byAsset[signal.symbol] || { wins: 0, losses: 0, total: 0 };
@@ -1598,7 +1796,7 @@ function requestH1(symbol) {
 }
 
 // =============================================
-// ANÁLISIS DE ACTIVOS (con Telegram)
+// ANÁLISIS DE ACTIVOS v13.2 (con filtros mejorados)
 // =============================================
 function analyzeAsset(symbol) {
   const data = assetData[symbol];
@@ -1607,56 +1805,122 @@ function analyzeAsset(symbol) {
   if (!data || !config || data.candles.length < 30) return;
   
   const now = Date.now();
-  if (now - data.lastAnalysis < 2000) return;
+  
+  // ═══════════════════════════════════════════
+  // FILTRO 1: Cooldown de análisis (30 segundos)
+  // ═══════════════════════════════════════════
+  if (now - data.lastAnalysis < SIGNAL_CONFIG.ANALYSIS_COOLDOWN) return;
   data.lastAnalysis = now;
   
+  // ═══════════════════════════════════════════
+  // FILTRO 2: Verificar horas de trading (UTC)
+  // ═══════════════════════════════════════════
+  const currentHour = new Date().getUTCHours();
+  if (currentHour < SIGNAL_CONFIG.TRADING_HOURS.start || 
+      currentHour >= SIGNAL_CONFIG.TRADING_HOURS.end) {
+    // Fuera de horario - solo analizar, no generar señales
+    const signal = SMC.analyze(data.candles, data.candlesH1, config, data);
+    data.signal = signal;
+    return;
+  }
+  
+  // ═══════════════════════════════════════════
+  // FILTRO 3: Cooldown post-señal (5 minutos)
+  // ═══════════════════════════════════════════
+  if (data.lastSignalClosed && 
+      now - data.lastSignalClosed < SIGNAL_CONFIG.POST_SIGNAL_COOLDOWN) {
+    const signal = SMC.analyze(data.candles, data.candlesH1, config, data);
+    data.signal = signal;
+    return;
+  }
+  
+  // ═══════════════════════════════════════════
+  // FILTRO 4: Máximo de señales pendientes
+  // ═══════════════════════════════════════════
+  const totalPending = signalHistory.filter(s => s.status === 'PENDING').length;
+  if (totalPending >= SIGNAL_CONFIG.MAX_PENDING_TOTAL) {
+    const signal = SMC.analyze(data.candles, data.candlesH1, config, data);
+    data.signal = signal;
+    return;
+  }
+  
+  // Ejecutar análisis SMC
   const signal = SMC.analyze(data.candles, data.candlesH1, config, data);
   data.signal = signal;
   
+  // Ya tiene señal activa?
   if (data.lockedSignal) return;
   
-  if (signal.action !== 'WAIT' && signal.action !== 'LOADING' && signal.score >= 60) {
-    const hasPending = signalHistory.some(s => s.symbol === symbol && s.status === 'PENDING');
-    
-    if (!hasPending) {
-      const newSignal = {
-        id: signalIdCounter++,
-        symbol,
-        assetName: config.name,
-        emoji: config.emoji,
-        action: signal.action,
-        model: signal.model,
-        score: signal.score,
-        entry: signal.entry,
-        stop: signal.stop,
-        tp1: signal.tp1,
-        tp2: signal.tp2,
-        tp3: signal.tp3,
-        tp1Hit: false,
-        tp2Hit: false,
-        tp3Hit: false,
-        trailingTP1: false,
-        trailingTP2: false,
-        trailingActive: false,
-        originalStop: signal.stop,
-        status: 'PENDING',
-        timestamp: new Date().toISOString(),
-        reason: signal.reason
-      };
-      
-      signalHistory.unshift(newSignal);
-      data.lockedSignal = { ...newSignal };
-      stats.total++;
-      stats.pending++;
-      
-      if (signalHistory.length > 100) signalHistory.pop();
-      
-      console.log(`💎 SEÑAL #${newSignal.id} | ${config.shortName} | ${signal.action} | ${signal.model} | ${signal.score}%`);
-      
-      // Enviar a Telegram
-      sendTelegramSignal(newSignal);
+  // ═══════════════════════════════════════════
+  // FILTRO 5: Score mínimo más alto (75%)
+  // ═══════════════════════════════════════════
+  if (signal.action === 'WAIT' || signal.action === 'LOADING') return;
+  if (signal.score < SIGNAL_CONFIG.MIN_SCORE) {
+    return;
+  }
+  
+  // ═══════════════════════════════════════════
+  // FILTRO 6: Requiere MTF Confluence (excepto modelos específicos)
+  // ═══════════════════════════════════════════
+  if (SIGNAL_CONFIG.REQUIRE_MTF_CONFLUENCE) {
+    const requiresMTF = !SIGNAL_CONFIG.MODELS_WITHOUT_MTF.includes(signal.model);
+    if (requiresMTF && !data.mtfConfluence) {
+      return;
     }
   }
+  
+  // ═══════════════════════════════════════════
+  // FILTRO 7: Verificar que no haya señal pendiente
+  // ═══════════════════════════════════════════
+  const hasPending = signalHistory.some(s => s.symbol === symbol && s.status === 'PENDING');
+  if (hasPending) return;
+  
+  // ═══════════════════════════════════════════
+  // GENERAR SEÑAL (pasó todos los filtros)
+  // ═══════════════════════════════════════════
+  const newSignal = {
+    id: signalIdCounter++,
+    symbol,
+    assetName: config.name,
+    emoji: config.emoji,
+    action: signal.action,
+    model: signal.model,
+    score: signal.score,
+    entry: signal.entry,
+    stop: signal.stop,
+    tp1: signal.tp1,
+    tp2: signal.tp2,
+    tp3: signal.tp3,
+    tp1Hit: false,
+    tp2Hit: false,
+    tp3Hit: false,
+    trailingTP1: false,
+    trailingTP2: false,
+    trailingActive: false,
+    originalStop: signal.stop,
+    status: 'PENDING',
+    timestamp: new Date().toISOString(),
+    reason: signal.reason,
+    // Campos de contexto v13.2
+    mtfConfluence: data.mtfConfluence,
+    structureH1: data.structureH1?.trend,
+    structureM5: data.structure?.trend,
+    premiumDiscount: data.premiumDiscount
+  };
+  
+  signalHistory.unshift(newSignal);
+  data.lockedSignal = { ...newSignal };
+  data.lastSignalTime = now;
+  stats.total++;
+  stats.pending++;
+  
+  if (signalHistory.length > 100) signalHistory.pop();
+  
+  console.log(`💎 SEÑAL #${newSignal.id} | ${config.shortName} | ${signal.action} | ${signal.model} | ${signal.score}%`);
+  console.log(`   MTF: ${data.mtfConfluence ? '✅' : '❌'} | H1: ${data.structureH1?.trend} | PD: ${data.premiumDiscount}`);
+  
+  // Enviar a Telegram
+  sendTelegramSignal(newSignal);
 }
 
 // =============================================
@@ -1664,9 +1928,17 @@ function analyzeAsset(symbol) {
 // =============================================
 app.get('/', (req, res) => res.json({ 
   name: 'Trading Master Pro', 
-  version: '13.1', 
+  version: '13.2', 
   connected: isConnected,
-  supabase: !!supabase 
+  supabase: !!supabase,
+  filters: {
+    minScore: SIGNAL_CONFIG.MIN_SCORE,
+    analysisCooldown: SIGNAL_CONFIG.ANALYSIS_COOLDOWN,
+    postSignalCooldown: SIGNAL_CONFIG.POST_SIGNAL_COOLDOWN,
+    requireMTF: SIGNAL_CONFIG.REQUIRE_MTF_CONFLUENCE,
+    maxPending: SIGNAL_CONFIG.MAX_PENDING_TOTAL,
+    tradingHours: SIGNAL_CONFIG.TRADING_HOURS
+  }
 }));
 
 app.get('/api/dashboard', (req, res) => {
@@ -1764,32 +2036,37 @@ app.get('/api/subscription/:userId', async (req, res) => {
       // Usuario nuevo - crear trial
       const newSub = {
         id_de_usuario: userId,
+        email: userId,
         estado: 'trial',
         plan: 'free',
-        trial_ends_at: trialEnd.toISOString(),
+        periodo: 'mensual',
         created_at: new Date().toISOString()
       };
       await saveSubscription(newSub);
       return res.json({ subscription: defaultSub });
     }
     
-    // Verificar si trial expiró
-    if (sub.estado === 'trial' && sub.trial_ends_at) {
-      const trialEnds = new Date(sub.trial_ends_at);
-      const now = new Date();
-      const daysLeft = Math.max(0, Math.ceil((trialEnds - now) / (1000 * 60 * 60 * 24)));
+    console.log(`📋 Suscripción encontrada para ${userId}:`, {
+      plan: sub.plan,
+      estado: sub.estado,
+      periodo: sub.periodo,
+      trial_days_left: sub.trial_days_left
+    });
+    
+    // Si es trial, verificar días restantes
+    if (sub.estado === 'trial' || sub.plan === 'free') {
+      const daysLeft = sub.trial_days_left !== null ? sub.trial_days_left : 5;
       
       if (daysLeft <= 0) {
         // Trial expirado
-        sub.estado = 'expired';
-        await saveSubscription(sub);
         return res.json({ 
           subscription: { 
             status: 'expired', 
             plan: 'none',
-            plan_name: 'Expirado',
+            plan_name: 'Expirado - Adquiere un plan',
             days_left: 0,
-            assets: []
+            assets: [],
+            message: 'Tu período de prueba ha terminado. Adquiere un plan para continuar.'
           } 
         });
       }
@@ -1799,24 +2076,27 @@ app.get('/api/subscription/:userId', async (req, res) => {
           status: 'trial',
           plan: 'free',
           plan_name: 'Free Trial',
-          trial_ends_at: sub.trial_ends_at,
+          trial_ends_at: sub.trial_ends_at || trialEnd.toISOString(),
           days_left: daysLeft,
           assets: PLANS.free.assets
         }
       });
     }
     
-    // Usuario con plan activo
+    // Usuario con plan activo (active, basico, premium, elite)
     const planKey = sub.plan || 'free';
     const plan = PLANS[planKey] || PLANS.free;
     
+    console.log(`✅ Usuario ${userId} tiene plan: ${planKey} (${plan.name})`);
+    
     return res.json({ 
       subscription: {
-        status: sub.estado || 'active',
+        status: sub.estado === 'active' ? 'active' : sub.estado,
         plan: planKey,
         plan_name: plan.name,
         assets: plan.assets,
-        period: sub.periodo
+        period: sub.periodo,
+        email: sub.email
       }
     });
     
@@ -1833,28 +2113,49 @@ app.get('/api/admin/users', async (req, res) => {
   try {
     const subs = await getAllSubscriptions();
     
-    const users = (subs || []).map(sub => ({
-      id: sub.id_de_usuario,
-      email: sub.email || `user-${sub.id_de_usuario?.slice(0,8)}`,
-      status: sub.estado,
-      plan: sub.plan || 'free',
-      plan_name: PLANS[sub.plan]?.name || 'Free Trial',
-      period: sub.periodo,
-      trial_ends_at: sub.trial_ends_at,
-      created_at: sub.created_at
-    }));
+    const users = (subs || []).map(sub => {
+      const planKey = sub.plan || 'free';
+      const planInfo = PLANS[planKey] || PLANS.free;
+      
+      return {
+        id: sub.id_de_usuario || sub.email,
+        email: sub.email || sub.id_de_usuario || `user-${sub.identificacion?.slice(0,8)}`,
+        status: sub.estado,
+        plan: planKey,
+        plan_name: planInfo.name,
+        period: sub.periodo,
+        trial_days_left: sub.trial_days_left,
+        created_at: sub.created_at
+      };
+    });
     
     const total = users.length;
     const trial = users.filter(u => u.status === 'trial').length;
     const active = users.filter(u => u.status === 'active' || u.status === 'activo').length;
     const expired = users.filter(u => u.status === 'expired').length;
+    const basico = users.filter(u => u.plan === 'basico').length;
+    const premium = users.filter(u => u.plan === 'premium').length;
+    const elite = users.filter(u => u.plan === 'elite').length;
+    
+    // Calcular ingresos estimados
+    const monthlyRevenue = (basico * 29900) + (premium * 59900) + (elite * 99900);
     
     res.json({ 
       users, 
-      stats: { total, trial, active, expired },
+      stats: { 
+        total, 
+        trial, 
+        active, 
+        expired,
+        basico,
+        premium,
+        elite,
+        monthlyRevenue
+      },
       storage: supabase ? 'supabase' : 'memory'
     });
   } catch (error) {
+    console.error('Admin users error:', error);
     res.json({ users: [], error: error.message });
   }
 });
