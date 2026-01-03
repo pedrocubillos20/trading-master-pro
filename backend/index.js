@@ -71,6 +71,55 @@ let supabase = null;
 if (SUPABASE_URL && SUPABASE_SERVICE_KEY) {
   supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
   console.log('✅ Supabase conectado');
+} else {
+  console.log('⚠️ Supabase no configurado - usando memoria local');
+}
+
+// Almacenamiento en memoria (fallback cuando no hay Supabase)
+const memoryStore = {
+  subscriptions: new Map()
+};
+
+// Función helper para obtener/guardar suscripciones
+async function getSubscription(userId) {
+  if (supabase) {
+    const { data } = await supabase.from('suscripciones').select('*').eq('id_de_usuario', userId).single();
+    return data;
+  }
+  return memoryStore.subscriptions.get(userId) || null;
+}
+
+async function saveSubscription(subData) {
+  if (supabase) {
+    const { data: existing } = await supabase.from('suscripciones').select('id').eq('id_de_usuario', subData.id_de_usuario).single();
+    if (existing) {
+      return await supabase.from('suscripciones').update(subData).eq('id_de_usuario', subData.id_de_usuario).select();
+    } else {
+      return await supabase.from('suscripciones').insert(subData).select();
+    }
+  }
+  // Guardar en memoria
+  memoryStore.subscriptions.set(subData.id_de_usuario, {
+    ...subData,
+    created_at: subData.created_at || new Date().toISOString()
+  });
+  return { data: [subData] };
+}
+
+async function getAllSubscriptions() {
+  if (supabase) {
+    const { data } = await supabase.from('suscripciones').select('*').order('created_at', { ascending: false });
+    return data || [];
+  }
+  return Array.from(memoryStore.subscriptions.values());
+}
+
+async function deleteSubscription(userId) {
+  if (supabase) {
+    return await supabase.from('suscripciones').delete().eq('id_de_usuario', userId);
+  }
+  memoryStore.subscriptions.delete(userId);
+  return { error: null };
 }
 
 // =============================================
@@ -79,13 +128,13 @@ if (SUPABASE_URL && SUPABASE_SERVICE_KEY) {
 const PLANS = {
   free: {
     name: 'Free Trial',
-    assets: ['stpRNG', 'frxXAUUSD'],
+    assets: ['stpRNG', '1HZ75V', 'frxXAUUSD', 'cryBTCUSD'],
     duration: 5, // días
     price: 0
   },
   basico: {
     name: 'Básico',
-    assets: ['stpRNG', '1HZ75V', 'frxXAUUSD'],
+    assets: ['stpRNG', '1HZ75V', 'frxXAUUSD', 'cryBTCUSD'],
     price: 29900
   },
   premium: {
@@ -615,6 +664,72 @@ const SMC = {
     }
     
     const price = candlesM5[candlesM5.length - 1].close;
+    const lastCandle = candlesM5[candlesM5.length - 1];
+    
+    // *** MODELO ZONE_TOUCH - Señales cuando el precio toca una zona ***
+    for (const zone of demandZones) {
+      const touchingZone = lastCandle.low <= zone.high * 1.002 && lastCandle.low >= zone.low * 0.998;
+      const closeAboveZone = lastCandle.close > zone.mid;
+      
+      if (touchingZone && closeAboveZone) {
+        // Verificar que H1 no esté en contra
+        const h1Supports = !h1Loaded || structureH1.trend !== 'BEARISH';
+        
+        if (h1Supports) {
+          const zonePb = {
+            side: 'BUY',
+            entry: lastCandle.close,
+            stop: zone.low - avgRange * 0.5,
+            tp1: lastCandle.close + avgRange * 1.5,
+            tp2: lastCandle.close + avgRange * 2.5,
+            tp3: lastCandle.close + avgRange * 4
+          };
+          
+          let bonus = 0;
+          if (premiumDiscount === 'DISCOUNT') bonus = 10;
+          if (mtfConfluence && structureH1.trend === 'BULLISH') bonus += 10;
+          
+          signals.push({
+            model: 'ZONE_TOUCH',
+            baseScore: 70 + bonus,
+            pullback: zonePb,
+            reason: `Toque zona demanda${bonus > 0 ? ' + ' + premiumDiscount : ''}`
+          });
+        }
+      }
+    }
+    
+    for (const zone of supplyZones) {
+      const touchingZone = lastCandle.high >= zone.low * 0.998 && lastCandle.high <= zone.high * 1.002;
+      const closeBelowZone = lastCandle.close < zone.mid;
+      
+      if (touchingZone && closeBelowZone) {
+        const h1Supports = !h1Loaded || structureH1.trend !== 'BULLISH';
+        
+        if (h1Supports) {
+          const zonePb = {
+            side: 'SELL',
+            entry: lastCandle.close,
+            stop: zone.high + avgRange * 0.5,
+            tp1: lastCandle.close - avgRange * 1.5,
+            tp2: lastCandle.close - avgRange * 2.5,
+            tp3: lastCandle.close - avgRange * 4
+          };
+          
+          let bonus = 0;
+          if (premiumDiscount === 'PREMIUM') bonus = 10;
+          if (mtfConfluence && structureH1.trend === 'BEARISH') bonus += 10;
+          
+          signals.push({
+            model: 'ZONE_TOUCH',
+            baseScore: 70 + bonus,
+            pullback: zonePb,
+            reason: `Toque zona supply${bonus > 0 ? ' + ' + premiumDiscount : ''}`
+          });
+        }
+      }
+    }
+    
     for (const fvg of fvgZones) {
       const inFVG = price >= fvg.low * 0.999 && price <= fvg.high * 1.001;
       if (inFVG && pullback && fvg.side === pullback.side) {
@@ -1531,14 +1646,8 @@ app.get('/api/subscription/:userId', async (req, res) => {
     assets: PLANS.free.assets
   };
   
-  if (!supabase) return res.json({ subscription: defaultSub });
-  
   try {
-    const { data: sub } = await supabase
-      .from('suscripciones')
-      .select('*')
-      .eq('id_de_usuario', userId)
-      .single();
+    const sub = await getSubscription(userId);
     
     if (!sub) {
       // Usuario nuevo - crear trial
@@ -1549,7 +1658,7 @@ app.get('/api/subscription/:userId', async (req, res) => {
         trial_ends_at: trialEnd.toISOString(),
         created_at: new Date().toISOString()
       };
-      await supabase.from('suscripciones').insert(newSub);
+      await saveSubscription(newSub);
       return res.json({ subscription: defaultSub });
     }
     
@@ -1561,7 +1670,8 @@ app.get('/api/subscription/:userId', async (req, res) => {
       
       if (daysLeft <= 0) {
         // Trial expirado
-        await supabase.from('suscripciones').update({ estado: 'expired' }).eq('id_de_usuario', userId);
+        sub.estado = 'expired';
+        await saveSubscription(sub);
         return res.json({ 
           subscription: { 
             status: 'expired', 
@@ -1609,13 +1719,8 @@ app.get('/api/subscription/:userId', async (req, res) => {
 // API ENDPOINTS - ADMIN
 // =============================================
 app.get('/api/admin/users', async (req, res) => {
-  if (!supabase) return res.json({ users: [], error: 'Supabase no configurado' });
-  
   try {
-    const { data: subs } = await supabase
-      .from('suscripciones')
-      .select('*')
-      .order('created_at', { ascending: false });
+    const subs = await getAllSubscriptions();
     
     const users = (subs || []).map(sub => ({
       id: sub.id_de_usuario,
@@ -1635,7 +1740,8 @@ app.get('/api/admin/users', async (req, res) => {
     
     res.json({ 
       users, 
-      stats: { total, trial, active, expired }
+      stats: { total, trial, active, expired },
+      storage: supabase ? 'supabase' : 'memory'
     });
   } catch (error) {
     res.json({ users: [], error: error.message });
@@ -1643,8 +1749,6 @@ app.get('/api/admin/users', async (req, res) => {
 });
 
 app.post('/api/admin/users', async (req, res) => {
-  if (!supabase) return res.status(500).json({ error: 'Supabase no configurado' });
-  
   const { user_id, email, plan, status, period } = req.body;
   if (!user_id) return res.status(400).json({ error: 'user_id requerido' });
   
@@ -1658,38 +1762,29 @@ app.post('/api/admin/users', async (req, res) => {
       trial_ends_at: status === 'trial' ? new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString() : null
     };
     
-    const { data: existing } = await supabase
-      .from('suscripciones')
-      .select('id')
-      .eq('id_de_usuario', user_id)
-      .single();
-    
-    let result;
-    if (existing) {
-      result = await supabase.from('suscripciones').update(subData).eq('id_de_usuario', user_id).select();
-    } else {
-      result = await supabase.from('suscripciones').insert(subData).select();
-    }
-    
-    res.json({ success: true, subscription: result.data?.[0] });
+    const result = await saveSubscription(subData);
+    res.json({ success: true, subscription: result.data?.[0] || subData });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
 app.put('/api/admin/users/:userId', async (req, res) => {
-  if (!supabase) return res.status(500).json({ error: 'Supabase no configurado' });
-  
   const { userId } = req.params;
   const { plan, status, period } = req.body;
   
   try {
-    const updates = {};
-    if (plan) updates.plan = plan;
-    if (status) updates.estado = status;
-    if (period) updates.periodo = period;
+    const existing = await getSubscription(userId);
+    const subData = {
+      id_de_usuario: userId,
+      email: existing?.email,
+      plan: plan || existing?.plan || 'free',
+      estado: status || existing?.estado || 'active',
+      periodo: period || existing?.periodo || 'mensual',
+      trial_ends_at: existing?.trial_ends_at
+    };
     
-    await supabase.from('suscripciones').update(updates).eq('id_de_usuario', userId);
+    await saveSubscription(subData);
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -1697,10 +1792,8 @@ app.put('/api/admin/users/:userId', async (req, res) => {
 });
 
 app.delete('/api/admin/users/:userId', async (req, res) => {
-  if (!supabase) return res.status(500).json({ error: 'Supabase no configurado' });
-  
   try {
-    await supabase.from('suscripciones').delete().eq('id_de_usuario', req.params.userId);
+    await deleteSubscription(req.params.userId);
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
