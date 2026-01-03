@@ -168,9 +168,9 @@ const ElisaChat = ({ selectedAsset, isMobile }) => {
 
 
 // =============================================
-// MINI CHART
+// MINI CHART CON NIVELES DE SEÑAL
 // =============================================
-const MiniChart = ({ candles, height = 200 }) => {
+const MiniChart = ({ candles, height = 200, signal = null }) => {
   const svgRef = useRef(null);
   
   useEffect(() => {
@@ -179,18 +179,30 @@ const MiniChart = ({ candles, height = 200 }) => {
     const rect = svg.getBoundingClientRect();
     const w = rect.width || 600;
     const h = height;
-    const padding = { top: 10, right: 60, bottom: 20, left: 10 };
+    const padding = { top: 10, right: 70, bottom: 20, left: 10 };
     
     const visibleCandles = candles.slice(-60);
-    const prices = visibleCandles.flatMap(c => [c.high, c.low]);
-    const minP = Math.min(...prices);
-    const maxP = Math.max(...prices);
+    
+    // Calcular rango incluyendo niveles de señal si existen
+    let allPrices = visibleCandles.flatMap(c => [c.high, c.low]);
+    if (signal) {
+      if (signal.entry) allPrices.push(signal.entry);
+      if (signal.stop) allPrices.push(signal.stop);
+      if (signal.tp1) allPrices.push(signal.tp1);
+      if (signal.tp2) allPrices.push(signal.tp2);
+      if (signal.tp3) allPrices.push(signal.tp3);
+    }
+    
+    const minP = Math.min(...allPrices);
+    const maxP = Math.max(...allPrices);
     const range = maxP - minP || 1;
     
     const candleW = (w - padding.left - padding.right) / visibleCandles.length;
     const scaleY = (p) => padding.top + ((maxP - p) / range) * (h - padding.top - padding.bottom);
     
     let html = '';
+    
+    // Dibujar velas
     visibleCandles.forEach((c, i) => {
       const x = padding.left + i * candleW + candleW / 2;
       const isGreen = c.close >= c.open;
@@ -203,16 +215,45 @@ const MiniChart = ({ candles, height = 200 }) => {
       html += `<rect x="${x - candleW * 0.35}" y="${bodyTop}" width="${candleW * 0.7}" height="${bodyH}" fill="${color}"/>`;
     });
     
+    // Dibujar niveles de señal
+    if (signal && signal.entry) {
+      const drawLevel = (price, color, label, dashArray = '') => {
+        if (!price || price < minP || price > maxP) return '';
+        const y = scaleY(price);
+        let levelHtml = '';
+        levelHtml += `<line x1="${padding.left}" y1="${y}" x2="${w - padding.right}" y2="${y}" stroke="${color}" stroke-width="1.5" ${dashArray ? `stroke-dasharray="${dashArray}"` : ''} opacity="0.8"/>`;
+        levelHtml += `<rect x="${w - padding.right + 2}" y="${y - 8}" width="58" height="16" rx="3" fill="${color}"/>`;
+        levelHtml += `<text x="${w - padding.right + 31}" y="${y + 4}" text-anchor="middle" fill="white" font-size="9" font-weight="bold">${label} ${price.toFixed(2)}</text>`;
+        return levelHtml;
+      };
+      
+      // Stop Loss (rojo)
+      html += drawLevel(signal.stop, '#ef4444', 'SL');
+      
+      // Entry (amarillo/dorado)
+      html += drawLevel(signal.entry, '#f59e0b', 'ENTRY', '6,3');
+      
+      // TP1 (verde claro)
+      html += drawLevel(signal.tp1, '#34d399', 'TP1');
+      
+      // TP2 (verde)
+      html += drawLevel(signal.tp2, '#10b981', 'TP2');
+      
+      // TP3 (verde oscuro/cyan)
+      html += drawLevel(signal.tp3, '#06b6d4', 'TP3');
+    }
+    
+    // Precio actual
     const lastPrice = visibleCandles[visibleCandles.length - 1]?.close;
     if (lastPrice) {
       const y = scaleY(lastPrice);
       html += `<line x1="${padding.left}" y1="${y}" x2="${w - padding.right}" y2="${y}" stroke="#3b82f6" stroke-width="1" stroke-dasharray="4,4" opacity="0.5"/>`;
-      html += `<rect x="${w - padding.right + 5}" y="${y - 10}" width="50" height="20" rx="4" fill="#3b82f6"/>`;
-      html += `<text x="${w - padding.right + 30}" y="${y + 4}" text-anchor="middle" fill="white" font-size="10" font-weight="bold">${lastPrice.toFixed(2)}</text>`;
+      html += `<rect x="${w - padding.right + 2}" y="${y - 8}" width="58" height="16" rx="3" fill="#3b82f6"/>`;
+      html += `<text x="${w - padding.right + 31}" y="${y + 4}" text-anchor="middle" fill="white" font-size="9" font-weight="bold">${lastPrice.toFixed(2)}</text>`;
     }
     
     svg.innerHTML = html;
-  }, [candles, height]);
+  }, [candles, height, signal]);
   
   return <svg ref={svgRef} className="w-full" style={{ height }} />;
 };
@@ -595,7 +636,7 @@ export default function Dashboard({ user, onLogout }) {
           </div>
           
           <div className="p-2">
-            <MiniChart candles={currentCandles} height={isMobile ? 200 : 280} />
+            <MiniChart candles={currentCandles} height={isMobile ? 200 : 280} signal={lockedSignal} />
           </div>
         </div>
 
