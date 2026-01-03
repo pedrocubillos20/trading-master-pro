@@ -83,12 +83,31 @@ const memoryStore = {
 };
 
 // Función helper para obtener/guardar suscripciones
+// Adaptado para la estructura de Supabase: identificacion, id_de_usuario, id_del_plan, estado, periodo
 async function getSubscription(userId) {
   if (supabase) {
     try {
-      const { data, error } = await supabase.from('suscripciones').select('*').eq('id_de_usuario', userId).single();
-      if (error && error.code !== 'PGRST116') console.log('Supabase getSubscription error:', error.message);
-      return data;
+      const { data, error } = await supabase
+        .from('suscripciones')
+        .select('*')
+        .eq('id_de_usuario', userId)
+        .single();
+      
+      if (error && error.code !== 'PGRST116') {
+        console.log('Supabase getSubscription error:', error.message);
+      }
+      
+      // Normalizar datos para el backend
+      if (data) {
+        return {
+          ...data,
+          plan: data.plan || 'free',
+          estado: data.estado || 'trial',
+          email: data.email || null,
+          trial_ends_at: data.trial_ends_at || null
+        };
+      }
+      return null;
     } catch (e) {
       console.log('getSubscription error:', e.message);
       return null;
@@ -100,14 +119,55 @@ async function getSubscription(userId) {
 async function saveSubscription(subData) {
   if (supabase) {
     try {
-      const { data: existing } = await supabase.from('suscripciones').select('id').eq('id_de_usuario', subData.id_de_usuario).single();
+      // Preparar datos para Supabase
+      const dataToSave = {
+        id_de_usuario: subData.id_de_usuario,
+        estado: subData.estado || 'trial',
+        periodo: subData.periodo || 'mensual',
+        plan: subData.plan || 'free',
+        email: subData.email || null,
+        trial_ends_at: subData.trial_ends_at || null,
+        updated_at: new Date().toISOString()
+      };
+      
+      // Verificar si existe
+      const { data: existing, error: findError } = await supabase
+        .from('suscripciones')
+        .select('identificacion')
+        .eq('id_de_usuario', subData.id_de_usuario)
+        .single();
+      
       if (existing) {
-        const result = await supabase.from('suscripciones').update(subData).eq('id_de_usuario', subData.id_de_usuario).select();
-        if (result.error) console.log('Supabase update error:', result.error.message);
+        // Actualizar existente
+        const result = await supabase
+          .from('suscripciones')
+          .update(dataToSave)
+          .eq('id_de_usuario', subData.id_de_usuario)
+          .select();
+        
+        if (result.error) {
+          console.log('Supabase update error:', result.error.message);
+        } else {
+          console.log(`✅ Suscripción actualizada: ${subData.id_de_usuario} -> ${subData.plan}`);
+        }
         return result;
       } else {
-        const result = await supabase.from('suscripciones').insert(subData).select();
-        if (result.error) console.log('Supabase insert error:', result.error.message);
+        // Insertar nuevo
+        dataToSave.created_at = new Date().toISOString();
+        if (!dataToSave.trial_ends_at && dataToSave.estado === 'trial') {
+          dataToSave.trial_ends_at = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString();
+        }
+        
+        const result = await supabase
+          .from('suscripciones')
+          .insert(dataToSave)
+          .select();
+        
+        if (result.error) {
+          console.log('Supabase insert error:', result.error.message);
+        } else {
+          console.log(`✅ Suscripción creada: ${subData.id_de_usuario} -> ${subData.plan}`);
+        }
         return result;
       }
     } catch (e) {
@@ -115,7 +175,8 @@ async function saveSubscription(subData) {
       return { data: null, error: e };
     }
   }
-  // Guardar en memoria
+  
+  // Guardar en memoria (fallback)
   memoryStore.subscriptions.set(subData.id_de_usuario, {
     ...subData,
     created_at: subData.created_at || new Date().toISOString()
@@ -126,9 +187,22 @@ async function saveSubscription(subData) {
 async function getAllSubscriptions() {
   if (supabase) {
     try {
-      const { data, error } = await supabase.from('suscripciones').select('*').order('created_at', { ascending: false });
-      if (error) console.log('Supabase getAllSubscriptions error:', error.message);
-      return data || [];
+      const { data, error } = await supabase
+        .from('suscripciones')
+        .select('*')
+        .order('created_at', { ascending: false });
+      
+      if (error) {
+        console.log('Supabase getAllSubscriptions error:', error.message);
+        return [];
+      }
+      
+      // Normalizar datos
+      return (data || []).map(sub => ({
+        ...sub,
+        plan: sub.plan || 'free',
+        estado: sub.estado || 'trial'
+      }));
     } catch (e) {
       console.log('getAllSubscriptions error:', e.message);
       return [];
@@ -140,7 +214,15 @@ async function getAllSubscriptions() {
 async function deleteSubscription(userId) {
   if (supabase) {
     try {
-      return await supabase.from('suscripciones').delete().eq('id_de_usuario', userId);
+      const result = await supabase
+        .from('suscripciones')
+        .delete()
+        .eq('id_de_usuario', userId);
+      
+      if (result.error) {
+        console.log('Supabase delete error:', result.error.message);
+      }
+      return result;
     } catch (e) {
       console.log('deleteSubscription error:', e.message);
       return { error: e };
