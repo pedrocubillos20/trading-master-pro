@@ -1,12 +1,13 @@
 // =============================================
-// TRADING MASTER PRO v13.0
-// TRAILING STOP + ELISA IA EXPRESIVA
+// TRADING MASTER PRO v13.1 - PLATAFORMA COMPLETA
+// Motor SMC + ELISA IA + Telegram + Supabase + Admin
 // =============================================
 
 import express from 'express';
 import cors from 'cors';
 import WebSocket from 'ws';
 import dotenv from 'dotenv';
+import { createClient } from '@supabase/supabase-js';
 
 dotenv.config();
 
@@ -17,14 +18,98 @@ app.use(cors());
 app.use(express.json());
 
 // =============================================
-// CONFIGURACIÓN DE ACTIVOS
+// CONFIGURACIÓN TELEGRAM
 // =============================================
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+
+async function sendTelegramSignal(signal) {
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
+  
+  try {
+    const isLong = signal.action === 'LONG';
+    const emoji = isLong ? '🟢' : '🔴';
+    const actionText = isLong ? 'COMPRA (LONG)' : 'VENTA (SHORT)';
+    
+    const message = `
+${emoji} *SEÑAL #${signal.id}* ${emoji}
+
+📊 *Activo:* ${signal.assetName}
+📈 *Dirección:* ${actionText}
+🎯 *Modelo:* ${signal.model}
+💯 *Score:* ${signal.score}%
+
+💰 *Entry:* ${signal.entry}
+🛑 *Stop Loss:* ${signal.stop}
+
+✅ *TP1:* ${signal.tp1}
+✅ *TP2:* ${signal.tp2}
+✅ *TP3:* ${signal.tp3}
+
+📝 ${signal.reason}
+⏰ ${new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })}
+`;
+
+    await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text: message, parse_mode: 'Markdown' })
+    });
+    console.log(`📱 Telegram: Señal #${signal.id} enviada`);
+  } catch (e) {
+    console.log('⚠️ Telegram error:', e.message);
+  }
+}
+
+// =============================================
+// CONFIGURACIÓN SUPABASE
+// =============================================
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || '';
+let supabase = null;
+
+if (SUPABASE_URL && SUPABASE_SERVICE_KEY) {
+  supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+  console.log('✅ Supabase conectado');
+}
+
+// =============================================
+// CONFIGURACIÓN DE ACTIVOS Y PLANES
+// =============================================
+const PLANS = {
+  free: {
+    name: 'Free Trial',
+    assets: ['stpRNG', 'frxXAUUSD'],
+    duration: 5, // días
+    price: 0
+  },
+  basico: {
+    name: 'Básico',
+    assets: ['stpRNG', '1HZ75V', 'frxXAUUSD'],
+    price: 29900
+  },
+  premium: {
+    name: 'Premium',
+    assets: ['stpRNG', '1HZ75V', 'frxXAUUSD', 'frxGBPUSD', 'cryBTCUSD'],
+    price: 59900
+  },
+  elite: {
+    name: 'Elite',
+    assets: ['stpRNG', '1HZ75V', 'frxXAUUSD', 'frxGBPUSD', 'cryBTCUSD', 'BOOM1000', 'BOOM500', 'CRASH1000', 'CRASH500'],
+    price: 99900
+  }
+};
+
 const ASSETS = {
-  'stpRNG': { name: 'Step Index', shortName: 'Step', emoji: '📊', decimals: 2, pip: 0.01 },
-  '1HZ75V': { name: 'Volatility 75', shortName: 'V75', emoji: '📈', decimals: 2, pip: 0.01 },
-  'frxXAUUSD': { name: 'Oro (XAU/USD)', shortName: 'XAU', emoji: '🥇', decimals: 2, pip: 0.01 },
-  'frxGBPUSD': { name: 'GBP/USD', shortName: 'GBP', emoji: '💷', decimals: 5, pip: 0.0001 },
-  'cryBTCUSD': { name: 'Bitcoin', shortName: 'BTC', emoji: '₿', decimals: 2, pip: 1 }
+  'stpRNG': { name: 'Step Index', shortName: 'Step', emoji: '📊', decimals: 2, pip: 0.01, plan: 'free' },
+  '1HZ75V': { name: 'Volatility 75', shortName: 'V75', emoji: '📈', decimals: 2, pip: 0.01, plan: 'basico' },
+  'frxXAUUSD': { name: 'Oro (XAU/USD)', shortName: 'XAU', emoji: '🥇', decimals: 2, pip: 0.01, plan: 'free' },
+  'frxGBPUSD': { name: 'GBP/USD', shortName: 'GBP', emoji: '💷', decimals: 5, pip: 0.0001, plan: 'premium' },
+  'cryBTCUSD': { name: 'Bitcoin', shortName: 'BTC', emoji: '₿', decimals: 2, pip: 1, plan: 'premium' },
+  'BOOM1000': { name: 'Boom 1000', shortName: 'Boom1K', emoji: '🚀', decimals: 2, pip: 0.01, plan: 'elite' },
+  'BOOM500': { name: 'Boom 500', shortName: 'Boom500', emoji: '💥', decimals: 2, pip: 0.01, plan: 'elite' },
+  'CRASH1000': { name: 'Crash 1000', shortName: 'Crash1K', emoji: '📉', decimals: 2, pip: 0.01, plan: 'elite' },
+  'CRASH500': { name: 'Crash 500', shortName: 'Crash500', emoji: '💣', decimals: 2, pip: 0.01, plan: 'elite' }
 };
 
 // =============================================
@@ -1286,6 +1371,9 @@ function requestH1(symbol) {
   }
 }
 
+// =============================================
+// ANÁLISIS DE ACTIVOS (con Telegram)
+// =============================================
 function analyzeAsset(symbol) {
   const data = assetData[symbol];
   const config = ASSETS[symbol];
@@ -1338,14 +1426,22 @@ function analyzeAsset(symbol) {
       if (signalHistory.length > 100) signalHistory.pop();
       
       console.log(`💎 SEÑAL #${newSignal.id} | ${config.shortName} | ${signal.action} | ${signal.model} | ${signal.score}%`);
+      
+      // Enviar a Telegram
+      sendTelegramSignal(newSignal);
     }
   }
 }
 
 // =============================================
-// API ENDPOINTS
+// API ENDPOINTS - BÁSICOS
 // =============================================
-app.get('/', (req, res) => res.json({ name: 'Trading Master Pro', version: '12.7', connected: isConnected }));
+app.get('/', (req, res) => res.json({ 
+  name: 'Trading Master Pro', 
+  version: '13.1', 
+  connected: isConnected,
+  supabase: !!supabase 
+}));
 
 app.get('/api/dashboard', (req, res) => {
   res.json({
@@ -1368,7 +1464,7 @@ app.get('/api/dashboard', (req, res) => {
     })),
     recentSignals: signalHistory.slice(0, 30),
     stats,
-    learning: stats.learning
+    plans: PLANS
   });
 });
 
@@ -1415,20 +1511,313 @@ app.post('/api/ai/chat', (req, res) => {
 });
 
 // =============================================
-// INICIO
+// API ENDPOINTS - SUSCRIPCIONES
+// =============================================
+app.get('/api/plans', (req, res) => {
+  res.json({ plans: PLANS });
+});
+
+app.get('/api/subscription/:userId', async (req, res) => {
+  const { userId } = req.params;
+  
+  // Default: Free trial de 5 días
+  const trialEnd = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000);
+  const defaultSub = {
+    status: 'trial',
+    plan: 'free',
+    plan_name: 'Free Trial',
+    trial_ends_at: trialEnd.toISOString(),
+    days_left: 5,
+    assets: PLANS.free.assets
+  };
+  
+  if (!supabase) return res.json({ subscription: defaultSub });
+  
+  try {
+    const { data: sub } = await supabase
+      .from('suscripciones')
+      .select('*')
+      .eq('id_de_usuario', userId)
+      .single();
+    
+    if (!sub) {
+      // Usuario nuevo - crear trial
+      const newSub = {
+        id_de_usuario: userId,
+        estado: 'trial',
+        plan: 'free',
+        trial_ends_at: trialEnd.toISOString(),
+        created_at: new Date().toISOString()
+      };
+      await supabase.from('suscripciones').insert(newSub);
+      return res.json({ subscription: defaultSub });
+    }
+    
+    // Verificar si trial expiró
+    if (sub.estado === 'trial' && sub.trial_ends_at) {
+      const trialEnds = new Date(sub.trial_ends_at);
+      const now = new Date();
+      const daysLeft = Math.max(0, Math.ceil((trialEnds - now) / (1000 * 60 * 60 * 24)));
+      
+      if (daysLeft <= 0) {
+        // Trial expirado
+        await supabase.from('suscripciones').update({ estado: 'expired' }).eq('id_de_usuario', userId);
+        return res.json({ 
+          subscription: { 
+            status: 'expired', 
+            plan: 'none',
+            plan_name: 'Expirado',
+            days_left: 0,
+            assets: []
+          } 
+        });
+      }
+      
+      return res.json({ 
+        subscription: {
+          status: 'trial',
+          plan: 'free',
+          plan_name: 'Free Trial',
+          trial_ends_at: sub.trial_ends_at,
+          days_left: daysLeft,
+          assets: PLANS.free.assets
+        }
+      });
+    }
+    
+    // Usuario con plan activo
+    const planKey = sub.plan || 'free';
+    const plan = PLANS[planKey] || PLANS.free;
+    
+    return res.json({ 
+      subscription: {
+        status: sub.estado || 'active',
+        plan: planKey,
+        plan_name: plan.name,
+        assets: plan.assets,
+        period: sub.periodo
+      }
+    });
+    
+  } catch (error) {
+    console.error('Subscription error:', error);
+    res.json({ subscription: defaultSub });
+  }
+});
+
+// =============================================
+// API ENDPOINTS - ADMIN
+// =============================================
+app.get('/api/admin/users', async (req, res) => {
+  if (!supabase) return res.json({ users: [], error: 'Supabase no configurado' });
+  
+  try {
+    const { data: subs } = await supabase
+      .from('suscripciones')
+      .select('*')
+      .order('created_at', { ascending: false });
+    
+    const users = (subs || []).map(sub => ({
+      id: sub.id_de_usuario,
+      email: sub.email || `user-${sub.id_de_usuario?.slice(0,8)}`,
+      status: sub.estado,
+      plan: sub.plan || 'free',
+      plan_name: PLANS[sub.plan]?.name || 'Free Trial',
+      period: sub.periodo,
+      trial_ends_at: sub.trial_ends_at,
+      created_at: sub.created_at
+    }));
+    
+    const total = users.length;
+    const trial = users.filter(u => u.status === 'trial').length;
+    const active = users.filter(u => u.status === 'active' || u.status === 'activo').length;
+    const expired = users.filter(u => u.status === 'expired').length;
+    
+    res.json({ 
+      users, 
+      stats: { total, trial, active, expired }
+    });
+  } catch (error) {
+    res.json({ users: [], error: error.message });
+  }
+});
+
+app.post('/api/admin/users', async (req, res) => {
+  if (!supabase) return res.status(500).json({ error: 'Supabase no configurado' });
+  
+  const { user_id, email, plan, status, period } = req.body;
+  if (!user_id) return res.status(400).json({ error: 'user_id requerido' });
+  
+  try {
+    const subData = {
+      id_de_usuario: user_id,
+      email: email,
+      plan: plan || 'elite',
+      estado: status || 'active',
+      periodo: period || 'mensual',
+      trial_ends_at: status === 'trial' ? new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString() : null
+    };
+    
+    const { data: existing } = await supabase
+      .from('suscripciones')
+      .select('id')
+      .eq('id_de_usuario', user_id)
+      .single();
+    
+    let result;
+    if (existing) {
+      result = await supabase.from('suscripciones').update(subData).eq('id_de_usuario', user_id).select();
+    } else {
+      result = await supabase.from('suscripciones').insert(subData).select();
+    }
+    
+    res.json({ success: true, subscription: result.data?.[0] });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/admin/users/:userId', async (req, res) => {
+  if (!supabase) return res.status(500).json({ error: 'Supabase no configurado' });
+  
+  const { userId } = req.params;
+  const { plan, status, period } = req.body;
+  
+  try {
+    const updates = {};
+    if (plan) updates.plan = plan;
+    if (status) updates.estado = status;
+    if (period) updates.periodo = period;
+    
+    await supabase.from('suscripciones').update(updates).eq('id_de_usuario', userId);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/admin/users/:userId', async (req, res) => {
+  if (!supabase) return res.status(500).json({ error: 'Supabase no configurado' });
+  
+  try {
+    await supabase.from('suscripciones').delete().eq('id_de_usuario', req.params.userId);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// =============================================
+// API ENDPOINTS - PAGOS WOMPI
+// =============================================
+const WOMPI_PUBLIC_KEY = process.env.WOMPI_PUBLIC_KEY;
+const WOMPI_PRIVATE_KEY = process.env.WOMPI_PRIVATE_KEY;
+const WOMPI_INTEGRITY_KEY = process.env.WOMPI_INTEGRITY_KEY;
+
+app.post('/api/payments/wompi/create', async (req, res) => {
+  const { plan, userId, email } = req.body;
+  const planInfo = PLANS[plan];
+  
+  if (!planInfo) return res.status(400).json({ error: 'Plan inválido' });
+  
+  try {
+    const reference = `TMP-${plan.toUpperCase()}-${userId.slice(0,8)}-${Date.now()}`;
+    const amountInCents = planInfo.price * 100;
+    
+    // Generar link de pago Wompi
+    const paymentData = {
+      name: `Trading Master Pro - ${planInfo.name}`,
+      description: `Suscripción ${planInfo.name}`,
+      single_use: true,
+      collect_shipping: false,
+      currency: 'COP',
+      amount_in_cents: amountInCents,
+      redirect_url: `https://trading-master-pro.vercel.app/payment/success?ref=${reference}`,
+      reference: reference,
+      customer_data: { email }
+    };
+    
+    const response = await fetch('https://production.wompi.co/v1/payment_links', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${WOMPI_PRIVATE_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(paymentData)
+    });
+    
+    const result = await response.json();
+    
+    if (result.data?.id) {
+      res.json({ 
+        success: true, 
+        payment_url: `https://checkout.wompi.co/l/${result.data.id}`,
+        reference 
+      });
+    } else {
+      res.status(400).json({ error: 'Error creando pago', details: result });
+    }
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/webhooks/wompi', async (req, res) => {
+  const event = req.body;
+  
+  if (event.event === 'transaction.updated' && event.data?.transaction?.status === 'APPROVED') {
+    const reference = event.data.transaction.reference;
+    // TMP-ELITE-abc12345-1234567890
+    const parts = reference.split('-');
+    const plan = parts[1]?.toLowerCase();
+    const userId = parts[2];
+    
+    if (supabase && userId) {
+      await supabase.from('suscripciones').update({
+        plan: plan,
+        estado: 'active',
+        periodo: 'mensual',
+        trial_ends_at: null
+      }).eq('id_de_usuario', userId);
+      
+      console.log(`✅ Pago aprobado: ${userId} -> ${plan}`);
+    }
+  }
+  
+  res.json({ received: true });
+});
+
+app.get('/api/health', (req, res) => {
+  res.json({ 
+    status: 'ok',
+    version: '13.1',
+    deriv: isConnected ? 'connected' : 'disconnected',
+    supabase: !!supabase,
+    telegram: !!(TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID),
+    assets: Object.keys(ASSETS).length,
+    signals: signalHistory.length
+  });
+});
+
+
+// =============================================
+// INICIO DEL SERVIDOR
 // =============================================
 app.listen(PORT, () => {
   console.log(`
-╔════════════════════════════════════════════╗
-║     TRADING MASTER PRO v13.0               ║
-║     Trailing Stop + Elisa IA               ║
-╠════════════════════════════════════════════╣
-║  Puerto: ${PORT}                               ║
-╚════════════════════════════════════════════╝
+╔════════════════════════════════════════════════╗
+║     TRADING MASTER PRO v13.1                   ║
+║     Motor SMC + ELISA + Telegram + Supabase    ║
+╠════════════════════════════════════════════════╣
+║  Puerto: ${PORT}                                   ║
+║  Supabase: ${supabase ? '✅ Conectado' : '❌ No configurado'}               ║
+║  Telegram: ${TELEGRAM_BOT_TOKEN ? '✅ Configurado' : '❌ No configurado'}               ║
+╚════════════════════════════════════════════════╝
   `);
   
   connectDeriv();
   
+  // Actualizar H1 cada 2 minutos
   setInterval(() => {
     if (derivWs?.readyState === WebSocket.OPEN) {
       for (const symbol of Object.keys(ASSETS)) {
@@ -1437,6 +1826,7 @@ app.listen(PORT, () => {
     }
   }, 120000);
   
+  // Ping cada 30 segundos
   setInterval(() => {
     if (derivWs?.readyState === WebSocket.OPEN) {
       derivWs.send(JSON.stringify({ ping: 1 }));
