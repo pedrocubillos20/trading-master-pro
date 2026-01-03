@@ -201,53 +201,19 @@ export default function Dashboard({ user, onLogout }) {
   
   useEffect(() => { return () => { mountedRef.current = false; }; }, []);
 
-  // Cargar suscripción del usuario
+  // Suscripción por defecto - sin llamada al backend (v13 no tiene este endpoint)
   useEffect(() => {
-    if (!user?.id) return;
-    
-    const fetchSubscription = async () => {
-      try {
-        const res = await fetch(`${API_URL}/api/subscription/${user.id}`);
-        const json = await res.json();
-        if (mountedRef.current) {
-          setSubscription(json.subscription);
-        }
-      } catch (e) { 
-        console.error('Subscription error:', e);
-        // Default trial si hay error
-        setSubscription({
-          status: 'trial',
-          plan: 'premium',
-          trial_ends_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString()
-        });
-      }
-    };
-    
-    fetchSubscription();
-  }, [user?.id]);
+    // Establecer acceso completo por defecto
+    setSubscription({
+      status: 'active',
+      plan: 'elite',
+      plan_name: 'Elite'
+    });
+  }, []);
 
-  // Calcular días restantes de trial
-  const trialDaysLeft = useMemo(() => {
-    if (subscription?.status !== 'trial' || !subscription?.trial_ends_at) return null;
-    const diff = new Date(subscription.trial_ends_at) - new Date();
-    return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
-  }, [subscription]);
-
-  // VERIFICAR SI EL USUARIO TIENE ACCESO
-  const isAccessAllowed = useMemo(() => {
-    if (!subscription) return true; // Mientras carga, permitir acceso
-    const status = subscription.status?.toLowerCase();
-    // Acceso permitido si: activo, active, o trial con días restantes
-    if (status === 'activo' || status === 'active') return true;
-    if (status === 'trial') {
-      // Trial tiene acceso si aún tiene días o si no hay fecha de expiración definida
-      if (!subscription.trial_ends_at) return true;
-      const diff = new Date(subscription.trial_ends_at) - new Date();
-      return diff > 0;
-    }
-    // Expired = sin acceso
-    return status !== 'expired';
-  }, [subscription]);
+  // Siempre permitir acceso (v13 no tiene sistema de suscripciones)
+  const isAccessAllowed = true;
+  const trialDaysLeft = null;
   
   useEffect(() => {
     const handleResize = () => {
@@ -259,15 +225,12 @@ export default function Dashboard({ user, onLogout }) {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Data fetching - incluir userId para filtrar activos Elite
+  // Data fetching - Simple, sin filtros
   useEffect(() => {
     let isCancelled = false;
     const fetchData = async () => {
       try {
-        const url = user?.id 
-          ? `${API_URL}/api/dashboard?userId=${user.id}`
-          : `${API_URL}/api/dashboard`;
-        const res = await fetch(url);
+        const res = await fetch(`${API_URL}/api/dashboard`);
         const json = await res.json();
         if (!isCancelled && mountedRef.current) {
           setData(json);
