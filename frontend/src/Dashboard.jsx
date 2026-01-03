@@ -276,10 +276,11 @@ export default function Dashboard({ user, onLogout }) {
   const [loadingSub, setLoadingSub] = useState(true);
   
   const mountedRef = useRef(true);
+  const initialAssetSetRef = useRef(false);
   
   useEffect(() => { return () => { mountedRef.current = false; }; }, []);
 
-  // Cargar suscripción del usuario
+  // Cargar suscripción del usuario (solo una vez)
   useEffect(() => {
     if (!user?.id) return;
     
@@ -293,13 +294,13 @@ export default function Dashboard({ user, onLogout }) {
         }
       } catch (e) { 
         console.error('Subscription error:', e);
-        // Default trial
+        // Default trial con TODOS los activos
         setSubscription({
           status: 'trial',
           plan: 'free',
           plan_name: 'Free Trial',
           days_left: 5,
-          assets: ['stpRNG', 'frxXAUUSD']
+          assets: ['stpRNG', '1HZ75V', 'frxXAUUSD', 'frxGBPUSD', 'cryBTCUSD', 'BOOM1000', 'BOOM500', 'CRASH1000', 'CRASH500']
         });
         setLoadingSub(false);
       }
@@ -308,9 +309,11 @@ export default function Dashboard({ user, onLogout }) {
     fetchSubscription();
   }, [user?.id]);
 
-  // Verificar acceso
+  // Verificar acceso - usar useMemo para evitar recrear el array
   const isExpired = subscription?.status === 'expired';
-  const allowedAssets = subscription?.assets || ['stpRNG', 'frxXAUUSD'];
+  const allowedAssets = useMemo(() => {
+    return subscription?.assets || ['stpRNG', '1HZ75V', 'frxXAUUSD', 'frxGBPUSD', 'cryBTCUSD', 'BOOM1000', 'BOOM500', 'CRASH1000', 'CRASH500'];
+  }, [subscription?.assets]);
   
   useEffect(() => {
     const handleResize = () => {
@@ -322,7 +325,7 @@ export default function Dashboard({ user, onLogout }) {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Data fetching
+  // Data fetching - SIN allowedAssets en dependencias
   useEffect(() => {
     let isCancelled = false;
     const fetchData = async () => {
@@ -331,10 +334,10 @@ export default function Dashboard({ user, onLogout }) {
         const json = await res.json();
         if (!isCancelled && mountedRef.current) {
           setData(json);
-          if (!selectedAsset && json.assets?.length) {
-            // Seleccionar primer activo permitido
-            const firstAllowed = json.assets.find(a => allowedAssets.includes(a.symbol));
-            setSelectedAsset(firstAllowed?.symbol || json.assets[0].symbol);
+          // Solo establecer el activo inicial UNA vez
+          if (!initialAssetSetRef.current && json.assets?.length) {
+            initialAssetSetRef.current = true;
+            setSelectedAsset(json.assets[0].symbol);
           }
         }
       } catch (e) { console.error('Fetch error:', e); }
@@ -342,7 +345,7 @@ export default function Dashboard({ user, onLogout }) {
     fetchData();
     const interval = setInterval(fetchData, 3000);
     return () => { isCancelled = true; clearInterval(interval); };
-  }, [selectedAsset, allowedAssets]);
+  }, []); // Sin dependencias - se ejecuta solo una vez y luego el interval
 
   useEffect(() => {
     if (!selectedAsset) return;
