@@ -114,117 +114,54 @@ const memoryStore = {
 };
 
 // =============================================
-// MAPEO DE PLANES (id_del_plan UUID -> nombre)
+// FUNCIONES DE SUSCRIPCIÓN - ESTRUCTURA NUEVA
+// Columnas: id, email, plan, estado, periodo, created_at, updated_at, trial_ends_at
 // =============================================
-const PLAN_MAP = {
-  // Mapeo de UUIDs de planes a nombres (actualiza estos con tus UUIDs reales)
-  'free': 'free',
-  'trial': 'free',
-  'ensayo': 'free',
-  'basico': 'basico',
-  'premium': 'premium',
-  'elite': 'elite'
-};
-
-// Función para determinar el plan basado en id_del_plan o estado
-function determinePlan(supabaseData) {
-  if (!supabaseData) return 'free';
-  
-  // Si el estado es 'activo', verificar el período para determinar el plan
-  if (supabaseData.estado === 'activo') {
-    // Si tiene período anual, probablemente es Elite
-    if (supabaseData['período'] === 'anual' || supabaseData.periodo === 'anual') {
-      return 'elite';
-    }
-    // Si es mensual, verificar si hay más info
-    if (supabaseData['período'] === 'mensual' || supabaseData.periodo === 'mensual') {
-      return 'premium'; // Por defecto mensual activo = premium
-    }
-    return 'premium';
-  }
-  
-  // Si está en ensayo/trial
-  if (supabaseData.estado === 'ensayo' || supabaseData.estado === 'trial') {
-    return 'free';
-  }
-  
-  // Fallback
-  return supabaseData.plan || 'free';
-}
 
 // Función para calcular días restantes del trial
-function calculateTrialDaysLeft(createdAt) {
+function calculateTrialDaysLeft(createdAt, trialEndsAt) {
+  if (trialEndsAt) {
+    const ends = new Date(trialEndsAt);
+    const now = new Date();
+    const diffDays = Math.ceil((ends - now) / (1000 * 60 * 60 * 24));
+    return Math.max(0, diffDays);
+  }
   if (!createdAt) return 5;
   const created = new Date(createdAt);
   const now = new Date();
-  const diffTime = now - created;
-  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+  const diffDays = Math.floor((now - created) / (1000 * 60 * 60 * 24));
   return Math.max(0, 5 - diffDays);
 }
-
-// =============================================
-// FUNCIONES DE SUSCRIPCIÓN ADAPTADAS A TU SUPABASE
-// Columnas reales: identificación, id_del_plan, estado, período, correo electrónico
-// =============================================
 
 async function getSubscription(userId) {
   if (supabase) {
     try {
-      // Intentar buscar por correo electrónico (que es lo que usas como identificador)
-      let data = null;
-      let error = null;
-      
-      // Primero intentar buscar por "correo electrónico" (con espacio)
-      const result1 = await supabase
+      // Buscar por email (columna nueva)
+      const { data, error } = await supabase
         .from('suscripciones')
         .select('*')
-        .eq('correo electrónico', userId)
+        .eq('email', userId)
         .single();
       
-      if (result1.data) {
-        data = result1.data;
-      } else {
-        // Si no encuentra, intentar por correo_electronico (con guión bajo)
-        const result2 = await supabase
-          .from('suscripciones')
-          .select('*')
-          .eq('correo_electronico', userId)
-          .single();
-        
-        if (result2.data) {
-          data = result2.data;
-        } else {
-          // Intentar por id_de_usuario si existe esa columna
-          const result3 = await supabase
-            .from('suscripciones')
-            .select('*')
-            .eq('id_de_usuario', userId)
-            .single();
-          
-          if (result3.data) {
-            data = result3.data;
-          }
-        }
+      if (error && error.code !== 'PGRST116') {
+        console.log('getSubscription error:', error.message);
       }
       
       if (data) {
-        // Normalizar datos para el backend
-        const plan = determinePlan(data);
-        const trialDaysLeft = data.estado === 'ensayo' || data.estado === 'trial' 
-          ? calculateTrialDaysLeft(data.created_at || data.fecha_registro)
+        const trialDaysLeft = (data.estado === 'trial') 
+          ? calculateTrialDaysLeft(data.created_at, data.trial_ends_at)
           : null;
         
         return {
-          identificacion: data.identificación || data.identificacion || data.id,
-          id_de_usuario: data['correo electrónico'] || data.correo_electronico || data.id_de_usuario || userId,
-          email: data['correo electrónico'] || data.correo_electronico || data.email || userId,
-          plan: plan,
-          estado: data.estado === 'activo' ? 'active' : (data.estado === 'ensayo' ? 'trial' : data.estado),
-          periodo: data['período'] || data.periodo || 'mensual',
-          trial_ends_at: data.trial_ends_at || null,
+          id: data.id,
+          email: data.email,
+          plan: data.plan || 'free',
+          estado: data.estado || 'trial',
+          periodo: data.periodo || 'mensual',
+          trial_ends_at: data.trial_ends_at,
           trial_days_left: trialDaysLeft,
-          created_at: data.created_at || data.fecha_registro,
-          raw: data // Guardar datos originales por si acaso
+          created_at: data.created_at,
+          updated_at: data.updated_at
         };
       }
       
@@ -240,60 +177,50 @@ async function getSubscription(userId) {
 async function saveSubscription(subData) {
   if (supabase) {
     try {
-      // Preparar datos para Supabase con las columnas correctas
-      const dataToSave = {};
-      
-      // Mapear campos según lo que acepta tu Supabase
-      if (subData.email || subData.id_de_usuario) {
-        dataToSave['correo electrónico'] = subData.email || subData.id_de_usuario;
-      }
-      if (subData.estado) {
-        dataToSave.estado = subData.estado === 'trial' ? 'ensayo' : 
-                           subData.estado === 'active' ? 'activo' : subData.estado;
-      }
-      if (subData.periodo) {
-        dataToSave['período'] = subData.periodo;
-      }
+      const email = subData.email;
       
       // Verificar si existe
-      const email = subData.email || subData.id_de_usuario;
       const { data: existing } = await supabase
         .from('suscripciones')
-        .select('identificación, identificacion')
-        .or(`correo electrónico.eq.${email},correo_electronico.eq.${email},id_de_usuario.eq.${email}`)
+        .select('id')
+        .eq('email', email)
         .single();
       
       if (existing) {
         // Actualizar existente
-        const id = existing['identificación'] || existing.identificacion;
+        const updateData = {
+          plan: subData.plan || 'free',
+          estado: subData.estado || 'trial',
+          periodo: subData.periodo || 'mensual',
+          updated_at: new Date().toISOString()
+        };
+        
+        if (subData.trial_ends_at) {
+          updateData.trial_ends_at = subData.trial_ends_at;
+        }
+        
         const result = await supabase
           .from('suscripciones')
-          .update(dataToSave)
-          .eq('identificación', id)
+          .update(updateData)
+          .eq('email', email)
           .select();
         
         if (result.error) {
           console.log('Supabase update error:', result.error.message);
-          // Intentar con identificacion sin tilde
-          const result2 = await supabase
-            .from('suscripciones')
-            .update(dataToSave)
-            .eq('identificacion', id)
-            .select();
-          if (result2.error) {
-            console.log('Supabase update error (retry):', result2.error.message);
-          }
-          return result2;
+        } else {
+          console.log(`✅ Suscripción actualizada: ${email} -> ${subData.plan}`);
         }
-        console.log(`✅ Suscripción actualizada: ${email}`);
         return result;
       } else {
-        // Insertar nuevo - usar estructura mínima
+        // Insertar nuevo
         const insertData = {
-          'correo electrónico': email,
-          'estado': 'ensayo',
-          'período': 'mensual'
+          email: email,
+          plan: subData.plan || 'free',
+          estado: subData.estado || 'trial',
+          periodo: subData.periodo || 'mensual'
         };
+        
+        // trial_ends_at se establece automáticamente por el trigger
         
         const result = await supabase
           .from('suscripciones')
@@ -302,18 +229,8 @@ async function saveSubscription(subData) {
         
         if (result.error) {
           console.log('Supabase insert error:', result.error.message);
-          // Guardar en memoria como fallback
-          memoryStore.subscriptions.set(email, {
-            id_de_usuario: email,
-            email: email,
-            plan: 'free',
-            estado: 'trial',
-            periodo: 'mensual',
-            created_at: new Date().toISOString(),
-            trial_ends_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString()
-          });
         } else {
-          console.log(`✅ Suscripción creada: ${email}`);
+          console.log(`✅ Suscripción creada: ${email} -> ${subData.plan}`);
         }
         return result;
       }
@@ -324,10 +241,8 @@ async function saveSubscription(subData) {
   }
   
   // Guardar en memoria (fallback)
-  const id = subData.email || subData.id_de_usuario;
-  memoryStore.subscriptions.set(id, {
+  memoryStore.subscriptions.set(subData.email, {
     ...subData,
-    id_de_usuario: id,
     created_at: subData.created_at || new Date().toISOString(),
     trial_ends_at: subData.trial_ends_at || new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString()
   });
@@ -349,19 +264,19 @@ async function getAllSubscriptions() {
       
       // Normalizar datos para el admin panel
       return (data || []).map(sub => {
-        const plan = determinePlan(sub);
-        const email = sub['correo electrónico'] || sub.correo_electronico || sub.email || sub.id_de_usuario;
-        const trialDaysLeft = sub.estado === 'ensayo' ? calculateTrialDaysLeft(sub.created_at) : null;
+        const trialDaysLeft = sub.estado === 'trial' 
+          ? calculateTrialDaysLeft(sub.created_at, sub.trial_ends_at) 
+          : null;
         
         return {
-          identificacion: sub['identificación'] || sub.identificacion || sub.id,
-          id_de_usuario: email,
-          email: email,
-          plan: plan,
-          estado: sub.estado === 'activo' ? 'active' : (sub.estado === 'ensayo' ? 'trial' : sub.estado),
-          periodo: sub['período'] || sub.periodo || 'mensual',
+          id: sub.id,
+          email: sub.email,
+          plan: sub.plan || 'free',
+          estado: sub.estado || 'trial',
+          periodo: sub.periodo || 'mensual',
           trial_days_left: trialDaysLeft,
-          created_at: sub.created_at || sub.fecha_registro
+          trial_ends_at: sub.trial_ends_at,
+          created_at: sub.created_at
         };
       });
     } catch (e) {
@@ -375,28 +290,15 @@ async function getAllSubscriptions() {
 async function deleteSubscription(userId) {
   if (supabase) {
     try {
-      // Intentar eliminar por diferentes campos
-      let result = await supabase
+      const result = await supabase
         .from('suscripciones')
         .delete()
-        .eq('correo electrónico', userId);
-      
-      if (result.error) {
-        result = await supabase
-          .from('suscripciones')
-          .delete()
-          .eq('correo_electronico', userId);
-      }
-      
-      if (result.error) {
-        result = await supabase
-          .from('suscripciones')
-          .delete()
-          .eq('id_de_usuario', userId);
-      }
+        .eq('email', userId);
       
       if (result.error) {
         console.log('Supabase delete error:', result.error.message);
+      } else {
+        console.log(`✅ Suscripción eliminada: ${userId}`);
       }
       return result;
     } catch (e) {
@@ -2118,20 +2020,21 @@ app.get('/api/admin/users', async (req, res) => {
       const planInfo = PLANS[planKey] || PLANS.free;
       
       return {
-        id: sub.id_de_usuario || sub.email,
-        email: sub.email || sub.id_de_usuario || `user-${sub.identificacion?.slice(0,8)}`,
+        id: sub.id,
+        email: sub.email,
         status: sub.estado,
         plan: planKey,
         plan_name: planInfo.name,
         period: sub.periodo,
         trial_days_left: sub.trial_days_left,
+        trial_ends_at: sub.trial_ends_at,
         created_at: sub.created_at
       };
     });
     
     const total = users.length;
     const trial = users.filter(u => u.status === 'trial').length;
-    const active = users.filter(u => u.status === 'active' || u.status === 'activo').length;
+    const active = users.filter(u => u.status === 'active').length;
     const expired = users.filter(u => u.status === 'expired').length;
     const basico = users.filter(u => u.plan === 'basico').length;
     const premium = users.filter(u => u.plan === 'premium').length;
@@ -2161,17 +2064,15 @@ app.get('/api/admin/users', async (req, res) => {
 });
 
 app.post('/api/admin/users', async (req, res) => {
-  const { user_id, email, plan, status, period } = req.body;
-  if (!user_id) return res.status(400).json({ error: 'user_id requerido' });
+  const { email, plan, status, period } = req.body;
+  if (!email) return res.status(400).json({ error: 'email requerido' });
   
   try {
     const subData = {
-      id_de_usuario: user_id,
       email: email,
-      plan: plan || 'elite',
-      estado: status || 'active',
-      periodo: period || 'mensual',
-      trial_ends_at: status === 'trial' ? new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString() : null
+      plan: plan || 'free',
+      estado: status || 'trial',
+      periodo: period || 'mensual'
     };
     
     const result = await saveSubscription(subData);
@@ -2186,18 +2087,23 @@ app.put('/api/admin/users/:userId', async (req, res) => {
   const { plan, status, period } = req.body;
   
   try {
+    // userId es el email
     const existing = await getSubscription(userId);
+    
     const subData = {
-      id_de_usuario: userId,
-      email: existing?.email,
+      email: userId,
       plan: plan || existing?.plan || 'free',
-      estado: status || existing?.estado || 'active',
-      periodo: period || existing?.periodo || 'mensual',
-      trial_ends_at: existing?.trial_ends_at
+      estado: status || existing?.estado || 'trial',
+      periodo: period || existing?.periodo || 'mensual'
     };
     
-    await saveSubscription(subData);
-    res.json({ success: true });
+    const result = await saveSubscription(subData);
+    
+    if (result.error) {
+      return res.status(500).json({ error: result.error.message });
+    }
+    
+    res.json({ success: true, subscription: subData });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
