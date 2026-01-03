@@ -13,6 +13,13 @@ export default function AdminPanel() {
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
+  
+  // Estados para modales
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [editingUser, setEditingUser] = useState(null);
+  const [newUser, setNewUser] = useState({ email: '', plan: 'free', status: 'trial', period: 'mensual' });
+  const [saving, setSaving] = useState(false);
 
   const handleLogin = (e) => {
     e.preventDefault();
@@ -43,7 +50,7 @@ export default function AdminPanel() {
       const data = await res.json();
       if (data.users) {
         setUsers(data.users);
-        calculateStats(data.users);
+        setStats(data.stats || {});
       }
     } catch (e) {
       console.error('Error fetching users:', e);
@@ -51,28 +58,11 @@ export default function AdminPanel() {
     setLoading(false);
   };
 
-  const calculateStats = (usersList) => {
-    const total = usersList.length;
-    const trial = usersList.filter(u => u.subscription?.status === 'trial').length;
-    const active = usersList.filter(u => u.subscription?.status === 'active').length;
-    const expired = usersList.filter(u => u.subscription?.status === 'expired').length;
-    const basic = usersList.filter(u => u.subscription?.plan === 'basic').length;
-    const premium = usersList.filter(u => u.subscription?.plan === 'premium').length;
-    const elite = usersList.filter(u => u.subscription?.plan === 'elite').length;
-    
-    const revenue = usersList.reduce((acc, u) => {
-      if (u.subscription?.status === 'active') {
-        const prices = { basic: 29900, premium: 59900, elite: 99900 };
-        return acc + (prices[u.subscription?.plan] || 0);
-      }
-      return acc;
-    }, 0);
-
-    setStats({ total, trial, active, expired, basic, premium, elite, revenue });
-  };
-
+  // Filtrar usuarios
   const filteredUsers = users.filter(user => {
-    const matchesFilter = filter === 'all' || user.subscription?.status === filter || user.subscription?.plan === filter;
+    const status = user.status || user.estado;
+    const plan = user.plan;
+    const matchesFilter = filter === 'all' || status === filter || plan === filter;
     const matchesSearch = user.email?.toLowerCase().includes(search.toLowerCase());
     return matchesFilter && matchesSearch;
   });
@@ -88,9 +78,10 @@ export default function AdminPanel() {
 
   const getPlanColor = (plan) => {
     switch (plan) {
-      case 'basic': return 'bg-slate-500/20 text-slate-400';
+      case 'basico': return 'bg-slate-500/20 text-slate-400';
       case 'premium': return 'bg-cyan-500/20 text-cyan-400';
       case 'elite': return 'bg-purple-500/20 text-purple-400';
+      case 'free': return 'bg-amber-500/20 text-amber-400';
       default: return 'bg-white/10 text-white/50';
     }
   };
@@ -107,6 +98,108 @@ export default function AdminPanel() {
   const handleLogout = () => {
     localStorage.removeItem('adminAuth');
     setAuthenticated(false);
+  };
+
+  // Abrir modal de edición
+  const openEditModal = (user) => {
+    setEditingUser({
+      email: user.email,
+      plan: user.plan || 'free',
+      status: user.status || user.estado || 'trial',
+      period: user.period || user.periodo || 'mensual'
+    });
+    setShowEditModal(true);
+  };
+
+  // Guardar cambios de usuario
+  const handleSaveUser = async () => {
+    if (!editingUser) return;
+    setSaving(true);
+    
+    try {
+      const res = await fetch(`${API_URL}/api/admin/users/${encodeURIComponent(editingUser.email)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          plan: editingUser.plan,
+          status: editingUser.status,
+          period: editingUser.period
+        })
+      });
+      
+      const data = await res.json();
+      
+      if (data.success) {
+        alert('✅ Usuario actualizado correctamente');
+        setShowEditModal(false);
+        fetchUsers();
+      } else {
+        alert('❌ Error: ' + (data.error || 'No se pudo actualizar'));
+      }
+    } catch (e) {
+      alert('❌ Error de conexión: ' + e.message);
+    }
+    
+    setSaving(false);
+  };
+
+  // Agregar nuevo usuario
+  const handleAddUser = async () => {
+    if (!newUser.email) {
+      alert('El email es requerido');
+      return;
+    }
+    setSaving(true);
+    
+    try {
+      const res = await fetch(`${API_URL}/api/admin/users`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: newUser.email,
+          plan: newUser.plan,
+          status: newUser.status,
+          period: newUser.period
+        })
+      });
+      
+      const data = await res.json();
+      
+      if (data.success) {
+        alert('✅ Usuario agregado correctamente');
+        setShowAddModal(false);
+        setNewUser({ email: '', plan: 'free', status: 'trial', period: 'mensual' });
+        fetchUsers();
+      } else {
+        alert('❌ Error: ' + (data.error || 'No se pudo agregar'));
+      }
+    } catch (e) {
+      alert('❌ Error de conexión: ' + e.message);
+    }
+    
+    setSaving(false);
+  };
+
+  // Eliminar usuario
+  const handleDeleteUser = async (email) => {
+    if (!confirm(`¿Estás seguro de eliminar a ${email}?`)) return;
+    
+    try {
+      const res = await fetch(`${API_URL}/api/admin/users/${encodeURIComponent(email)}`, {
+        method: 'DELETE'
+      });
+      
+      const data = await res.json();
+      
+      if (data.success) {
+        alert('✅ Usuario eliminado');
+        fetchUsers();
+      } else {
+        alert('❌ Error: ' + (data.error || 'No se pudo eliminar'));
+      }
+    } catch (e) {
+      alert('❌ Error: ' + e.message);
+    }
   };
 
   // Login Screen
@@ -164,6 +257,12 @@ export default function AdminPanel() {
           </div>
           <div className="flex items-center gap-3">
             <button
+              onClick={() => setShowAddModal(true)}
+              className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 rounded-lg text-black font-medium text-sm transition-all"
+            >
+              ➕ Agregar
+            </button>
+            <button
               onClick={fetchUsers}
               className="px-4 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-white/70 text-sm transition-all"
             >
@@ -184,7 +283,7 @@ export default function AdminPanel() {
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
           <div className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
             <p className="text-white/50 text-xs mb-1">Total Usuarios</p>
-            <p className="text-2xl font-bold text-white">{stats.total || 0}</p>
+            <p className="text-2xl font-bold text-white">{stats.total || users.length}</p>
           </div>
           <div className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
             <p className="text-white/50 text-xs mb-1">En Trial</p>
@@ -200,7 +299,7 @@ export default function AdminPanel() {
           </div>
           <div className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
             <p className="text-white/50 text-xs mb-1">Plan Básico</p>
-            <p className="text-2xl font-bold text-slate-400">{stats.basic || 0}</p>
+            <p className="text-2xl font-bold text-slate-400">{stats.basico || 0}</p>
           </div>
           <div className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
             <p className="text-white/50 text-xs mb-1">Plan Premium</p>
@@ -212,7 +311,7 @@ export default function AdminPanel() {
           </div>
           <div className="bg-[#0d0d12] rounded-xl p-4 border border-emerald-500/20">
             <p className="text-white/50 text-xs mb-1">Ingresos/mes</p>
-            <p className="text-xl font-bold text-emerald-400">${(stats.revenue || 0).toLocaleString()}</p>
+            <p className="text-xl font-bold text-emerald-400">${(stats.monthlyRevenue || 0).toLocaleString()}</p>
           </div>
         </div>
 
@@ -234,7 +333,7 @@ export default function AdminPanel() {
                 { key: 'trial', label: '🟡 Trial' },
                 { key: 'active', label: '🟢 Activos' },
                 { key: 'expired', label: '🔴 Expirados' },
-                { key: 'basic', label: '🥉 Básico' },
+                { key: 'basico', label: '🥉 Básico' },
                 { key: 'premium', label: '🥈 Premium' },
                 { key: 'elite', label: '🥇 Elite' },
               ].map(f => (
@@ -278,14 +377,15 @@ export default function AdminPanel() {
                     <th className="text-left p-4 text-white/50 text-xs font-medium">Email</th>
                     <th className="text-left p-4 text-white/50 text-xs font-medium">Estado</th>
                     <th className="text-left p-4 text-white/50 text-xs font-medium">Plan</th>
+                    <th className="text-left p-4 text-white/50 text-xs font-medium">Período</th>
                     <th className="text-left p-4 text-white/50 text-xs font-medium">Registro</th>
-                    <th className="text-left p-4 text-white/50 text-xs font-medium">Trial Expira</th>
+                    <th className="text-left p-4 text-white/50 text-xs font-medium">Trial Días</th>
                     <th className="text-left p-4 text-white/50 text-xs font-medium">Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredUsers.map((user, i) => (
-                    <tr key={user.id || i} className="border-t border-white/5 hover:bg-white/5">
+                    <tr key={user.id || user.email || i} className="border-t border-white/5 hover:bg-white/5">
                       <td className="p-4">
                         <div className="flex items-center gap-3">
                           <div className="w-8 h-8 rounded-full bg-gradient-to-br from-emerald-400 to-cyan-400 flex items-center justify-center">
@@ -295,31 +395,40 @@ export default function AdminPanel() {
                           </div>
                           <div>
                             <p className="text-white text-sm font-medium">{user.email}</p>
-                            <p className="text-white/40 text-xs">ID: {user.id?.slice(0, 8)}...</p>
+                            <p className="text-white/40 text-xs">ID: {user.id?.slice(0, 8) || '-'}...</p>
                           </div>
                         </div>
                       </td>
                       <td className="p-4">
-                        <span className={`px-2 py-1 rounded-lg text-xs font-medium ${getStatusColor(user.subscription?.status)}`}>
-                          {user.subscription?.status || 'Sin suscripción'}
+                        <span className={`px-2 py-1 rounded-lg text-xs font-medium ${getStatusColor(user.status || user.estado)}`}>
+                          {user.status || user.estado || 'Sin estado'}
                         </span>
                       </td>
                       <td className="p-4">
-                        <span className={`px-2 py-1 rounded-lg text-xs font-medium ${getPlanColor(user.subscription?.plan)}`}>
-                          {user.subscription?.plan || '-'}
+                        <span className={`px-2 py-1 rounded-lg text-xs font-medium ${getPlanColor(user.plan)}`}>
+                          {user.plan || 'free'}
                         </span>
+                      </td>
+                      <td className="p-4 text-white/60 text-sm">
+                        {user.period || user.periodo || 'mensual'}
                       </td>
                       <td className="p-4 text-white/60 text-sm">
                         {formatDate(user.created_at)}
                       </td>
                       <td className="p-4 text-white/60 text-sm">
-                        {user.subscription?.status === 'trial' 
-                          ? formatDate(user.subscription?.trial_ends_at)
+                        {user.trial_days_left !== null && user.trial_days_left !== undefined
+                          ? <span className={user.trial_days_left <= 1 ? 'text-red-400' : 'text-amber-400'}>{user.trial_days_left} días</span>
                           : '-'
                         }
                       </td>
                       <td className="p-4">
                         <div className="flex gap-2">
+                          <button 
+                            onClick={() => openEditModal(user)}
+                            className="px-3 py-1 bg-blue-500/20 hover:bg-blue-500/30 rounded text-blue-400 text-xs"
+                          >
+                            ✏️ Editar
+                          </button>
                           <button 
                             onClick={() => {
                               const subject = encodeURIComponent('Trading Master Pro - Oferta Especial');
@@ -349,10 +458,10 @@ export default function AdminPanel() {
         {/* Marketing Actions */}
         <div className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
           <h3 className="text-white font-bold mb-4">🎯 Acciones de Marketing</h3>
-          <div className="grid sm:grid-cols-3 gap-4">
+          <div className="grid sm:grid-cols-4 gap-4">
             <button 
               onClick={() => {
-                const trialUsers = users.filter(u => u.subscription?.status === 'trial');
+                const trialUsers = users.filter(u => (u.status || u.estado) === 'trial');
                 const emails = trialUsers.map(u => u.email).join(',');
                 navigator.clipboard.writeText(emails);
                 alert(`${trialUsers.length} emails copiados`);
@@ -366,7 +475,7 @@ export default function AdminPanel() {
             
             <button 
               onClick={() => {
-                const expiredUsers = users.filter(u => u.subscription?.status === 'expired');
+                const expiredUsers = users.filter(u => (u.status || u.estado) === 'expired');
                 const emails = expiredUsers.map(u => u.email).join(',');
                 navigator.clipboard.writeText(emails);
                 alert(`${expiredUsers.length} emails copiados`);
@@ -388,21 +497,15 @@ export default function AdminPanel() {
             >
               <span className="text-2xl block mb-2">📧</span>
               <p className="text-white font-medium">Copiar todos los emails</p>
-              <p className="text-white/50 text-sm">{stats.total || 0} usuarios</p>
+              <p className="text-white/50 text-sm">{stats.total || users.length} usuarios</p>
             </button>
-          </div>
-        </div>
 
-        {/* Export */}
-        <div className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
-          <h3 className="text-white font-bold mb-4">📊 Exportar Datos</h3>
-          <div className="flex gap-3">
-            <button
+            <button 
               onClick={() => {
                 const csv = [
-                  'Email,Estado,Plan,Registro,Trial Expira',
+                  'Email,Estado,Plan,Periodo,Registro,Dias Trial',
                   ...users.map(u => 
-                    `${u.email},${u.subscription?.status || '-'},${u.subscription?.plan || '-'},${u.created_at || '-'},${u.subscription?.trial_ends_at || '-'}`
+                    `${u.email},${u.status || u.estado},${u.plan},${u.period || u.periodo},${u.created_at || '-'},${u.trial_days_left || '-'}`
                   )
                 ].join('\n');
                 
@@ -413,27 +516,171 @@ export default function AdminPanel() {
                 a.download = `usuarios_tradingpro_${new Date().toISOString().split('T')[0]}.csv`;
                 a.click();
               }}
-              className="px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-white text-sm"
+              className="p-4 bg-purple-500/10 hover:bg-purple-500/20 rounded-xl border border-purple-500/20 transition-all"
             >
-              📥 Exportar CSV
-            </button>
-            <button
-              onClick={() => {
-                const json = JSON.stringify(users, null, 2);
-                const blob = new Blob([json], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `usuarios_tradingpro_${new Date().toISOString().split('T')[0]}.json`;
-                a.click();
-              }}
-              className="px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-white text-sm"
-            >
-              📥 Exportar JSON
+              <span className="text-2xl block mb-2">📊</span>
+              <p className="text-white font-medium">Exportar CSV</p>
+              <p className="text-white/50 text-sm">Descargar datos</p>
             </button>
           </div>
         </div>
       </div>
+
+      {/* Modal de Edición */}
+      {showEditModal && editingUser && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-[#0d0d12] rounded-2xl border border-white/10 p-6 w-full max-w-md">
+            <h3 className="text-xl font-bold text-white mb-4">✏️ Editar Suscripción</h3>
+            <p className="text-white/50 text-sm mb-6">{editingUser.email}</p>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="text-white/50 text-sm block mb-2">Plan</label>
+                <select
+                  value={editingUser.plan}
+                  onChange={(e) => setEditingUser({...editingUser, plan: e.target.value})}
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-emerald-500"
+                >
+                  <option value="free">🆓 Free (Trial)</option>
+                  <option value="basico">🥉 Básico - $29,900</option>
+                  <option value="premium">🥈 Premium - $59,900</option>
+                  <option value="elite">🥇 Elite - $99,900</option>
+                </select>
+              </div>
+              
+              <div>
+                <label className="text-white/50 text-sm block mb-2">Estado</label>
+                <select
+                  value={editingUser.status}
+                  onChange={(e) => setEditingUser({...editingUser, status: e.target.value})}
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-emerald-500"
+                >
+                  <option value="trial">🟡 Trial (Prueba)</option>
+                  <option value="active">🟢 Activo</option>
+                  <option value="expired">🔴 Expirado</option>
+                  <option value="cancelled">⚫ Cancelado</option>
+                </select>
+              </div>
+              
+              <div>
+                <label className="text-white/50 text-sm block mb-2">Período</label>
+                <select
+                  value={editingUser.period}
+                  onChange={(e) => setEditingUser({...editingUser, period: e.target.value})}
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-emerald-500"
+                >
+                  <option value="mensual">Mensual</option>
+                  <option value="trimestral">Trimestral</option>
+                  <option value="anual">Anual</option>
+                </select>
+              </div>
+            </div>
+            
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setShowEditModal(false)}
+                className="flex-1 py-3 bg-white/10 hover:bg-white/20 rounded-xl text-white font-medium transition-all"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSaveUser}
+                disabled={saving}
+                className="flex-1 py-3 bg-emerald-500 hover:bg-emerald-400 rounded-xl text-black font-bold transition-all disabled:opacity-50"
+              >
+                {saving ? 'Guardando...' : '💾 Guardar'}
+              </button>
+            </div>
+            
+            <button
+              onClick={() => {
+                handleDeleteUser(editingUser.email);
+                setShowEditModal(false);
+              }}
+              className="w-full mt-3 py-2 bg-red-500/20 hover:bg-red-500/30 rounded-xl text-red-400 text-sm transition-all"
+            >
+              🗑️ Eliminar Usuario
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Agregar */}
+      {showAddModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-[#0d0d12] rounded-2xl border border-white/10 p-6 w-full max-w-md">
+            <h3 className="text-xl font-bold text-white mb-6">➕ Agregar Usuario</h3>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="text-white/50 text-sm block mb-2">Email *</label>
+                <input
+                  type="email"
+                  value={newUser.email}
+                  onChange={(e) => setNewUser({...newUser, email: e.target.value})}
+                  placeholder="usuario@email.com"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-white/30 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+              
+              <div>
+                <label className="text-white/50 text-sm block mb-2">Plan</label>
+                <select
+                  value={newUser.plan}
+                  onChange={(e) => setNewUser({...newUser, plan: e.target.value})}
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-emerald-500"
+                >
+                  <option value="free">🆓 Free (Trial)</option>
+                  <option value="basico">🥉 Básico</option>
+                  <option value="premium">🥈 Premium</option>
+                  <option value="elite">🥇 Elite</option>
+                </select>
+              </div>
+              
+              <div>
+                <label className="text-white/50 text-sm block mb-2">Estado</label>
+                <select
+                  value={newUser.status}
+                  onChange={(e) => setNewUser({...newUser, status: e.target.value})}
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-emerald-500"
+                >
+                  <option value="trial">🟡 Trial</option>
+                  <option value="active">🟢 Activo</option>
+                </select>
+              </div>
+              
+              <div>
+                <label className="text-white/50 text-sm block mb-2">Período</label>
+                <select
+                  value={newUser.period}
+                  onChange={(e) => setNewUser({...newUser, period: e.target.value})}
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-emerald-500"
+                >
+                  <option value="mensual">Mensual</option>
+                  <option value="trimestral">Trimestral</option>
+                  <option value="anual">Anual</option>
+                </select>
+              </div>
+            </div>
+            
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setShowAddModal(false)}
+                className="flex-1 py-3 bg-white/10 hover:bg-white/20 rounded-xl text-white font-medium transition-all"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleAddUser}
+                disabled={saving || !newUser.email}
+                className="flex-1 py-3 bg-emerald-500 hover:bg-emerald-400 rounded-xl text-black font-bold transition-all disabled:opacity-50"
+              >
+                {saving ? 'Agregando...' : '➕ Agregar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
