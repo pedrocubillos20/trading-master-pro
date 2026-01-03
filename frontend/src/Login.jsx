@@ -1,7 +1,5 @@
 import React, { useState } from 'react';
 
-const API_URL = import.meta.env.VITE_API_URL || 'https://trading-master-pro-production.up.railway.app';
-
 export default function Login({ supabase, onLogin }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -24,7 +22,7 @@ export default function Login({ supabase, onLogin }) {
         if (error) throw error;
         onLogin(data.user);
       } else {
-        // Registro
+        // Solo registro - NO guardar en ninguna otra tabla
         const { data, error } = await supabase.auth.signUp({
           email,
           password
@@ -33,23 +31,6 @@ export default function Login({ supabase, onLogin }) {
         if (error) throw error;
         
         if (data.user) {
-          // Crear suscripción trial automáticamente via API
-          try {
-            await fetch(`${API_URL}/api/admin/users`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                user_id: data.user.id,
-                email: email,
-                plan_slug: 'élite',
-                status: 'trial',
-                period: 'mensual'
-              })
-            });
-          } catch (apiErr) {
-            console.log('Trial setup skipped:', apiErr);
-          }
-          
           setError('');
           setMode('login');
           alert('✅ Cuenta creada exitosamente. Por favor inicia sesión.');
