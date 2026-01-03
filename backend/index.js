@@ -65,7 +65,7 @@ ${emoji} *SEÑAL #${signal.id}* ${emoji}
 // CONFIGURACIÓN SUPABASE
 // =============================================
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || '';
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || '';
 let supabase = null;
 
 if (SUPABASE_URL && SUPABASE_SERVICE_KEY) {
@@ -73,6 +73,8 @@ if (SUPABASE_URL && SUPABASE_SERVICE_KEY) {
   console.log('✅ Supabase conectado');
 } else {
   console.log('⚠️ Supabase no configurado - usando memoria local');
+  console.log('   SUPABASE_URL:', SUPABASE_URL ? 'OK' : 'MISSING');
+  console.log('   SUPABASE_SERVICE_ROLE_KEY:', SUPABASE_SERVICE_KEY ? 'OK' : 'MISSING');
 }
 
 // Almacenamiento en memoria (fallback cuando no hay Supabase)
@@ -83,19 +85,34 @@ const memoryStore = {
 // Función helper para obtener/guardar suscripciones
 async function getSubscription(userId) {
   if (supabase) {
-    const { data } = await supabase.from('suscripciones').select('*').eq('id_de_usuario', userId).single();
-    return data;
+    try {
+      const { data, error } = await supabase.from('suscripciones').select('*').eq('id_de_usuario', userId).single();
+      if (error && error.code !== 'PGRST116') console.log('Supabase getSubscription error:', error.message);
+      return data;
+    } catch (e) {
+      console.log('getSubscription error:', e.message);
+      return null;
+    }
   }
   return memoryStore.subscriptions.get(userId) || null;
 }
 
 async function saveSubscription(subData) {
   if (supabase) {
-    const { data: existing } = await supabase.from('suscripciones').select('id').eq('id_de_usuario', subData.id_de_usuario).single();
-    if (existing) {
-      return await supabase.from('suscripciones').update(subData).eq('id_de_usuario', subData.id_de_usuario).select();
-    } else {
-      return await supabase.from('suscripciones').insert(subData).select();
+    try {
+      const { data: existing } = await supabase.from('suscripciones').select('id').eq('id_de_usuario', subData.id_de_usuario).single();
+      if (existing) {
+        const result = await supabase.from('suscripciones').update(subData).eq('id_de_usuario', subData.id_de_usuario).select();
+        if (result.error) console.log('Supabase update error:', result.error.message);
+        return result;
+      } else {
+        const result = await supabase.from('suscripciones').insert(subData).select();
+        if (result.error) console.log('Supabase insert error:', result.error.message);
+        return result;
+      }
+    } catch (e) {
+      console.log('saveSubscription error:', e.message);
+      return { data: null, error: e };
     }
   }
   // Guardar en memoria
@@ -108,15 +125,26 @@ async function saveSubscription(subData) {
 
 async function getAllSubscriptions() {
   if (supabase) {
-    const { data } = await supabase.from('suscripciones').select('*').order('created_at', { ascending: false });
-    return data || [];
+    try {
+      const { data, error } = await supabase.from('suscripciones').select('*').order('created_at', { ascending: false });
+      if (error) console.log('Supabase getAllSubscriptions error:', error.message);
+      return data || [];
+    } catch (e) {
+      console.log('getAllSubscriptions error:', e.message);
+      return [];
+    }
   }
   return Array.from(memoryStore.subscriptions.values());
 }
 
 async function deleteSubscription(userId) {
   if (supabase) {
-    return await supabase.from('suscripciones').delete().eq('id_de_usuario', userId);
+    try {
+      return await supabase.from('suscripciones').delete().eq('id_de_usuario', userId);
+    } catch (e) {
+      console.log('deleteSubscription error:', e.message);
+      return { error: e };
+    }
   }
   memoryStore.subscriptions.delete(userId);
   return { error: null };
@@ -128,7 +156,8 @@ async function deleteSubscription(userId) {
 const PLANS = {
   free: {
     name: 'Free Trial',
-    assets: ['stpRNG', '1HZ75V', 'frxXAUUSD', 'cryBTCUSD'],
+    // Durante el trial FREE, tiene acceso a TODO (5 días)
+    assets: ['stpRNG', '1HZ75V', 'frxXAUUSD', 'frxGBPUSD', 'cryBTCUSD', 'BOOM1000', 'BOOM500', 'CRASH1000', 'CRASH500'],
     duration: 5, // días
     price: 0
   },
@@ -1803,32 +1832,60 @@ app.delete('/api/admin/users/:userId', async (req, res) => {
 // =============================================
 // API ENDPOINTS - PAGOS WOMPI
 // =============================================
-const WOMPI_PUBLIC_KEY = process.env.WOMPI_PUBLIC_KEY;
-const WOMPI_PRIVATE_KEY = process.env.WOMPI_PRIVATE_KEY;
-const WOMPI_INTEGRITY_KEY = process.env.WOMPI_INTEGRITY_KEY;
+const WOMPI_PUBLIC_KEY = process.env.WOMPI_PUBLIC_KEY || '';
+const WOMPI_PRIVATE_KEY = process.env.WOMPI_PRIVATE_KEY || '';
+const WOMPI_INTEGRITY_KEY = process.env.WOMPI_INTEGRITY_KEY || '';
+const WOMPI_EVENTS_SECRET = process.env.WOMPI_EVENTS_SECRET || '';
 
 app.post('/api/payments/wompi/create', async (req, res) => {
-  const { plan, userId, email } = req.body;
-  const planInfo = PLANS[plan];
+  const { plan, userId, email, period } = req.body;
   
-  if (!planInfo) return res.status(400).json({ error: 'Plan inválido' });
+  // Normalizar nombre del plan a minúsculas y sin acentos
+  const planKey = plan?.toLowerCase()
+    ?.normalize("NFD")
+    ?.replace(/[\u0300-\u036f]/g, "")
+    ?.replace('á', 'a')?.replace('é', 'e')?.replace('í', 'i')?.replace('ó', 'o')?.replace('ú', 'u') || '';
+  
+  const planInfo = PLANS[planKey];
+  
+  console.log(`💳 Intento de pago: plan="${plan}" -> planKey="${planKey}", userId=${userId}, email=${email}`);
+  console.log(`   Planes disponibles: ${Object.keys(PLANS).join(', ')}`);
+  
+  if (!planInfo) {
+    return res.status(400).json({ 
+      error: 'Plan inválido', 
+      received: plan,
+      normalized: planKey,
+      available: Object.keys(PLANS)
+    });
+  }
+  
+  if (!WOMPI_PRIVATE_KEY) {
+    return res.status(500).json({ error: 'Wompi no configurado' });
+  }
   
   try {
-    const reference = `TMP-${plan.toUpperCase()}-${userId.slice(0,8)}-${Date.now()}`;
+    const reference = `TMP-${planKey.toUpperCase()}-${userId.slice(0,8)}-${Date.now()}`;
     const amountInCents = planInfo.price * 100;
+    const billingPeriod = period || 'mensual';
     
     // Generar link de pago Wompi
     const paymentData = {
       name: `Trading Master Pro - ${planInfo.name}`,
-      description: `Suscripción ${planInfo.name}`,
+      description: `Suscripción ${planInfo.name} (${billingPeriod})`,
       single_use: true,
       collect_shipping: false,
       currency: 'COP',
       amount_in_cents: amountInCents,
       redirect_url: `https://trading-master-pro.vercel.app/payment/success?ref=${reference}`,
       reference: reference,
-      customer_data: { email }
+      customer_data: { 
+        email,
+        full_name: email.split('@')[0]
+      }
     };
+    
+    console.log(`   Creando pago Wompi: $${planInfo.price} COP, ref=${reference}`);
     
     const response = await fetch('https://production.wompi.co/v1/payment_links', {
       method: 'POST',
@@ -1842,15 +1899,18 @@ app.post('/api/payments/wompi/create', async (req, res) => {
     const result = await response.json();
     
     if (result.data?.id) {
+      console.log(`   ✅ Link de pago creado: ${result.data.id}`);
       res.json({ 
         success: true, 
         payment_url: `https://checkout.wompi.co/l/${result.data.id}`,
         reference 
       });
     } else {
+      console.log(`   ❌ Error Wompi:`, result);
       res.status(400).json({ error: 'Error creando pago', details: result });
     }
   } catch (error) {
+    console.log(`   ❌ Exception:`, error.message);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1858,22 +1918,41 @@ app.post('/api/payments/wompi/create', async (req, res) => {
 app.post('/api/webhooks/wompi', async (req, res) => {
   const event = req.body;
   
+  console.log('🔔 Webhook Wompi recibido:', event.event);
+  
   if (event.event === 'transaction.updated' && event.data?.transaction?.status === 'APPROVED') {
     const reference = event.data.transaction.reference;
     // TMP-ELITE-abc12345-1234567890
     const parts = reference.split('-');
-    const plan = parts[1]?.toLowerCase();
-    const userId = parts[2];
+    const planFromRef = parts[1]?.toLowerCase();
+    const userIdShort = parts[2];
     
-    if (supabase && userId) {
-      await supabase.from('suscripciones').update({
-        plan: plan,
-        estado: 'active',
-        periodo: 'mensual',
-        trial_ends_at: null
-      }).eq('id_de_usuario', userId);
-      
-      console.log(`✅ Pago aprobado: ${userId} -> ${plan}`);
+    console.log(`   Pago aprobado: ref=${reference}, plan=${planFromRef}`);
+    
+    // Buscar usuario por ID parcial
+    if (userIdShort) {
+      try {
+        const subs = await getAllSubscriptions();
+        const userSub = subs.find(s => s.id_de_usuario?.startsWith(userIdShort));
+        
+        if (userSub) {
+          const updatedSub = {
+            ...userSub,
+            plan: planFromRef,
+            estado: 'active',
+            periodo: 'mensual',
+            trial_ends_at: null,
+            payment_date: new Date().toISOString()
+          };
+          
+          await saveSubscription(updatedSub);
+          console.log(`   ✅ Usuario actualizado: ${userSub.id_de_usuario} -> plan ${planFromRef}`);
+        } else {
+          console.log(`   ⚠️ Usuario no encontrado: ${userIdShort}`);
+        }
+      } catch (e) {
+        console.log(`   ❌ Error actualizando usuario:`, e.message);
+      }
     }
   }
   
