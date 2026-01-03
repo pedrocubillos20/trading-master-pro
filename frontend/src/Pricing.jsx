@@ -9,15 +9,15 @@ const CheckIcon = () => (
   </svg>
 );
 
-// Planes con características
+// Planes con características - slugs coinciden con backend
 const PLANS = [
   {
-    slug: 'basic',
+    slug: 'basico',
     name: 'Básico',
     description: 'Ideal para comenzar en el trading',
     color: 'from-slate-500 to-slate-600',
     features: [
-      '2 activos (Step Index, V75)',
+      '4 activos (Step, V75, XAU, BTC)',
       '5 señales por día',
       '3 modelos SMC',
       'Gráfico M5',
@@ -37,7 +37,7 @@ const PLANS = [
     popular: true,
     color: 'from-emerald-500 to-cyan-500',
     features: [
-      '4 activos (+XAU/USD, GBP/USD)',
+      '5 activos (+GBP/USD)',
       '15 señales por día',
       '5 modelos SMC',
       'Gráficos M5 y H1',
@@ -58,9 +58,9 @@ const PLANS = [
     description: 'Acceso total sin límites',
     color: 'from-purple-500 to-pink-500',
     features: [
-      '5 activos (todos incluidos)',
+      '9 activos (todos + Boom/Crash)',
       'Señales ilimitadas',
-      '6 modelos SMC',
+      '7 modelos SMC',
       'Todos los timeframes',
       'Alertas Telegram + Canal privado',
       'ELISA IA Chat avanzado',
@@ -127,11 +127,10 @@ export default function Pricing({ user, subscription, onClose }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          plan: selectedPlan.slug,  // Enviar 'plan' no 'planSlug'
           userId: user.id,
-          planSlug: selectedPlan.slug,
-          period,
-          customerEmail: user.email,
-          customerName: user.email.split('@')[0]
+          email: user.email,
+          period: period
         })
       });
       
@@ -142,39 +141,17 @@ export default function Pricing({ user, subscription, onClose }) {
         setLoading(null);
         return;
       }
-
-      // Abrir widget de Wompi
-      const checkout = new window.WidgetCheckout({
-        currency: data.currency,
-        amountInCents: data.amountCents,
-        reference: data.reference,
-        publicKey: data.publicKey,
-        signature: { integrity: data.signature },
-        redirectUrl: data.redirectUrl,
-        customerData: {
-          email: data.customerEmail,
-          fullName: data.customerName
-        }
-      });
       
-      checkout.open((result) => {
-        const transaction = result.transaction;
-        console.log('Wompi result:', transaction);
-        
-        if (transaction.status === 'APPROVED') {
-          alert('¡Pago exitoso! Tu suscripción está activa.');
-          setShowPaymentModal(false);
-          onClose?.();
-        } else if (transaction.status === 'DECLINED') {
-          alert('El pago fue rechazado. Intenta con otro método.');
-        }
-        
+      if (data.payment_url) {
+        // Redirigir a Wompi
+        window.location.href = data.payment_url;
+      } else {
+        alert('Error creando el pago');
         setLoading(null);
-      });
-      
+      }
     } catch (error) {
-      console.error('Error:', error);
-      alert('Error procesando el pago');
+      console.error('Payment error:', error);
+      alert('Error de conexión: ' + error.message);
       setLoading(null);
     }
   };
