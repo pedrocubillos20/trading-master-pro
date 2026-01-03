@@ -7,9 +7,6 @@ import express from 'express';
 import cors from 'cors';
 import WebSocket from 'ws';
 import dotenv from 'dotenv';
-import { createClient } from '@supabase/supabase-js';
-import crypto from 'crypto';
-import { readFileSync, writeFileSync, existsSync } from 'fs';
 
 dotenv.config();
 
@@ -20,137 +17,14 @@ app.use(cors());
 app.use(express.json());
 
 // =============================================
-// CONFIGURACIÓN DE TELEGRAM
-// =============================================
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
-
-async function sendTelegramSignal(signal) {
-  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
-    console.log('⚠️ Telegram no configurado - Token o Chat ID faltante');
-    return;
-  }
-  
-  try {
-    // Corregido: Aceptar tanto BUY/SELL como LONG/SHORT
-    const isLong = signal.action === 'BUY' || signal.action === 'LONG';
-    const emoji = isLong ? '🟢' : '🔴';
-    const actionText = isLong ? 'COMPRA (LONG)' : 'VENTA (SHORT)';
-    
-    // Escapar caracteres especiales de Markdown
-    const escapeMarkdown = (text) => {
-      if (!text) return '';
-      return String(text).replace(/[_*`\[\]()~>#+=|{}.!-]/g, '\\$&');
-    };
-    
-    const safeReason = escapeMarkdown(signal.reason);
-    const safeModel = escapeMarkdown(signal.model);
-    
-    const message = `
-${emoji} *SEÑAL #${signal.id}* ${emoji}
-
-📊 *Activo:* ${signal.assetName} (${signal.symbol})
-📈 *Dirección:* ${actionText}
-🎯 *Modelo:* ${safeModel}
-💯 *Score:* ${signal.score}%
-
-💰 *Entry:* ${signal.entry}
-🛑 *Stop Loss:* ${signal.stop}
-
-✅ *TP1:* ${signal.tp1}
-✅ *TP2:* ${signal.tp2}
-✅ *TP3:* ${signal.tp3}
-
-📝 *Razón:* ${safeReason}
-⏰ *Hora:* ${new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })}
-
-_Trading Master Pro \\- ELISA IA_ 🤖
-`;
-
-    const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: TELEGRAM_CHAT_ID,
-        text: message,
-        parse_mode: 'Markdown',
-        disable_web_page_preview: true
-      })
-    });
-    
-    const result = await response.json();
-    if (result.ok) {
-      console.log(`✅ Señal #${signal.id} enviada a Telegram`);
-    } else {
-      console.error('❌ Error Telegram:', result.description);
-    }
-  } catch (error) {
-    console.error('❌ Error enviando a Telegram:', error.message);
-  }
-}
-
-async function sendTelegramUpdate(signal, updateType) {
-  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
-  
-  try {
-    let emoji, text;
-    
-    switch (updateType) {
-      case 'TP1':
-        emoji = '🎯';
-        text = `${emoji} *TP1 ALCANZADO* - Señal #${signal.id}\n${signal.assetName} | +1R`;
-        break;
-      case 'TP2':
-        emoji = '🎯🎯';
-        text = `${emoji} *TP2 ALCANZADO* - Señal #${signal.id}\n${signal.assetName} | +2R`;
-        break;
-      case 'TP3':
-        emoji = '🏆';
-        text = `${emoji} *TP3 ALCANZADO* - Señal #${signal.id}\n${signal.assetName} | +3R | MÁXIMO BENEFICIO`;
-        break;
-      case 'SL':
-        emoji = '🛑';
-        text = `${emoji} *STOP LOSS* - Señal #${signal.id}\n${signal.assetName} | -1R`;
-        break;
-      case 'TRAILING':
-        emoji = '🔄';
-        text = `${emoji} *TRAILING ACTIVADO* - Señal #${signal.id}\n${signal.assetName} | SL movido a ${signal.stop}`;
-        break;
-      default:
-        return;
-    }
-
-    const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
-    await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: TELEGRAM_CHAT_ID,
-        text,
-        parse_mode: 'Markdown'
-      })
-    });
-  } catch (error) {
-    console.error('❌ Error update Telegram:', error.message);
-  }
-}
-
-// =============================================
 // CONFIGURACIÓN DE ACTIVOS
 // =============================================
 const ASSETS = {
-  // Activos base (todos los planes)
-  'stpRNG': { name: 'Step Index', shortName: 'Step', emoji: '📊', decimals: 2, pip: 0.01, type: 'synthetic' },
-  '1HZ75V': { name: 'Volatility 75', shortName: 'V75', emoji: '📈', decimals: 2, pip: 0.01, type: 'synthetic' },
-  'frxXAUUSD': { name: 'Oro (XAU/USD)', shortName: 'XAU', emoji: '🥇', decimals: 2, pip: 0.01, type: 'forex' },
-  'frxGBPUSD': { name: 'GBP/USD', shortName: 'GBP', emoji: '💷', decimals: 5, pip: 0.0001, type: 'forex' },
-  'cryBTCUSD': { name: 'Bitcoin', shortName: 'BTC', emoji: '₿', decimals: 2, pip: 1, type: 'crypto' },
-  // Activos ELITE ONLY (Boom/Crash) - Símbolos correctos de Deriv
-  'BOOM1000': { name: 'Boom 1000 Index', shortName: 'Boom1K', emoji: '🚀', decimals: 2, pip: 0.01, type: 'synthetic', eliteOnly: true },
-  'BOOM500': { name: 'Boom 500 Index', shortName: 'Boom500', emoji: '💥', decimals: 2, pip: 0.01, type: 'synthetic', eliteOnly: true },
-  'CRASH1000': { name: 'Crash 1000 Index', shortName: 'Crash1K', emoji: '📉', decimals: 2, pip: 0.01, type: 'synthetic', eliteOnly: true },
-  'CRASH500': { name: 'Crash 500 Index', shortName: 'Crash500', emoji: '💣', decimals: 2, pip: 0.01, type: 'synthetic', eliteOnly: true }
+  'stpRNG': { name: 'Step Index', shortName: 'Step', emoji: '📊', decimals: 2, pip: 0.01 },
+  '1HZ75V': { name: 'Volatility 75', shortName: 'V75', emoji: '📈', decimals: 2, pip: 0.01 },
+  'frxXAUUSD': { name: 'Oro (XAU/USD)', shortName: 'XAU', emoji: '🥇', decimals: 2, pip: 0.01 },
+  'frxGBPUSD': { name: 'GBP/USD', shortName: 'GBP', emoji: '💷', decimals: 5, pip: 0.0001 },
+  'cryBTCUSD': { name: 'Bitcoin', shortName: 'BTC', emoji: '₿', decimals: 2, pip: 1 }
 };
 
 // =============================================
@@ -189,190 +63,11 @@ for (const symbol of Object.keys(ASSETS)) {
 let signalHistory = [];
 let signalIdCounter = 1;
 
-// =============================================
-// SISTEMA DE APRENDIZAJE ADAPTATIVO - ELISA AI
-// =============================================
-
-const LEARNING_FILE = './elisa_learning.json';
-
-// Cargar aprendizaje guardado
-function loadLearning() {
-  try {
-    if (existsSync(LEARNING_FILE)) {
-      const data = JSON.parse(readFileSync(LEARNING_FILE, 'utf-8'));
-      console.log('🧠 Aprendizaje cargado desde archivo');
-      return data;
-    }
-  } catch (e) {
-    console.log('⚠️ No se pudo cargar aprendizaje previo:', e.message);
-  }
-  return getDefaultLearning();
-}
-
-function getDefaultLearning() {
-  return {
-    scoreAdjustments: {},        // Por modelo
-    byAsset: {},                 // Por activo
-    byHour: {},                  // Por hora del día (0-23)
-    byDay: {},                   // Por día de la semana (0-6)
-    byModelAsset: {},            // Combinación modelo+activo
-    byVolatility: { high: { wins: 0, losses: 0 }, low: { wins: 0, losses: 0 } },
-    minScoreAdjust: 0,           // Ajuste dinámico del score mínimo
-    totalAnalyzed: 0,
-    lastUpdate: null,
-    version: 2
-  };
-}
-
-// Guardar aprendizaje
-function saveLearning() {
-  try {
-    learning.lastUpdate = new Date().toISOString();
-    writeFileSync(LEARNING_FILE, JSON.stringify(learning, null, 2));
-  } catch (e) {
-    console.log('⚠️ No se pudo guardar aprendizaje:', e.message);
-  }
-}
-
-// Inicializar aprendizaje
-let learning = loadLearning();
-
-// Obtener ajuste inteligente del score
-function getSmartScoreAdjustment(model, symbol, hour) {
-  let adjustment = 0;
-  
-  // 1. Ajuste por modelo (±10 max)
-  const modelAdj = learning.scoreAdjustments[model] || 0;
-  adjustment += Math.max(-10, Math.min(10, modelAdj));
-  
-  // 2. Ajuste por activo (±5 max)
-  const assetData = learning.byAsset[symbol];
-  if (assetData && assetData.total >= 5) {
-    const assetWinRate = assetData.wins / assetData.total;
-    adjustment += Math.round((assetWinRate - 0.5) * 10);
-  }
-  
-  // 3. Ajuste por hora (±5 max)
-  const hourData = learning.byHour[hour];
-  if (hourData && hourData.total >= 3) {
-    const hourWinRate = hourData.wins / hourData.total;
-    adjustment += Math.round((hourWinRate - 0.5) * 10);
-  }
-  
-  // 4. Ajuste por combinación modelo+activo
-  const comboKey = `${model}_${symbol}`;
-  const comboData = learning.byModelAsset[comboKey];
-  if (comboData && comboData.total >= 3) {
-    const comboWinRate = comboData.wins / comboData.total;
-    adjustment += Math.round((comboWinRate - 0.5) * 10);
-  }
-  
-  return Math.max(-20, Math.min(20, adjustment));
-}
-
-// Actualizar aprendizaje después de cada señal cerrada
-function updateLearning(signal, isWin) {
-  const hour = new Date(signal.timestamp).getHours();
-  const day = new Date(signal.timestamp).getDay();
-  const model = signal.model;
-  const symbol = signal.symbol;
-  const comboKey = `${model}_${symbol}`;
-  
-  // Inicializar estructuras si no existen
-  learning.byAsset[symbol] = learning.byAsset[symbol] || { wins: 0, losses: 0, total: 0 };
-  learning.byHour[hour] = learning.byHour[hour] || { wins: 0, losses: 0, total: 0 };
-  learning.byDay[day] = learning.byDay[day] || { wins: 0, losses: 0, total: 0 };
-  learning.byModelAsset[comboKey] = learning.byModelAsset[comboKey] || { wins: 0, losses: 0, total: 0 };
-  learning.scoreAdjustments[model] = learning.scoreAdjustments[model] || 0;
-  
-  if (isWin) {
-    // Victoria: aumentar confianza
-    learning.scoreAdjustments[model] = Math.min(15, learning.scoreAdjustments[model] + 2);
-    learning.byAsset[symbol].wins++;
-    learning.byHour[hour].wins++;
-    learning.byDay[day].wins++;
-    learning.byModelAsset[comboKey].wins++;
-  } else {
-    // Derrota: reducir confianza
-    learning.scoreAdjustments[model] = Math.max(-10, learning.scoreAdjustments[model] - 1);
-    learning.byAsset[symbol].losses++;
-    learning.byHour[hour].losses++;
-    learning.byDay[day].losses++;
-    learning.byModelAsset[comboKey].losses++;
-  }
-  
-  // Actualizar totales
-  learning.byAsset[symbol].total++;
-  learning.byHour[hour].total++;
-  learning.byDay[day].total++;
-  learning.byModelAsset[comboKey].total++;
-  learning.totalAnalyzed++;
-  
-  // Ajustar score mínimo dinámicamente
-  const recentWinRate = stats.wins / Math.max(1, stats.wins + stats.losses);
-  if (learning.totalAnalyzed >= 10) {
-    if (recentWinRate < 0.4) {
-      learning.minScoreAdjust = Math.min(15, learning.minScoreAdjust + 2);
-    } else if (recentWinRate > 0.7) {
-      learning.minScoreAdjust = Math.max(-10, learning.minScoreAdjust - 1);
-    }
-  }
-  
-  // Guardar cada 5 operaciones
-  if (learning.totalAnalyzed % 5 === 0) {
-    saveLearning();
-    console.log(`🧠 Aprendizaje guardado | Win Rate: ${Math.round(recentWinRate * 100)}% | Score Adj: ${learning.minScoreAdjust > 0 ? '+' : ''}${learning.minScoreAdjust}`);
-  }
-}
-
-// Obtener insights de aprendizaje
-function getLearningInsights() {
-  const insights = {
-    totalOperations: learning.totalAnalyzed,
-    bestModel: null,
-    worstModel: null,
-    bestHour: null,
-    bestAsset: null,
-    recommendations: []
-  };
-  
-  // Mejor y peor modelo
-  let bestModelWR = 0, worstModelWR = 1;
-  for (const [model, adj] of Object.entries(learning.scoreAdjustments)) {
-    const modelStats = stats.byModel[model];
-    if (modelStats && modelStats.wins + modelStats.losses >= 3) {
-      const wr = modelStats.wins / (modelStats.wins + modelStats.losses);
-      if (wr > bestModelWR) { bestModelWR = wr; insights.bestModel = { model, winRate: Math.round(wr * 100) }; }
-      if (wr < worstModelWR) { worstModelWR = wr; insights.worstModel = { model, winRate: Math.round(wr * 100) }; }
-    }
-  }
-  
-  // Mejor hora
-  let bestHourWR = 0;
-  for (const [hour, data] of Object.entries(learning.byHour)) {
-    if (data.total >= 3) {
-      const wr = data.wins / data.total;
-      if (wr > bestHourWR) { bestHourWR = wr; insights.bestHour = { hour: parseInt(hour), winRate: Math.round(wr * 100) }; }
-    }
-  }
-  
-  // Mejor activo
-  let bestAssetWR = 0;
-  for (const [symbol, data] of Object.entries(learning.byAsset)) {
-    if (data.total >= 3) {
-      const wr = data.wins / data.total;
-      if (wr > bestAssetWR) { bestAssetWR = wr; insights.bestAsset = { symbol, winRate: Math.round(wr * 100) }; }
-    }
-  }
-  
-  return insights;
-}
-
 const stats = {
   total: 0, wins: 0, losses: 0, pending: 0,
   tp1Hits: 0, tp2Hits: 0, tp3Hits: 0,
   byModel: {}, byAsset: {}, 
-  learning // Referencia al sistema de aprendizaje
+  learning: { scoreAdjustments: {} }
 };
 
 for (const symbol of Object.keys(ASSETS)) {
@@ -890,26 +585,20 @@ const SMC = {
     signals.sort((a, b) => b.baseScore - a.baseScore);
     const best = signals[0];
     
-    // Usar sistema de aprendizaje inteligente
-    const hour = new Date().getHours();
-    const smartAdj = getSmartScoreAdjustment(best.model, data.symbol || Object.keys(ASSETS)[0], hour);
-    const finalScore = Math.min(100, Math.max(0, best.baseScore + smartAdj));
+    const adj = stats.learning.scoreAdjustments[best.model] || 0;
+    const finalScore = Math.min(100, Math.max(0, best.baseScore + adj));
     
-    // Score mínimo dinámico basado en aprendizaje
-    const dynamicMinScore = Math.max(55, minScore + (learning.minScoreAdjust || 0));
-    
-    if (finalScore < dynamicMinScore) {
+    if (finalScore < minScore) {
       return {
         action: 'WAIT',
         score: finalScore,
         model: best.model,
-        reason: `Score ${finalScore}% < ${dynamicMinScore}% (min dinámico)`,
+        reason: `Score ${finalScore}% < ${minScore}% min`,
         analysis: {
           structureM5: structureM5.trend,
           structureH1: structureH1.trend,
           mtfConfluence,
-          premiumDiscount,
-          smartAdjustment: smartAdj
+          premiumDiscount
         }
       };
     }
@@ -1392,10 +1081,8 @@ function checkSignalHits() {
       if (signal.tp1Hit) {
         closeSignal(signal.id, 'WIN', symbol);
         console.log(`✅ #${signal.id} cerrado en TRAILING STOP (WIN parcial - TP1 alcanzado)`);
-        sendTelegramUpdate(signal, 'TRAILING');
       } else {
         closeSignal(signal.id, 'LOSS', symbol);
-        sendTelegramUpdate(signal, 'SL');
       }
       continue;
     }
@@ -1408,40 +1095,34 @@ function checkSignalHits() {
         signal.tp1Hit = locked.tp1Hit = true; 
         stats.tp1Hits++; 
         console.log(`🎯 TP1 HIT #${signal.id} - Activando trailing stop`);
-        sendTelegramUpdate(signal, 'TP1');
       }
       if (price >= locked.tp2 && !signal.tp2Hit) { 
         signal.tp2Hit = locked.tp2Hit = true; 
         stats.tp2Hits++; 
         console.log(`🎯 TP2 HIT #${signal.id}`);
-        sendTelegramUpdate(signal, 'TP2');
       }
       if (price >= locked.tp3 && !signal.tp3Hit) { 
         signal.tp3Hit = locked.tp3Hit = true; 
         stats.tp3Hits++; 
         closeSignal(signal.id, 'WIN', symbol); 
         console.log(`💎 TP3 HIT #${signal.id} - TRADE COMPLETO`);
-        sendTelegramUpdate(signal, 'TP3');
       }
     } else {
       if (price <= locked.tp1 && !signal.tp1Hit) { 
         signal.tp1Hit = locked.tp1Hit = true; 
         stats.tp1Hits++; 
         console.log(`🎯 TP1 HIT #${signal.id} - Activando trailing stop`);
-        sendTelegramUpdate(signal, 'TP1');
       }
       if (price <= locked.tp2 && !signal.tp2Hit) { 
         signal.tp2Hit = locked.tp2Hit = true; 
         stats.tp2Hits++; 
         console.log(`🎯 TP2 HIT #${signal.id}`);
-        sendTelegramUpdate(signal, 'TP2');
       }
       if (price <= locked.tp3 && !signal.tp3Hit) { 
         signal.tp3Hit = locked.tp3Hit = true; 
         stats.tp3Hits++; 
         closeSignal(signal.id, 'WIN', symbol); 
         console.log(`💎 TP3 HIT #${signal.id} - TRADE COMPLETO`);
-        sendTelegramUpdate(signal, 'TP3');
       }
     }
   }
@@ -1459,26 +1140,19 @@ function closeSignal(id, status, symbol) {
   stats.byModel[signal.model] = stats.byModel[signal.model] || { wins: 0, losses: 0 };
   stats.byAsset[signal.symbol] = stats.byAsset[signal.symbol] || { wins: 0, losses: 0, total: 0 };
   
-  const isWin = status === 'WIN';
-  
-  if (isWin) {
+  if (status === 'WIN') {
     stats.wins++;
     stats.byModel[signal.model].wins++;
     stats.byAsset[signal.symbol].wins++;
+    stats.learning.scoreAdjustments[signal.model] = (stats.learning.scoreAdjustments[signal.model] || 0) + 2;
   } else if (status === 'LOSS') {
     stats.losses++;
     stats.byModel[signal.model].losses++;
     stats.byAsset[signal.symbol].losses++;
+    stats.learning.scoreAdjustments[signal.model] = (stats.learning.scoreAdjustments[signal.model] || 0) - 1;
   }
   
-  stats.byAsset[signal.symbol].total++;
   stats.pending = signalHistory.filter(s => s.status === 'PENDING').length;
-  
-  // Actualizar sistema de aprendizaje adaptativo
-  if (status === 'WIN' || status === 'LOSS') {
-    updateLearning(signal, isWin);
-    console.log(`🧠 ELISA aprendiendo de Señal #${signal.id} | ${status} | Modelo: ${signal.model}`);
-  }
 }
 
 // =============================================
@@ -1518,7 +1192,7 @@ function connectDeriv() {
   
   derivWs.on('message', (rawData) => {
     try {
-      const msg = JSON.parse(rawData.toString());
+      const msg = JSON.parse(rawData);
       
       if (msg.candles && msg.echo_req?.granularity === 300) {
         const symbol = msg.echo_req.ticks_history;
@@ -1530,7 +1204,6 @@ function connectDeriv() {
             low: +c.low,
             close: +c.close
           }));
-          console.log(`📊 M5 ${ASSETS[symbol]?.shortName}: ${assetData[symbol].candles.length} velas`);
           analyzeAsset(symbol);
         }
       }
@@ -1587,42 +1260,18 @@ function connectDeriv() {
         }
       }
       
-    } catch (err) { 
-      console.error('❌ Error procesando mensaje:', err.message);
-    }
+    } catch (err) { /* ignore */ }
   });
   
   derivWs.on('close', () => {
-    console.log('❌ Desconectado de Deriv');
+    console.log('❌ Desconectado');
     isConnected = false;
     reconnectAttempts++;
-    const delay = Math.min(5000 * reconnectAttempts, 30000);
-    console.log(`🔄 Reconectando en ${delay/1000}s... (intento ${reconnectAttempts})`);
-    setTimeout(connectDeriv, delay);
+    setTimeout(connectDeriv, Math.min(5000 * reconnectAttempts, 30000));
   });
   
-  derivWs.on('error', (err) => {
-    console.error('❌ WS Error:', err.message);
-  });
+  derivWs.on('error', (err) => console.error('WS Error:', err.message));
 }
-
-// Keepalive - Ping cada 30 segundos para mantener conexión activa
-setInterval(() => {
-  if (derivWs?.readyState === WebSocket.OPEN) {
-    derivWs.send(JSON.stringify({ ping: 1 }));
-  }
-}, 30000);
-
-// Monitor de conexión - Verifica cada 60 segundos
-setInterval(() => {
-  if (!isConnected && derivWs?.readyState !== WebSocket.CONNECTING) {
-    console.log('⚠️ Monitor: Conexión perdida, forzando reconexión...');
-    if (derivWs) {
-      try { derivWs.close(); } catch(e) {}
-    }
-    connectDeriv();
-  }
-}, 60000);
 
 function requestH1(symbol) {
   if (derivWs?.readyState === WebSocket.OPEN) {
@@ -1652,7 +1301,7 @@ function analyzeAsset(symbol) {
   
   if (data.lockedSignal) return;
   
-  if (signal.action !== 'WAIT' && signal.action !== 'LOADING' && signal.score >= 55) {
+  if (signal.action !== 'WAIT' && signal.action !== 'LOADING' && signal.score >= 60) {
     const hasPending = signalHistory.some(s => s.symbol === symbol && s.status === 'PENDING');
     
     if (!hasPending) {
@@ -1689,9 +1338,6 @@ function analyzeAsset(symbol) {
       if (signalHistory.length > 100) signalHistory.pop();
       
       console.log(`💎 SEÑAL #${newSignal.id} | ${config.shortName} | ${signal.action} | ${signal.model} | ${signal.score}%`);
-      
-      // Enviar a Telegram
-      sendTelegramSignal(newSignal);
     }
   }
 }
@@ -1699,45 +1345,13 @@ function analyzeAsset(symbol) {
 // =============================================
 // API ENDPOINTS
 // =============================================
-app.get('/', (req, res) => res.json({ name: 'Trading Master Pro', version: '13.1', connected: isConnected }));
+app.get('/', (req, res) => res.json({ name: 'Trading Master Pro', version: '12.7', connected: isConnected }));
 
-// Dashboard con filtro de activos por plan
-app.get('/api/dashboard', async (req, res) => {
-  const { userId } = req.query;
-  let isElite = false;
-  
-  // Verificar si el usuario tiene plan Elite
-  if (userId && supabase) {
-    try {
-      const { data: sub } = await supabase
-        .from('suscripciones')
-        .select('estado, id_del_plan')
-        .eq('id_de_usuario', userId)
-        .single();
-      
-      if (sub && (sub.estado === 'activo' || sub.estado === 'active')) {
-        // Verificar si es plan Elite
-        const { data: plan } = await supabase
-          .from('planes')
-          .select('babosa')
-          .eq('identificacion', sub.id_del_plan)
-          .single();
-        
-        isElite = plan?.babosa?.includes('élite') || plan?.babosa?.includes('elite');
-      }
-    } catch (e) {
-      console.log('Dashboard subscription check:', e.message);
-    }
-  }
-  
-  // Filtrar activos - mostrar todos para Elite, ocultar eliteOnly para otros
-  const filteredAssets = Object.entries(assetData)
-    .filter(([symbol]) => {
-      const config = ASSETS[symbol];
-      if (config?.eliteOnly && !isElite) return false;
-      return true;
-    })
-    .map(([symbol, data]) => ({
+app.get('/api/dashboard', (req, res) => {
+  res.json({
+    connected: isConnected,
+    timestamp: Date.now(),
+    assets: Object.entries(assetData).map(([symbol, data]) => ({
       symbol,
       ...ASSETS[symbol],
       price: data.price,
@@ -1751,16 +1365,10 @@ app.get('/api/dashboard', async (req, res) => {
       demandZones: data.demandZones?.length || 0,
       supplyZones: data.supplyZones?.length || 0,
       fvgZones: data.fvgZones?.length || 0
-    }));
-  
-  res.json({
-    connected: isConnected,
-    timestamp: Date.now(),
-    assets: filteredAssets,
+    })),
     recentSignals: signalHistory.slice(0, 30),
     stats,
-    learning: stats.learning,
-    isElite
+    learning: stats.learning
   });
 });
 
@@ -1805,365 +1413,6 @@ app.post('/api/ai/chat', (req, res) => {
   const { question, symbol } = req.body;
   res.json(Elisa.chat(question || '', symbol || 'stpRNG'));
 });
-
-// =============================================
-// INTEGRACIÓN SUPABASE + WOMPI + ADMIN
-// =============================================
-
-const WOMPI_PUBLIC_KEY = process.env.WOMPI_PUBLIC_KEY || 'pub_prod_6weSthG7fsBGqfWDk3nwMgiuEUxH8S7U';
-const WOMPI_PRIVATE_KEY = process.env.WOMPI_PRIVATE_KEY || 'prv_prod_d2ajkQin28en8IH6efkeW6SB8AU0fCdG';
-const WOMPI_EVENTS_SECRET = process.env.WOMPI_EVENTS_SECRET || 'prod_events_qNbHzrAfNmSaU5I0pxU0Trj7XHsueyPG';
-const WOMPI_INTEGRITY_KEY = process.env.WOMPI_INTEGRITY_KEY || 'prod_integrity_iCriSAnih2uCpSAGrNHeAbcZyvRipcR3';
-
-const SUPABASE_URL = process.env.SUPABASE_URL || 'https://mtzycmqtxdvoazomipye.supabase.co';
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-
-const supabase = SUPABASE_SERVICE_KEY ? createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY) : null;
-
-function generateWompiSignature(reference, amountCents, currency) {
-  const data = `${reference}${amountCents}${currency}${WOMPI_INTEGRITY_KEY}`;
-  return crypto.createHash('sha256').update(data).digest('hex');
-}
-
-// =============================================
-// PLANES
-// =============================================
-app.get('/api/plans', async (req, res) => {
-  try {
-    const defaultPlans = [
-      { id: 'basico', name: 'Básico', slug: 'básico', price: 29900 },
-      { id: 'premium', name: 'Premium', slug: 'de primera calidad', price: 59900 },
-      { id: 'elite', name: 'Elite', slug: 'élite', price: 99900 }
-    ];
-    
-    if (!supabase) return res.json({ plans: defaultPlans });
-    
-    const { data: planes } = await supabase.from('planes').select('*');
-    res.json({ plans: planes || defaultPlans });
-  } catch (error) {
-    console.error('Error getting plans:', error);
-    res.json({ plans: [] });
-  }
-});
-
-// =============================================
-// SUSCRIPCIÓN DEL USUARIO
-// =============================================
-app.get('/api/subscription/:userId', async (req, res) => {
-  try {
-    const { userId } = req.params;
-    
-    // Default: Trial con acceso completo
-    const defaultSub = {
-      status: 'trial',
-      plan: 'elite',
-      plan_name: 'Trial Elite',
-      trial_ends_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
-      features: {
-        assets: ['stpRNG', '1HZ75V', 'frxXAUUSD', 'frxGBPUSD', 'cryBTCUSD'],
-        signals: true,
-        elisa_chat: true,
-        telegram: true
-      }
-    };
-    
-    if (!supabase) return res.json({ subscription: defaultSub });
-
-    const { data: sub, error } = await supabase
-      .from('suscripciones')
-      .select('*')
-      .eq('id_de_usuario', userId)
-      .single();
-    
-    if (error || !sub) {
-      return res.json({ subscription: defaultSub });
-    }
-
-    const { data: plan } = await supabase
-      .from('planes')
-      .select('*')
-      .eq('identificacion', sub.id_del_plan)
-      .single();
-
-    let status = sub.estado || 'active';
-    if (status === 'trial') {
-      const createdAt = new Date(sub.created_at || Date.now());
-      const trialEnd = new Date(createdAt.getTime() + 5 * 24 * 60 * 60 * 1000);
-      if (new Date() > trialEnd) {
-        status = 'expired';
-        await supabase.from('suscripciones').update({ estado: 'expired' }).eq('identificacion', sub.identificacion);
-      }
-    }
-
-    res.json({
-      subscription: {
-        id: sub.identificacion,
-        user_id: sub.id_de_usuario,
-        status: status,
-        plan: plan?.babosa || 'elite',
-        plan_name: plan?.nombre || 'Elite',
-        period: sub.período,
-        features: {
-          assets: ['stpRNG', '1HZ75V', 'frxXAUUSD', 'frxGBPUSD', 'cryBTCUSD'],
-          signals: true,
-          elisa_chat: true,
-          telegram: status === 'activo'
-        }
-      }
-    });
-  } catch (error) {
-    console.error('Error getting subscription:', error);
-    res.json({ subscription: { status: 'trial', plan: 'elite' } });
-  }
-});
-
-// =============================================
-// PAGOS WOMPI
-// =============================================
-app.post('/api/payments/wompi/create', async (req, res) => {
-  try {
-    const { userId, planSlug, period, customerEmail, customerName } = req.body;
-    const prices = { 
-      basico: { monthly: 29900, annual: 269000 }, 
-      premium: { monthly: 59900, annual: 539000 }, 
-      elite: { monthly: 99900, annual: 899000 } 
-    };
-    const amountCOP = prices[planSlug]?.[period];
-    if (!amountCOP) return res.status(400).json({ error: 'Plan o período inválido' });
-
-    const reference = `TMP-${userId.slice(0, 8)}-${Date.now()}`;
-    const amountCents = amountCOP * 100;
-    const signature = generateWompiSignature(reference, amountCents, 'COP');
-
-    res.json({ 
-      publicKey: WOMPI_PUBLIC_KEY, 
-      reference, 
-      amountCents, 
-      currency: 'COP', 
-      signature, 
-      redirectUrl: 'https://trading-master-pro.vercel.app/payment/success', 
-      customerEmail, 
-      customerName 
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Error creando pago' });
-  }
-});
-
-app.post('/api/webhooks/wompi', async (req, res) => {
-  try {
-    const event = req.body;
-    console.log('📩 Webhook Wompi:', event.event);
-    
-    if (event.event === 'transaction.updated' && event.data?.transaction?.status === 'APPROVED' && supabase) {
-      const reference = event.data.transaction.reference;
-      const userId = reference.split('-')[1];
-      
-      await supabase.from('suscripciones').update({ estado: 'activo' }).eq('id_de_usuario', userId);
-      console.log(`✅ Suscripción activada: ${userId}`);
-    }
-    res.json({ received: true });
-  } catch (error) {
-    res.status(500).json({ error: 'Error' });
-  }
-});
-
-app.get('/api/payments/wompi/verify/:transactionId', async (req, res) => {
-  try {
-    const response = await fetch(`https://production.wompi.co/v1/transactions/${req.params.transactionId}`, {
-      headers: { 'Authorization': `Bearer ${WOMPI_PRIVATE_KEY}` }
-    });
-    res.json(await response.json());
-  } catch (error) {
-    res.status(500).json({ error: 'Error' });
-  }
-});
-
-// =============================================
-// ADMIN PANEL - OBTENER USUARIOS
-// =============================================
-app.get('/api/admin/users', async (req, res) => {
-  try {
-    if (!supabase) return res.json({ users: [], error: 'Supabase no configurado' });
-    
-    const { data: suscripciones, error: subError } = await supabase
-      .from('suscripciones')
-      .select('*')
-      .order('created_at', { ascending: false });
-    
-    if (subError) console.error('Error suscripciones:', subError);
-    
-    const { data: planes } = await supabase.from('planes').select('*');
-    
-    let authUsers = [];
-    try {
-      const { data: authData, error: authError } = await supabase.auth.admin.listUsers();
-      if (!authError) authUsers = authData?.users || [];
-    } catch (e) {
-      console.log('Auth admin no disponible, usando solo suscripciones');
-    }
-    
-    let users = [];
-    
-    if (authUsers.length > 0) {
-      users = authUsers.map(user => {
-        const sub = (suscripciones || []).find(s => s.id_de_usuario === user.id);
-        const plan = sub ? (planes || []).find(p => p.identificacion === sub.id_del_plan) : null;
-        
-        return {
-          id: user.id,
-          email: user.email,
-          created_at: user.created_at,
-          last_sign_in: user.last_sign_in_at,
-          subscription: sub ? {
-            status: sub.estado || 'activo',
-            plan: plan?.babosa || 'unknown',
-            plan_name: plan?.nombre || 'Desconocido',
-            period: sub.período
-          } : { status: 'trial', plan: 'trial', plan_name: 'Trial' }
-        };
-      });
-    } else {
-      users = (suscripciones || []).map(sub => {
-        const plan = (planes || []).find(p => p.identificacion === sub.id_del_plan);
-        return {
-          id: sub.id_de_usuario,
-          email: sub.email || `user-${sub.id_de_usuario?.slice(0,8)}@trading.app`,
-          created_at: sub.created_at,
-          subscription: {
-            status: sub.estado || 'activo',
-            plan: plan?.babosa || 'unknown',
-            plan_name: plan?.nombre || 'Desconocido',
-            period: sub.período
-          }
-        };
-      });
-    }
-    
-    const stats = {
-      total: users.length,
-      trial: users.filter(u => u.subscription?.status === 'trial').length,
-      active: users.filter(u => ['active','activo'].includes(u.subscription?.status)).length,
-      expired: users.filter(u => u.subscription?.status === 'expired').length,
-      basic: users.filter(u => u.subscription?.plan?.includes('básico')).length,
-      premium: users.filter(u => u.subscription?.plan?.includes('primera')).length,
-      elite: users.filter(u => u.subscription?.plan?.includes('élite') || u.subscription?.plan?.includes('elite')).length
-    };
-    
-    res.json({ users, total: users.length, stats });
-  } catch (error) {
-    console.error('Error admin users:', error);
-    res.json({ users: [], error: error.message });
-  }
-});
-
-// =============================================
-// ADMIN - AGREGAR USUARIO MANUALMENTE
-// =============================================
-app.post('/api/admin/users', async (req, res) => {
-  try {
-    const { user_id, email, plan_slug, status, period } = req.body;
-    
-    if (!supabase) return res.status(500).json({ error: 'Supabase no configurado' });
-    if (!user_id) return res.status(400).json({ error: 'user_id es requerido' });
-    
-    const { data: plan } = await supabase
-      .from('planes')
-      .select('identificacion')
-      .eq('babosa', plan_slug)
-      .single();
-    
-    const subData = {
-      id_de_usuario: user_id,
-      id_del_plan: plan?.identificacion || null,
-      estado: status || 'activo',
-      período: period || 'anual',
-      email: email || null
-    };
-    
-    const { data: existing } = await supabase
-      .from('suscripciones')
-      .select('identificacion')
-      .eq('id_de_usuario', user_id)
-      .single();
-    
-    let result;
-    if (existing) {
-      result = await supabase.from('suscripciones').update(subData).eq('id_de_usuario', user_id).select();
-    } else {
-      result = await supabase.from('suscripciones').insert(subData).select();
-    }
-    
-    if (result.error) throw result.error;
-    
-    res.json({ success: true, subscription: result.data[0] });
-  } catch (error) {
-    console.error('Error creating user:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// ADMIN - Actualizar estado de usuario
-app.put('/api/admin/users/:userId', async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const { status, plan_slug, period } = req.body;
-    
-    if (!supabase) return res.status(500).json({ error: 'Supabase no configurado' });
-    
-    const updateData = {};
-    if (status) updateData.estado = status;
-    if (period) updateData.período = period;
-    
-    if (plan_slug) {
-      const { data: plan } = await supabase.from('planes').select('identificacion').eq('babosa', plan_slug).single();
-      if (plan) updateData.id_del_plan = plan.identificacion;
-    }
-    
-    const { data, error } = await supabase.from('suscripciones').update(updateData).eq('id_de_usuario', userId).select();
-    
-    if (error) throw error;
-    res.json({ success: true, subscription: data[0] });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// ADMIN - Eliminar suscripción
-app.delete('/api/admin/users/:userId', async (req, res) => {
-  try {
-    if (!supabase) return res.status(500).json({ error: 'Supabase no configurado' });
-    
-    await supabase.from('suscripciones').delete().eq('id_de_usuario', req.params.userId);
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Endpoint adicional para candles
-app.get('/api/candles/:symbol', (req, res) => {
-  const data = assetData[req.params.symbol];
-  if (!data) return res.status(404).json({ error: 'Asset not found', candles: [] });
-  res.json({ symbol: req.params.symbol, candles: data.candles || [], candlesH1: data.candlesH1 || [], price: data.price });
-});
-
-// Endpoint adicional para Elisa chat (alias)
-app.post('/api/elisa/chat', (req, res) => {
-  res.json(Elisa.chat(req.body.message || req.body.question || '', req.body.asset || req.body.symbol || 'stpRNG'));
-});
-
-// Health check
-app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
-    supabase: !!supabase,
-    deriv: derivWs?.readyState === 1 ? 'connected' : 'disconnected',
-    assets: Object.keys(assetData).length,
-    signals: signalHistory.length
-  });
-});
-
 
 // =============================================
 // INICIO
