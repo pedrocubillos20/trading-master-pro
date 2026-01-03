@@ -156,8 +156,11 @@ export default function Pricing({ user, subscription, onClose }) {
     }
   };
 
-  // Cargar script de Wompi
+  // Cargar script de Wompi y bloquear scroll del body
   useEffect(() => {
+    // Bloquear scroll del body cuando el modal está abierto
+    document.body.style.overflow = 'hidden';
+    
     if (!document.getElementById('wompi-script')) {
       const script = document.createElement('script');
       script.id = 'wompi-script';
@@ -165,11 +168,22 @@ export default function Pricing({ user, subscription, onClose }) {
       script.async = true;
       document.body.appendChild(script);
     }
+    
+    // Restaurar scroll cuando se cierra el modal
+    return () => {
+      document.body.style.overflow = '';
+    };
   }, []);
 
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-[#0d0d12] rounded-3xl border border-white/10 w-full max-w-6xl max-h-[95vh] overflow-y-auto">
+    <div 
+      className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+      onClick={(e) => e.target === e.currentTarget && onClose?.()}
+    >
+      <div 
+        className="bg-[#0d0d12] rounded-3xl border border-white/10 w-full max-w-6xl max-h-[95vh] overflow-y-auto overscroll-contain"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="sticky top-0 bg-[#0d0d12] border-b border-white/10 p-6 flex items-center justify-between z-10">
           <div>
