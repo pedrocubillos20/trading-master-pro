@@ -282,11 +282,13 @@ export default function Dashboard({ user, onLogout }) {
 
   // Cargar suscripción del usuario (solo una vez)
   useEffect(() => {
-    if (!user?.id) return;
+    if (!user?.email && !user?.id) return;
     
     const fetchSubscription = async () => {
       try {
-        const res = await fetch(`${API_URL}/api/subscription/${user.id}`);
+        // Usar email si está disponible, sino usar id
+        const identifier = user.email || user.id;
+        const res = await fetch(`${API_URL}/api/subscription/${encodeURIComponent(identifier)}`);
         const json = await res.json();
         if (mountedRef.current) {
           setSubscription(json.subscription);
@@ -307,7 +309,7 @@ export default function Dashboard({ user, onLogout }) {
     };
     
     fetchSubscription();
-  }, [user?.id]);
+  }, [user?.id, user?.email]);
 
   // Verificar acceso - usar useMemo para evitar recrear el array
   const isExpired = subscription?.status === 'expired';

@@ -447,22 +447,28 @@ async function elisaChat(message, context = {}) {
 function getFallbackResponse(msg, ctx = {}) {
   const q = msg.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   if (q.includes('hola') || q.includes('hey')) return `¡Hey! 👋 Soy ELISA, tu compañera de trading SMC. ¿En qué te ayudo?`;
-  if (q.includes('analisis') || q.includes('mercado')) {
-    if (ctx.marketData) return `📊 **${ctx.marketData.symbol}:**\nM5: **${ctx.marketData.structureM5?.trend}** | H1: **${ctx.marketData.structureH1?.trend}**\nMTF: ${ctx.marketData.mtfConfluence?'✅':'❌'} | ${ctx.marketData.premiumDiscount?.zone}`;
-    return `Estoy analizando. Siempre busco confluencia H1/M5 antes de entrar. ¿Qué activo te interesa?`;
+  if (q.includes('analisis') || q.includes('mercado') || q.includes('grafico')) {
+    if (ctx.marketData && ctx.marketData.price > 0) {
+      const m5 = ctx.marketData.structureM5?.trend || 'Analizando...';
+      const h1 = ctx.marketData.structureH1?.trend || 'Analizando...';
+      const mtf = ctx.marketData.mtfConfluence ? '✅' : '❌';
+      const pd = ctx.marketData.premiumDiscount?.zone || 'Neutral';
+      return `📊 **${ctx.marketData.symbol}:**\nPrecio: ${ctx.marketData.price}\nM5: **${m5}** | H1: **${h1}**\nMTF Confluence: ${mtf}\nZona: **${pd}**`;
+    }
+    return `📊 Estoy cargando los datos del mercado. Dame unos segundos y pregúntame de nuevo. ¿Qué activo te interesa analizar?`;
   }
   if (q.includes('senal') || q.includes('entrada')) {
-    if (ctx.signal?.action !== 'WAIT') return `🎯 **${ctx.signal.model}** ${ctx.signal.action}\nScore: ${ctx.signal.score}% | Entry: ${ctx.signal.entry}\nSL: ${ctx.signal.stop} | TP1: ${ctx.signal.tp1}`;
-    return `Sin señal activa. Esperando setup de alta probabilidad (>75). Calidad sobre cantidad 🎯`;
+    if (ctx.signal?.action && ctx.signal.action !== 'WAIT') return `🎯 **${ctx.signal.model}** ${ctx.signal.action}\nScore: ${ctx.signal.score}% | Entry: ${ctx.signal.entry}\nSL: ${ctx.signal.stop} | TP1: ${ctx.signal.tp1}`;
+    return `🎯 Sin señal activa en este momento. Esperando setup de alta probabilidad (>75%). Calidad sobre cantidad 💎`;
   }
-  if (q.includes('modelo') || q.includes('smc')) return `🧠 **Mis 6 Modelos:**\n1️⃣ MTF Confluence (95pts) ⭐\n2️⃣ CHoCH Pullback (85-90pts)\n3️⃣ Liquidity Sweep (82pts)\n4️⃣ BOS Continuation (80pts)\n5️⃣ Zone Touch (78pts)\n6️⃣ FVG Entry (77pts)`;
-  if (q.includes('order block') || q.includes('ob')) return `📦 **Order Blocks:** Última vela opuesta antes de impulso fuerte. Bullish OB = última roja antes de subida. Bearish OB = última verde antes de bajada.`;
-  if (q.includes('fvg') || q.includes('gap')) return `⚡ **FVG:** Desequilibrio donde el mercado se movió muy rápido. El precio tiende a llenar estos gaps antes de continuar.`;
-  if (q.includes('liquidez') || q.includes('liquidity')) return `💧 **Liquidez:** Stops de otros traders. El Smart Money los caza para llenar sus órdenes. Equal Highs/Lows = zonas de liquidez.`;
-  if (q.includes('estructura') || q.includes('tendencia')) return `📈 **Structure:** Alcista = HH+HL. Bajista = LH+LL. BOS confirma tendencia. CHoCH señala cambio.`;
-  if (q.includes('premium') || q.includes('discount')) return `⚖️ **Premium/Discount:** Arriba del 50% = PREMIUM (vende). Abajo = DISCOUNT (compra).`;
-  if (q.includes('ayuda')) return `💜 Pregúntame sobre: análisis, señales, modelos SMC, Order Blocks, FVG, liquidez, estructura...`;
-  return `¿Puedes ser más específico? Pregúntame sobre análisis, señales, modelos SMC, conceptos...`;
+  if (q.includes('modelo') || q.includes('smc')) return `🧠 **Mis 6 Modelos SMC:**\n1️⃣ MTF Confluence (95pts) ⭐\n2️⃣ CHoCH Pullback (85-90pts)\n3️⃣ Liquidity Sweep (82pts)\n4️⃣ BOS Continuation (80pts)\n5️⃣ Zone Touch (78pts)\n6️⃣ FVG Entry (77pts)\n\n¿Quieres que te explique alguno?`;
+  if (q.includes('order block') || q.includes('ob')) return `📦 **Order Blocks:** Última vela opuesta antes de impulso fuerte.\n\n• Bullish OB = última vela ROJA antes de subida\n• Bearish OB = última vela VERDE antes de bajada\n\n💡 Los OB frescos (primera vez tocados) son los más fuertes.`;
+  if (q.includes('fvg') || q.includes('gap')) return `⚡ **FVG (Fair Value Gap):** Desequilibrio donde el mercado se movió muy rápido.\n\nEl precio tiende a llenar estos gaps antes de continuar. Es una zona de alta probabilidad para entradas.`;
+  if (q.includes('liquidez') || q.includes('liquidity')) return `💧 **Liquidez:** Son los stops de otros traders. El Smart Money los caza para llenar sus órdenes.\n\n• Equal Highs = stops de vendedores\n• Equal Lows = stops de compradores`;
+  if (q.includes('estructura') || q.includes('tendencia')) return `📈 **Market Structure:**\n\n• Alcista = HH + HL (Higher Highs + Higher Lows)\n• Bajista = LH + LL (Lower Highs + Lower Lows)\n\n🔄 BOS confirma tendencia\n⚠️ CHoCH señala posible cambio`;
+  if (q.includes('premium') || q.includes('discount')) return `⚖️ **Premium/Discount:**\n\n• Arriba del 50% = PREMIUM (zona de venta)\n• Abajo del 50% = DISCOUNT (zona de compra)\n\n✅ Solo compra en DISCOUNT\n✅ Solo vende en PREMIUM`;
+  if (q.includes('ayuda') || q.includes('help')) return `💜 **¿En qué te ayudo?**\n\n• "análisis" - Estado del mercado\n• "señal" - Operación activa\n• "modelos" - Los 6 modelos SMC\n• "order blocks" - Qué son los OB\n• "fvg" - Fair Value Gaps\n• "liquidez" - Cómo funciona`;
+  return `Pregúntame sobre: análisis, señales, modelos SMC, order blocks, FVG, liquidez, estructura, premium/discount... 💜`;
 }
 
 // =============================================
@@ -543,31 +549,100 @@ const DERIV_APP_ID = process.env.DERIV_APP_ID || '1089';
 let derivWs = null, derivConnected = false;
 
 function connectDeriv() {
+  console.log('🔄 Conectando a Deriv...');
   derivWs = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${DERIV_APP_ID}`);
+  
   derivWs.on('open', () => {
-    derivConnected = true; console.log('✅ Deriv connected');
+    derivConnected = true;
+    console.log('✅ Deriv connected');
+    
     for (const symbol of Object.keys(ASSETS)) {
+      // Suscribir a ticks
       derivWs.send(JSON.stringify({ ticks: symbol, subscribe: 1 }));
-      derivWs.send(JSON.stringify({ ticks_history: symbol, count: 200, end: 'latest', style: 'candles', granularity: 300 }));
+      
+      // Obtener historial de velas M5
+      derivWs.send(JSON.stringify({ 
+        ticks_history: symbol, 
+        count: 200, 
+        end: 'latest', 
+        style: 'candles', 
+        granularity: 300,
+        subscribe: 1 
+      }));
+      
+      console.log(`📊 Suscrito a ${symbol}`);
     }
   });
+  
   derivWs.on('message', (data) => {
     try {
       const msg = JSON.parse(data);
-      if (msg.tick?.symbol && assetData[msg.tick.symbol]) assetData[msg.tick.symbol].price = msg.tick.quote;
-      if (msg.candles && msg.echo_req?.ticks_history && assetData[msg.echo_req.ticks_history]) {
-        assetData[msg.echo_req.ticks_history].candles = msg.candles.map(c => ({ time: c.epoch*1000, open: c.open, high: c.high, low: c.low, close: c.close }));
+      
+      // Error de Deriv
+      if (msg.error) {
+        console.log(`⚠️ Deriv error: ${msg.error.message}`);
+        return;
       }
+      
+      // Tick update (precio actual)
+      if (msg.tick?.symbol && assetData[msg.tick.symbol]) {
+        assetData[msg.tick.symbol].price = msg.tick.quote;
+      }
+      
+      // Historial de velas inicial
+      if (msg.candles && msg.echo_req?.ticks_history) {
+        const symbol = msg.echo_req.ticks_history;
+        if (assetData[symbol]) {
+          assetData[symbol].candles = msg.candles.map(c => ({ 
+            time: c.epoch * 1000, 
+            open: parseFloat(c.open), 
+            high: parseFloat(c.high), 
+            low: parseFloat(c.low), 
+            close: parseFloat(c.close) 
+          }));
+          console.log(`📈 ${symbol}: ${msg.candles.length} velas cargadas`);
+        }
+      }
+      
+      // Vela en tiempo real (OHLC update)
       if (msg.ohlc?.symbol && assetData[msg.ohlc.symbol]) {
-        const candle = { time: msg.ohlc.epoch*1000, open: +msg.ohlc.open, high: +msg.ohlc.high, low: +msg.ohlc.low, close: +msg.ohlc.close };
-        const candles = assetData[msg.ohlc.symbol].candles;
-        if (candles.length && candles[candles.length-1].time === candle.time) candles[candles.length-1] = candle;
-        else { candles.push(candle); if (candles.length > 200) candles.shift(); analyzeAsset(msg.ohlc.symbol); }
+        const symbol = msg.ohlc.symbol;
+        const candle = { 
+          time: msg.ohlc.epoch * 1000, 
+          open: parseFloat(msg.ohlc.open), 
+          high: parseFloat(msg.ohlc.high), 
+          low: parseFloat(msg.ohlc.low), 
+          close: parseFloat(msg.ohlc.close) 
+        };
+        
+        const candles = assetData[symbol].candles;
+        if (!candles) {
+          assetData[symbol].candles = [candle];
+        } else if (candles.length && candles[candles.length - 1].time === candle.time) {
+          candles[candles.length - 1] = candle;
+        } else {
+          candles.push(candle);
+          if (candles.length > 200) candles.shift();
+          // Nueva vela cerrada - analizar
+          analyzeAsset(symbol);
+        }
+        
+        // Actualizar precio también
+        assetData[symbol].price = candle.close;
       }
-    } catch (e) {}
+      
+    } catch (e) {
+      // Ignorar errores de parse
+    }
   });
-  derivWs.on('close', () => { derivConnected = false; console.log('⚠️ Deriv disconnected'); setTimeout(connectDeriv, 5000); });
-  derivWs.on('error', (e) => console.error('Deriv error:', e.message));
+  
+  derivWs.on('close', () => { 
+    derivConnected = false; 
+    console.log('⚠️ Deriv disconnected, reconectando en 5s...'); 
+    setTimeout(connectDeriv, 5000); 
+  });
+  
+  derivWs.on('error', (e) => console.error('❌ Deriv error:', e.message));
 }
 
 // =============================================
@@ -582,6 +657,54 @@ app.get('/api/market/:symbol', (req, res) => {
   res.json({ symbol: req.params.symbol, name: ASSETS[req.params.symbol]?.name, price: data.price, analysis: data.analysis, signal: data.signal, lockedSignal: data.lockedSignal });
 });
 
+// Endpoint para obtener velas y análisis (usado por el frontend)
+app.get('/api/analyze/:symbol', (req, res) => {
+  const symbol = req.params.symbol;
+  const data = assetData[symbol];
+  
+  if (!data) {
+    return res.status(404).json({ error: 'Asset not found', candles: [], candlesH1: [] });
+  }
+  
+  // Asegurar que las velas tienen el formato correcto
+  const candles = (data.candles || []).map(c => ({
+    time: c.time,
+    open: parseFloat(c.open) || 0,
+    high: parseFloat(c.high) || 0,
+    low: parseFloat(c.low) || 0,
+    close: parseFloat(c.close) || 0
+  }));
+  
+  const candlesH1 = (data.candlesH1 || []).map(c => ({
+    time: c.time,
+    open: parseFloat(c.open) || 0,
+    high: parseFloat(c.high) || 0,
+    low: parseFloat(c.low) || 0,
+    close: parseFloat(c.close) || 0
+  }));
+  
+  console.log(`📊 /api/analyze/${symbol}: ${candles.length} velas M5, ${candlesH1.length} velas H1`);
+  
+  res.json({
+    symbol,
+    name: ASSETS[symbol]?.name || symbol,
+    price: data.price || 0,
+    candles,
+    candlesH1,
+    analysis: data.analysis ? {
+      structureM5: data.analysis.structureM5,
+      structureH1: data.analysis.structureH1,
+      mtfConfluence: data.analysis.mtfConfluence,
+      premiumDiscount: data.analysis.premiumDiscount,
+      demandZones: data.analysis.demandZones || [],
+      supplyZones: data.analysis.supplyZones || [],
+      fvgZones: data.analysis.fvgZones || []
+    } : null,
+    signal: data.signal,
+    lockedSignal: data.lockedSignal
+  });
+});
+
 app.get('/api/signals/active', (req, res) => {
   const active = Object.entries(assetData).filter(([_,d]) => d.lockedSignal).map(([s,d]) => ({ symbol: s, ...d.lockedSignal }));
   res.json({ signals: active, count: active.length });
@@ -592,19 +715,37 @@ app.get('/api/stats', (req, res) => res.json(getStats()));
 
 // Dashboard endpoint (para el frontend)
 app.get('/api/dashboard', (req, res) => {
-  const assets = Object.entries(assetData).map(([symbol, data]) => ({
-    symbol,
-    name: ASSETS[symbol]?.name || symbol,
-    price: data.price || 0,
-    change: 0,
-    candles: data.candles.slice(-100),
-    analysis: data.analysis,
-    signal: data.signal,
-    lockedSignal: data.lockedSignal
-  }));
+  const assets = Object.entries(assetData).map(([symbol, data]) => {
+    const candleCount = data.candles?.length || 0;
+    return {
+      symbol,
+      name: ASSETS[symbol]?.name || symbol,
+      price: data.price || 0,
+      change: 0,
+      candles: data.candles || [],
+      candlesH1: data.candlesH1 || [],
+      analysis: data.analysis ? {
+        structureM5: data.analysis.structureM5,
+        structureH1: data.analysis.structureH1,
+        mtfConfluence: data.analysis.mtfConfluence,
+        premiumDiscount: data.analysis.premiumDiscount,
+        demandZones: data.analysis.demandZones?.length || 0,
+        supplyZones: data.analysis.supplyZones?.length || 0
+      } : null,
+      signal: data.signal,
+      lockedSignal: data.lockedSignal,
+      candleCount
+    };
+  });
   
   const activeSignals = Object.values(assetData).filter(d => d.lockedSignal).map(d => d.lockedSignal);
   const st = getStats();
+  
+  // Log para debug
+  const totalCandles = assets.reduce((sum, a) => sum + (a.candleCount || 0), 0);
+  if (totalCandles === 0) {
+    console.log('⚠️ Dashboard: No hay velas cargadas aún');
+  }
   
   res.json({
     assets,
@@ -616,7 +757,8 @@ app.get('/api/dashboard', (req, res) => {
       total: st.total || 0,
       tp3Hits: signalHistory.filter(s => s.status === 'WIN' && !s.tp1Hit).length
     },
-    connected: derivConnected
+    connected: derivConnected,
+    totalCandles
   });
 });
 
@@ -637,7 +779,8 @@ app.post('/api/ai/chat', async (req, res) => {
 });
 
 app.get('/api/subscription/:userId', async (req, res) => {
-  const sub = await getSubscription(req.params.userId);
+  const userId = req.params.userId;
+  console.log('📋 Buscando suscripción para:', userId);
   
   // Mapeo de planes a nombres y activos
   const PLAN_CONFIG = {
@@ -646,6 +789,34 @@ app.get('/api/subscription/:userId', async (req, res) => {
     premium: { name: 'Plan Premium', assets: ['stpRNG', '1HZ75V', 'frxXAUUSD', 'frxGBPUSD', 'cryBTCUSD', 'BOOM1000', 'CRASH1000'] },
     elite: { name: 'Plan Elite', assets: ['stpRNG', '1HZ75V', 'frxXAUUSD', 'frxGBPUSD', 'cryBTCUSD', 'BOOM1000', 'BOOM500', 'CRASH1000', 'CRASH500'] }
   };
+  
+  let sub = null;
+  
+  if (supabase) {
+    try {
+      // Intentar buscar por email primero
+      const isEmail = userId.includes('@');
+      
+      if (isEmail) {
+        const { data } = await supabase.from('suscripciones').select('*').eq('email', userId).single();
+        sub = data;
+      } else {
+        // Buscar por id o por email que contenga el userId
+        const { data: byId } = await supabase.from('suscripciones').select('*').eq('id', userId).single();
+        if (byId) {
+          sub = byId;
+        } else {
+          // Último intento: buscar si el userId es parte del email
+          const { data: all } = await supabase.from('suscripciones').select('*');
+          sub = all?.find(s => s.email?.includes(userId) || s.id?.toString() === userId);
+        }
+      }
+      
+      console.log('📋 Suscripción encontrada:', sub ? `${sub.email} - ${sub.plan}` : 'No encontrada');
+    } catch (e) {
+      console.log('⚠️ Error buscando suscripción:', e.message);
+    }
+  }
   
   if (sub) {
     const planConfig = PLAN_CONFIG[sub.plan] || PLAN_CONFIG.free;

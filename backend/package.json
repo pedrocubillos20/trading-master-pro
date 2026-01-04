@@ -1,6 +1,6 @@
 {
   "name": "trading-master-pro-backend",
-  "version": "13.3.0",
+  "version": "14.2.0",
   "type": "module",
   "main": "index.js",
   "scripts": {
