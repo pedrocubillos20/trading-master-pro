@@ -590,9 +590,89 @@ app.get('/api/signals/active', (req, res) => {
 app.get('/api/signals/history', (req, res) => res.json({ signals: signalHistory.slice(-(req.query.limit||50)).reverse() }));
 app.get('/api/stats', (req, res) => res.json(getStats()));
 
+// Dashboard endpoint (para el frontend)
+app.get('/api/dashboard', (req, res) => {
+  const assets = Object.entries(assetData).map(([symbol, data]) => ({
+    symbol,
+    name: ASSETS[symbol]?.name || symbol,
+    price: data.price || 0,
+    change: 0,
+    candles: data.candles.slice(-100),
+    analysis: data.analysis,
+    signal: data.signal,
+    lockedSignal: data.lockedSignal
+  }));
+  
+  const activeSignals = Object.values(assetData).filter(d => d.lockedSignal).map(d => d.lockedSignal);
+  const st = getStats();
+  
+  res.json({
+    assets,
+    signals: activeSignals,
+    stats: {
+      winRate: st.winRate || 0,
+      wins: st.wins || 0,
+      losses: st.losses || 0,
+      total: st.total || 0,
+      tp3Hits: signalHistory.filter(s => s.status === 'WIN' && !s.tp1Hit).length
+    },
+    connected: derivConnected
+  });
+});
+
+// Alias para compatibilidad con frontend anterior
+app.post('/api/ai/chat', async (req, res) => {
+  try {
+    const { question, symbol } = req.body;
+    if (!question) return res.status(400).json({ error: 'Question required', answer: 'Por favor, escribe tu pregunta.' });
+    const ctx = { stats: getStats() };
+    if (symbol && assetData[symbol]) {
+      const d = assetData[symbol];
+      ctx.marketData = { symbol, price: d.price, structureM5: d.analysis?.structureM5, structureH1: d.analysis?.structureH1, mtfConfluence: d.analysis?.mtfConfluence, premiumDiscount: d.analysis?.premiumDiscount };
+      ctx.signal = d.signal || d.lockedSignal;
+    }
+    const result = await elisaChat(question, ctx);
+    res.json({ answer: result.response, success: result.success });
+  } catch (e) { res.status(500).json({ error: e.message, answer: 'Error de conexión. Intenta de nuevo.' }); }
+});
+
 app.get('/api/subscription/:userId', async (req, res) => {
   const sub = await getSubscription(req.params.userId);
-  res.json({ subscription: sub || { status: 'trial', plan: 'free', trial_days_left: 5 } });
+  
+  // Mapeo de planes a nombres y activos
+  const PLAN_CONFIG = {
+    free: { name: 'Free Trial', assets: ['stpRNG', '1HZ75V', 'frxXAUUSD', 'frxGBPUSD', 'cryBTCUSD', 'BOOM1000', 'BOOM500', 'CRASH1000', 'CRASH500'] },
+    basico: { name: 'Plan Básico', assets: ['stpRNG', '1HZ75V', 'frxXAUUSD', 'cryBTCUSD'] },
+    premium: { name: 'Plan Premium', assets: ['stpRNG', '1HZ75V', 'frxXAUUSD', 'frxGBPUSD', 'cryBTCUSD', 'BOOM1000', 'CRASH1000'] },
+    elite: { name: 'Plan Elite', assets: ['stpRNG', '1HZ75V', 'frxXAUUSD', 'frxGBPUSD', 'cryBTCUSD', 'BOOM1000', 'BOOM500', 'CRASH1000', 'CRASH500'] }
+  };
+  
+  if (sub) {
+    const planConfig = PLAN_CONFIG[sub.plan] || PLAN_CONFIG.free;
+    res.json({
+      subscription: {
+        id: sub.id,
+        email: sub.email,
+        status: sub.estado || 'trial',
+        plan: sub.plan || 'free',
+        plan_name: planConfig.name,
+        period: sub.periodo || 'mensual',
+        days_left: sub.trial_days_left || 0,
+        assets: planConfig.assets,
+        created_at: sub.created_at
+      }
+    });
+  } else {
+    res.json({
+      subscription: {
+        status: 'trial',
+        plan: 'free',
+        plan_name: 'Free Trial',
+        days_left: 5,
+        assets: PLAN_CONFIG.free.assets
+      }
+    });
+  }
 });
 
 // ELISA Endpoints
