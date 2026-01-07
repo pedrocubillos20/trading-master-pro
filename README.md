@@ -1,141 +1,207 @@
-# 🚀 Trading Master Pro v9.0
+# 🤖 Trading Master Pro v14.0
 
-## SMC Institucional - Plataforma Completa
+**Plataforma de Señales de Trading con Smart Money Concepts (SMC) + ELISA IA**
 
-### 📊 Activos Soportados
-- **Step Index** - Sintético
-- **Volatility 75** - Sintético  
-- **Volatility 100** - Sintético
-- **Oro (XAU/USD)** - Commodity
-- **GBP/USD** - Forex
-- **Bitcoin (BTC/USD)** - Crypto
+![Version](https://img.shields.io/badge/version-14.0-blue)
+![React](https://img.shields.io/badge/React-18.2-61dafb)
+![Node](https://img.shields.io/badge/Node-18+-green)
 
 ---
 
-## ✨ Funcionalidades
+## 📋 Descripción
 
-### 🎯 Señales SMC
-- Entry, Stop Loss, Take Profit claros
-- Score de confianza (0-100)
-- Modelos: REVERSAL, CONTINUATION
-- Análisis: EQH/EQL, Sweep, Displacement, Order Block
+Trading Master Pro es una plataforma de análisis técnico basada en **Smart Money Concepts (SMC)** que proporciona señales de trading en tiempo real para diversos activos sintéticos y forex.
 
-### 🧠 Coach de Trading
-- Checklist pre-operación
-- Evaluación antes de operar
-- Requisitos obligatorios marcados
-- Recomendación automática
+### ✨ Características Principales
 
-### 📋 Seguimiento de Operaciones
-- Registro de trades activos
-- PnL en tiempo real
-- Historial de operaciones
-- Cierre con TP/SL
-
-### 💬 Chat en Vivo
-- Comunicación entre traders
-- Notas y observaciones
-
-### 📈 Plan de Trading
-- Riesgo máximo por operación
-- Pérdida diaria máxima
-- Ratio R:R objetivo
-- Horarios de trading
+- 🎯 **6 Modelos SMC** - MTF Confluence, CHoCH Pullback, BOS Continuation, Zone Touch, Boom Spike, Crash Spike
+- 🤖 **ELISA IA** - Asistente inteligente con OpenAI para análisis y mentoría
+- 📊 **9 Activos** - Step Index, V75, XAU, GBP, BTC, Boom 500/1000, Crash 500/1000
+- 📱 **Telegram** - Notificaciones en tiempo real
+- 📈 **Sistema de Aprendizaje** - Mejora automática basada en resultados
+- 💳 **Suscripciones** - Planes Free, Básico, Premium y Elite
 
 ---
 
-## 📁 Estructura del Proyecto
+## 🏗️ Arquitectura
 
 ```
-trading-master-pro/
-├── backend/
-│   ├── index.js           ← Servidor principal
-│   ├── package.json
-│   ├── railway.json       ← Config Railway
-│   └── .env.example
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│    FRONTEND     │────▶│     BACKEND     │────▶│   SERVICIOS     │
+│    (Vercel)     │◀────│    (Railway)    │◀────│                 │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+        │                       │                       │
+   React + Vite            Node.js               Deriv WebSocket
+   Tailwind CSS            Express               OpenAI API
+   Supabase Auth           WebSocket             Telegram Bot
+                           SMC Engine            Supabase DB
+```
+
+---
+
+## 📦 Estructura del Proyecto
+
+```
+trading-platform/
+├── backend/                 # Servidor Node.js
+│   ├── index.js            # Servidor principal (3500+ líneas)
+│   ├── package.json        # Dependencias
+│   ├── data/
+│   │   └── smc-models.json # Modelos SMC
+│   └── README.md           # Documentación backend
 │
-├── frontend/
+├── frontend/               # Aplicación React
 │   ├── src/
-│   │   ├── App.jsx
-│   │   ├── Dashboard.jsx  ← Dashboard principal
-│   │   ├── main.jsx
-│   │   └── index.css
-│   ├── index.html
-│   ├── package.json
-│   ├── vite.config.js
-│   ├── tailwind.config.js
-│   └── .env.example
+│   │   ├── App.jsx        # Componente principal
+│   │   ├── Dashboard.jsx  # Dashboard
+│   │   ├── Login.jsx      # Login
+│   │   ├── AdminPanel.jsx # Panel admin
+│   │   └── Pricing.jsx    # Planes
+│   ├── package.json       # Dependencias
+│   └── README.md          # Documentación frontend
 │
-└── README.md
+└── README.md              # Este archivo
 ```
 
 ---
 
-## 🔧 Instalación
+## 🚀 Instalación Rápida
+
+### 1. Clonar Repositorio
+```bash
+git clone https://github.com/tu-usuario/trading-master-pro.git
+cd trading-master-pro
+```
+
+### 2. Configurar Backend
+```bash
+cd backend
+npm install
+cp .env.example .env
+# Editar .env con tus credenciales
+npm start
+```
+
+### 3. Configurar Frontend
+```bash
+cd frontend
+npm install
+cp .env.example .env
+# Editar .env con tus credenciales
+npm run dev
+```
+
+---
+
+## 🔧 Variables de Entorno
 
 ### Backend (Railway)
-
-1. Sube la carpeta `backend/` a GitHub
-2. En Railway:
-   - New Project → Deploy from GitHub
-   - Selecciona el repo
-   - **Root Directory:** `backend`
-   - Variables de entorno:
-     ```
-     PORT=3001
-     DERIV_APP_ID=117347
-     ```
+| Variable | Descripción |
+|----------|-------------|
+| `PORT` | Puerto del servidor |
+| `DERIV_APP_ID` | App ID de Deriv |
+| `OPENAI_API_KEY` | API Key de OpenAI |
+| `SUPABASE_URL` | URL de Supabase |
+| `SUPABASE_SERVICE_ROLE_KEY` | Service Role Key |
+| `TELEGRAM_BOT_TOKEN` | Token del bot |
+| `TELEGRAM_CHAT_ID` | ID del chat |
 
 ### Frontend (Vercel)
-
-1. Sube la carpeta `frontend/` a GitHub
-2. En Vercel:
-   - New Project → Import from GitHub
-   - **Root Directory:** `frontend`
-   - Variables de entorno:
-     ```
-     VITE_API_URL=https://tu-backend.up.railway.app
-     ```
+| Variable | Descripción |
+|----------|-------------|
+| `VITE_API_URL` | URL del backend |
+| `VITE_SUPABASE_URL` | URL de Supabase |
+| `VITE_SUPABASE_ANON_KEY` | Anon Key |
 
 ---
 
-## 🔌 API Endpoints
+## 📊 Modelos SMC
 
-| Endpoint | Método | Descripción |
-|----------|--------|-------------|
-| `/api/dashboard` | GET | Dashboard completo |
-| `/api/analyze/:symbol` | GET | Análisis de activo |
-| `/api/signals` | GET | Señales recientes |
-| `/api/operations` | GET/POST | Operaciones |
-| `/api/operations/:id` | PUT | Actualizar operación |
-| `/api/coach/checklist` | GET | Checklist trading |
-| `/api/coach/evaluate` | POST | Evaluar checklist |
-| `/api/trading-plan` | GET/PUT | Plan de trading |
-| `/api/chat` | GET/POST | Mensajes chat |
+| Modelo | Score | Dirección | Requisitos |
+|--------|-------|-----------|------------|
+| MTF_CONFLUENCE | 95-100 | Ambas | M5=H1 + Pullback |
+| CHOCH_PULLBACK | 85-90 | Ambas | CHoCH + Pullback |
+| BOS_CONTINUATION | 80 | Ambas | BOS + MTF |
+| ZONE_TOUCH | 78 | Ambas | OB + Rechazo + MTF |
+| BOOM_SPIKE | 70-95 | LONG | Estructura + Demanda |
+| CRASH_SPIKE | 70-95 | SHORT | Estructura + Supply |
 
 ---
 
-## 📱 Uso
+## 💳 Planes de Suscripción
 
-1. **Selecciona un activo** de la lista izquierda
-2. **Revisa la señal** en el panel derecho
-3. **Usa el Coach** (botón 🧠) antes de operar
-4. **Abre la operación** con el botón
-5. **Cierra** cuando alcance TP o SL
+| Plan | Precio COP | Precio USD | Activos |
+|------|------------|------------|---------|
+| Free Trial | $0 | $0 | Todos (5 días) |
+| Básico | $29,900 | $9 | Step, V75, XAU, BTC |
+| Premium | $59,900 | $19 | + GBP |
+| Elite | $99,900 | $29 | + Boom/Crash |
 
 ---
 
-## ⚠️ Importante
+## 🌐 Despliegue
 
-- Este sistema es para **fines educativos**
-- No es consejo financiero
-- Opera con responsabilidad
-- Usa gestión de riesgo adecuada
+### Backend → Railway
+```bash
+cd backend
+railway login
+railway link
+railway up
+```
+
+### Frontend → Vercel
+```bash
+cd frontend
+vercel --prod
+```
+
+---
+
+## 📱 Funcionalidades
+
+### Dashboard
+- 📊 Gráfico de velas en tiempo real
+- 🎯 Panel de señales activas con Entry/SL/TP
+- 📈 Indicadores M5/H1 de estructura
+- 💰 Estadísticas de Win/Loss
+- ✅ Botones Win/Loss para registrar resultados
+
+### ELISA IA Chat
+- 💬 Asistente IA 24/7 powered by OpenAI
+- 📚 Mentoría de trading (psicotrading, plan, simulador)
+- 🧠 Explicación de patrones SMC
+- ✅ Control de operaciones (máx 10/día)
+
+### Admin Panel (/admin)
+- 👥 Gestión de usuarios y suscripciones
+- 📊 Estadísticas del sistema
+- 🔧 Configuración de parámetros
+- 📈 Métricas de rendimiento
+
+---
+
+## 🔌 APIs Externas
+
+| Servicio | Uso |
+|----------|-----|
+| **Deriv** | WebSocket para datos de mercado en tiempo real |
+| **OpenAI** | GPT-4 para ELISA IA |
+| **Supabase** | Autenticación y base de datos |
+| **Telegram** | Notificaciones de señales |
 
 ---
 
 ## 📞 Soporte
 
-Creado con ❤️ para traders SMC
+- 💬 Telegram: @TradingMasterProSupport
+- 📧 Email: soporte@tradingmasterpro.com
 
-v9.0 - Diciembre 2025
+---
+
+## 📄 Licencia
+
+Propiedad de Trading Master Pro © 2024-2026. Todos los derechos reservados.
+
+---
+
+**Desarrollado con ❤️ por el equipo de Trading Master Pro**

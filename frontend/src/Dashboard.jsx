@@ -277,6 +277,8 @@ export default function Dashboard({ user, onLogout }) {
   
   const mountedRef = useRef(true);
   const initialAssetSetRef = useRef(false);
+  const marketsScrollRef = useRef(null);
+  const scrollPositionRef = useRef(0);
   
   useEffect(() => { return () => { mountedRef.current = false; }; }, []);
 
@@ -394,6 +396,12 @@ export default function Dashboard({ user, onLogout }) {
     return data.assets.filter(asset => !allowedAssets.includes(asset.symbol));
   }, [data?.assets, allowedAssets]);
 
+  // Restaurar posición del scroll después de cada render
+  useEffect(() => {
+    if (marketsScrollRef.current && scrollPositionRef.current > 0) {
+      marketsScrollRef.current.scrollTop = scrollPositionRef.current;
+    }
+  });
 
   // Sidebar
   const Sidebar = () => (
@@ -462,10 +470,21 @@ export default function Dashboard({ user, onLogout }) {
 
         <div className="p-2 border-t border-white/5">
           <p className="text-[10px] uppercase text-white/30 mb-2 px-3">Mercados</p>
-          <div className="space-y-1 max-h-[250px] overflow-y-auto">
+          <div 
+            ref={marketsScrollRef}
+            className="space-y-1 max-h-[250px] overflow-y-auto" 
+            style={{ scrollBehavior: 'auto', overscrollBehavior: 'contain' }}
+            onScroll={(e) => {
+              e.stopPropagation();
+              scrollPositionRef.current = e.target.scrollTop;
+            }}>
             {filteredAssets.map(asset => (
               <button key={asset.symbol}
-                onClick={() => { setSelectedAsset(asset.symbol); if (isMobile) setSidebarOpen(false); }}
+                onClick={(e) => { 
+                  e.stopPropagation();
+                  setSelectedAsset(asset.symbol); 
+                  if (isMobile) setSidebarOpen(false); 
+                }}
                 className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
                   selectedAsset === asset.symbol ? 'bg-white/10 text-white' : 'text-white/50 hover:bg-white/5'
                 }`}>
