@@ -1,0 +1,1284 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Master Pro - Documentación del Proyecto</title>
+    <meta name="description" content="Documentación técnica y explicación del proyecto Trading Master Pro - Plataforma de señales SMC con IA">
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        :root {
+            --emerald: #10b981;
+            --emerald-dark: #059669;
+            --purple: #8b5cf6;
+            --pink: #ec4899;
+            --blue: #3b82f6;
+            --orange: #f59e0b;
+            --red: #ef4444;
+            --dark: #0a0a0f;
+            --dark-card: #12121a;
+            --dark-border: #1e1e2e;
+            --text: #e2e8f0;
+            --text-muted: #94a3b8;
+        }
+        
+        html {
+            scroll-behavior: smooth;
+        }
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--dark);
+            color: var(--text);
+            line-height: 1.7;
+        }
+        
+        code, .code {
+            font-family: 'JetBrains Mono', monospace;
+            background: rgba(139, 92, 246, 0.1);
+            padding: 2px 8px;
+            border-radius: 6px;
+            font-size: 0.9em;
+            color: var(--purple);
+        }
+        
+        pre {
+            background: #0d0d14;
+            border: 1px solid var(--dark-border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            overflow-x: auto;
+            margin: 1.5rem 0;
+        }
+        
+        pre code {
+            background: none;
+            padding: 0;
+            color: var(--text);
+        }
+        
+        /* Sidebar Navigation */
+        .sidebar {
+            position: fixed;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 280px;
+            background: var(--dark-card);
+            border-right: 1px solid var(--dark-border);
+            padding: 2rem;
+            overflow-y: auto;
+            z-index: 100;
+        }
+        
+        .sidebar-logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 2rem;
+            padding-bottom: 1.5rem;
+            border-bottom: 1px solid var(--dark-border);
+        }
+        
+        .sidebar-logo-icon {
+            width: 44px;
+            height: 44px;
+            background: linear-gradient(135deg, var(--emerald), var(--purple));
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.3rem;
+        }
+        
+        .sidebar-logo-text {
+            font-weight: 700;
+            font-size: 1.1rem;
+        }
+        
+        .sidebar-logo-version {
+            font-size: 0.75rem;
+            color: var(--emerald);
+            background: rgba(16, 185, 129, 0.1);
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+        
+        .nav-section {
+            margin-bottom: 1.5rem;
+        }
+        
+        .nav-section-title {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: var(--text-muted);
+            margin-bottom: 0.75rem;
+            font-weight: 600;
+        }
+        
+        .nav-link {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            color: var(--text-muted);
+            text-decoration: none;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            transition: all 0.2s;
+            margin-bottom: 2px;
+        }
+        
+        .nav-link:hover {
+            background: rgba(255,255,255,0.05);
+            color: var(--text);
+        }
+        
+        .nav-link.active {
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--emerald);
+        }
+        
+        .nav-link-icon {
+            font-size: 1.1rem;
+        }
+        
+        /* Main Content */
+        .main {
+            margin-left: 280px;
+            min-height: 100vh;
+        }
+        
+        .content {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 3rem 4rem;
+        }
+        
+        /* Hero Documentation */
+        .doc-hero {
+            padding: 4rem 0 3rem;
+            border-bottom: 1px solid var(--dark-border);
+            margin-bottom: 3rem;
+        }
+        
+        .doc-hero h1 {
+            font-size: 3rem;
+            font-weight: 800;
+            margin-bottom: 1rem;
+            background: linear-gradient(135deg, var(--emerald), var(--purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .doc-hero p {
+            font-size: 1.25rem;
+            color: var(--text-muted);
+            max-width: 700px;
+        }
+        
+        .doc-badges {
+            display: flex;
+            gap: 0.75rem;
+            margin-top: 1.5rem;
+            flex-wrap: wrap;
+        }
+        
+        .doc-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            background: var(--dark-card);
+            border: 1px solid var(--dark-border);
+            border-radius: 100px;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+        
+        .doc-badge.green { border-color: var(--emerald); color: var(--emerald); }
+        .doc-badge.purple { border-color: var(--purple); color: var(--purple); }
+        .doc-badge.blue { border-color: var(--blue); color: var(--blue); }
+        
+        /* Sections */
+        .section {
+            margin-bottom: 4rem;
+            scroll-margin-top: 2rem;
+        }
+        
+        .section h2 {
+            font-size: 1.75rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            padding-bottom: 0.75rem;
+            border-bottom: 2px solid var(--dark-border);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .section h3 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin: 2rem 0 1rem;
+            color: var(--emerald);
+        }
+        
+        .section h4 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin: 1.5rem 0 0.75rem;
+        }
+        
+        .section p {
+            margin-bottom: 1rem;
+            color: var(--text-muted);
+        }
+        
+        .section ul, .section ol {
+            margin-left: 1.5rem;
+            margin-bottom: 1.5rem;
+            color: var(--text-muted);
+        }
+        
+        .section li {
+            margin-bottom: 0.5rem;
+        }
+        
+        /* Cards Grid */
+        .cards-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1.5rem;
+            margin: 2rem 0;
+        }
+        
+        .card {
+            background: var(--dark-card);
+            border: 1px solid var(--dark-border);
+            border-radius: 16px;
+            padding: 1.5rem;
+            transition: all 0.3s;
+        }
+        
+        .card:hover {
+            border-color: var(--emerald);
+            transform: translateY(-2px);
+        }
+        
+        .card-icon {
+            width: 48px;
+            height: 48px;
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(139, 92, 246, 0.2));
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.4rem;
+            margin-bottom: 1rem;
+        }
+        
+        .card h4 {
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            color: var(--text);
+        }
+        
+        .card p {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            margin: 0;
+        }
+        
+        /* Architecture Diagram */
+        .architecture {
+            background: var(--dark-card);
+            border: 1px solid var(--dark-border);
+            border-radius: 16px;
+            padding: 2rem;
+            margin: 2rem 0;
+        }
+        
+        .arch-row {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+        }
+        
+        .arch-box {
+            background: var(--dark);
+            border: 2px solid var(--dark-border);
+            border-radius: 12px;
+            padding: 1rem 1.5rem;
+            text-align: center;
+            min-width: 150px;
+            transition: all 0.3s;
+        }
+        
+        .arch-box.frontend { border-color: var(--blue); }
+        .arch-box.backend { border-color: var(--emerald); }
+        .arch-box.service { border-color: var(--purple); }
+        .arch-box.ai { border-color: var(--pink); }
+        
+        .arch-box-icon {
+            font-size: 1.5rem;
+            margin-bottom: 0.5rem;
+        }
+        
+        .arch-box-title {
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+        
+        .arch-box-sub {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+        
+        .arch-arrow {
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 1.5rem;
+            margin: 0.5rem 0;
+        }
+        
+        /* Table */
+        .table-container {
+            overflow-x: auto;
+            margin: 1.5rem 0;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        th, td {
+            padding: 12px 16px;
+            text-align: left;
+            border-bottom: 1px solid var(--dark-border);
+        }
+        
+        th {
+            background: var(--dark-card);
+            font-weight: 600;
+            color: var(--emerald);
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        td {
+            font-size: 0.95rem;
+            color: var(--text-muted);
+        }
+        
+        tr:hover td {
+            background: rgba(255,255,255,0.02);
+        }
+        
+        /* Tags */
+        .tag {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+        
+        .tag-green { background: rgba(16, 185, 129, 0.2); color: var(--emerald); }
+        .tag-red { background: rgba(239, 68, 68, 0.2); color: var(--red); }
+        .tag-blue { background: rgba(59, 130, 246, 0.2); color: var(--blue); }
+        .tag-purple { background: rgba(139, 92, 246, 0.2); color: var(--purple); }
+        .tag-orange { background: rgba(245, 158, 11, 0.2); color: var(--orange); }
+        .tag-pink { background: rgba(236, 72, 153, 0.2); color: var(--pink); }
+        
+        /* Callout */
+        .callout {
+            padding: 1.25rem 1.5rem;
+            border-radius: 12px;
+            margin: 1.5rem 0;
+            border-left: 4px solid;
+        }
+        
+        .callout-info {
+            background: rgba(59, 130, 246, 0.1);
+            border-color: var(--blue);
+        }
+        
+        .callout-success {
+            background: rgba(16, 185, 129, 0.1);
+            border-color: var(--emerald);
+        }
+        
+        .callout-warning {
+            background: rgba(245, 158, 11, 0.1);
+            border-color: var(--orange);
+        }
+        
+        .callout-title {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .callout p {
+            margin: 0;
+            font-size: 0.95rem;
+        }
+        
+        /* Flow Chart */
+        .flow {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            margin: 1.5rem 0;
+        }
+        
+        .flow-step {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+        
+        .flow-number {
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(135deg, var(--emerald), var(--emerald-dark));
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 0.9rem;
+            color: #000;
+            flex-shrink: 0;
+        }
+        
+        .flow-content {
+            flex: 1;
+            padding: 1rem;
+            background: var(--dark-card);
+            border: 1px solid var(--dark-border);
+            border-radius: 10px;
+        }
+        
+        .flow-content strong {
+            color: var(--text);
+        }
+        
+        /* Stats */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 1rem;
+            margin: 2rem 0;
+        }
+        
+        .stat-card {
+            background: var(--dark-card);
+            border: 1px solid var(--dark-border);
+            border-radius: 12px;
+            padding: 1.25rem;
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 800;
+            color: var(--emerald);
+        }
+        
+        .stat-label {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+        
+        /* Timeline */
+        .timeline {
+            position: relative;
+            padding-left: 2rem;
+            margin: 2rem 0;
+        }
+        
+        .timeline::before {
+            content: '';
+            position: absolute;
+            left: 7px;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: var(--dark-border);
+        }
+        
+        .timeline-item {
+            position: relative;
+            padding-bottom: 2rem;
+        }
+        
+        .timeline-item::before {
+            content: '';
+            position: absolute;
+            left: -2rem;
+            top: 4px;
+            width: 16px;
+            height: 16px;
+            background: var(--emerald);
+            border-radius: 50%;
+            border: 3px solid var(--dark);
+        }
+        
+        .timeline-date {
+            font-size: 0.85rem;
+            color: var(--emerald);
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+        
+        .timeline-title {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+        
+        .timeline-desc {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+        }
+        
+        /* Links */
+        a {
+            color: var(--emerald);
+            text-decoration: none;
+        }
+        
+        a:hover {
+            text-decoration: underline;
+        }
+        
+        /* Responsive */
+        @media (max-width: 1024px) {
+            .sidebar {
+                display: none;
+            }
+            
+            .main {
+                margin-left: 0;
+            }
+            
+            .content {
+                padding: 2rem;
+            }
+            
+            .cards-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+        
+        @media (max-width: 768px) {
+            .doc-hero h1 {
+                font-size: 2rem;
+            }
+            
+            .arch-row {
+                flex-direction: column;
+                align-items: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar">
+        <div class="sidebar-logo">
+            <div class="sidebar-logo-icon">📈</div>
+            <div>
+                <div class="sidebar-logo-text">TradingPro</div>
+                <div class="sidebar-logo-version">v14.0</div>
+            </div>
+        </div>
+        
+        <nav>
+            <div class="nav-section">
+                <div class="nav-section-title">Introducción</div>
+                <a href="#inicio" class="nav-link active">
+                    <span class="nav-link-icon">🏠</span> Inicio
+                </a>
+                <a href="#proposito" class="nav-link">
+                    <span class="nav-link-icon">🎯</span> Propósito
+                </a>
+                <a href="#problema" class="nav-link">
+                    <span class="nav-link-icon">❓</span> Problema que Resuelve
+                </a>
+            </div>
+            
+            <div class="nav-section">
+                <div class="nav-section-title">Arquitectura</div>
+                <a href="#arquitectura" class="nav-link">
+                    <span class="nav-link-icon">🏗️</span> Arquitectura General
+                </a>
+                <a href="#stack" class="nav-link">
+                    <span class="nav-link-icon">⚙️</span> Stack Tecnológico
+                </a>
+                <a href="#flujo" class="nav-link">
+                    <span class="nav-link-icon">🔄</span> Flujo de Datos
+                </a>
+            </div>
+            
+            <div class="nav-section">
+                <div class="nav-section-title">Motor SMC</div>
+                <a href="#smc" class="nav-link">
+                    <span class="nav-link-icon">📊</span> Smart Money Concepts
+                </a>
+                <a href="#modelos" class="nav-link">
+                    <span class="nav-link-icon">🎯</span> 6 Modelos de Entrada
+                </a>
+                <a href="#boom-crash" class="nav-link">
+                    <span class="nav-link-icon">🚀</span> Boom & Crash
+                </a>
+            </div>
+            
+            <div class="nav-section">
+                <div class="nav-section-title">Inteligencia Artificial</div>
+                <a href="#elisa" class="nav-link">
+                    <span class="nav-link-icon">🤖</span> ELISA IA
+                </a>
+                <a href="#aprendizaje" class="nav-link">
+                    <span class="nav-link-icon">🧠</span> Sistema de Aprendizaje
+                </a>
+            </div>
+            
+            <div class="nav-section">
+                <div class="nav-section-title">Negocio</div>
+                <a href="#monetizacion" class="nav-link">
+                    <span class="nav-link-icon">💰</span> Monetización
+                </a>
+                <a href="#roadmap" class="nav-link">
+                    <span class="nav-link-icon">🗺️</span> Roadmap
+                </a>
+            </div>
+        </nav>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main">
+        <div class="content">
+            <!-- Hero -->
+            <header class="doc-hero" id="inicio">
+                <h1>Trading Master Pro</h1>
+                <p>
+                    Plataforma de señales de trading basada en Smart Money Concepts (SMC) 
+                    con asistente de inteligencia artificial. Análisis automático 24/7, 
+                    señales precisas y mentoría personalizada.
+                </p>
+                <div class="doc-badges">
+                    <span class="doc-badge green">✓ v14.0 Estable</span>
+                    <span class="doc-badge purple">🤖 ELISA IA</span>
+                    <span class="doc-badge blue">📊 6 Modelos SMC</span>
+                </div>
+            </header>
+
+            <!-- Propósito -->
+            <section class="section" id="proposito">
+                <h2>🎯 Propósito del Proyecto</h2>
+                <p>
+                    Trading Master Pro nace con la misión de <strong>democratizar el acceso a estrategias de trading institucional</strong>. 
+                    Las técnicas de Smart Money Concepts (SMC) tradicionalmente han sido utilizadas por traders profesionales 
+                    y fondos de inversión, pero ahora están disponibles para cualquier persona.
+                </p>
+                
+                <div class="cards-grid">
+                    <div class="card">
+                        <div class="card-icon">🎓</div>
+                        <h4>Educación Accesible</h4>
+                        <p>Aprende SMC con explicaciones claras de ELISA IA mientras operas.</p>
+                    </div>
+                    <div class="card">
+                        <div class="card-icon">⏰</div>
+                        <h4>Ahorro de Tiempo</h4>
+                        <p>El sistema analiza el mercado 24/7 para que no tengas que hacerlo tú.</p>
+                    </div>
+                    <div class="card">
+                        <div class="card-icon">🎯</div>
+                        <h4>Señales Precisas</h4>
+                        <p>Solo las mejores entradas con scores del 70% al 100%.</p>
+                    </div>
+                    <div class="card">
+                        <div class="card-icon">🧘</div>
+                        <h4>Control Emocional</h4>
+                        <p>ELISA te ayuda con psicotrading y disciplina.</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Problema que Resuelve -->
+            <section class="section" id="problema">
+                <h2>❓ Problema que Resuelve</h2>
+                
+                <h3>Los Desafíos del Trader Retail</h3>
+                <ul>
+                    <li><strong>Falta de tiempo:</strong> No todos pueden estar frente a las pantallas analizando gráficos 8+ horas al día.</li>
+                    <li><strong>Curva de aprendizaje:</strong> SMC es complejo y toma meses/años dominarlo.</li>
+                    <li><strong>Emociones:</strong> El miedo y la avaricia destruyen cuentas.</li>
+                    <li><strong>Información dispersa:</strong> Cada "gurú" enseña algo diferente.</li>
+                    <li><strong>Herramientas costosas:</strong> Las plataformas profesionales cuestan $100-500 USD/mes.</li>
+                </ul>
+                
+                <h3>Nuestra Solución</h3>
+                <div class="callout callout-success">
+                    <div class="callout-title">💡 Trading Master Pro automatiza el análisis técnico</div>
+                    <p>
+                        El sistema detecta patrones SMC automáticamente, calcula puntos de entrada óptimos, 
+                        establece Stop Loss y Take Profits, y te notifica instantáneamente cuando hay una oportunidad.
+                    </p>
+                </div>
+            </section>
+
+            <!-- Arquitectura -->
+            <section class="section" id="arquitectura">
+                <h2>🏗️ Arquitectura General</h2>
+                <p>
+                    Trading Master Pro utiliza una arquitectura moderna de microservicios con separación 
+                    clara entre frontend, backend y servicios externos.
+                </p>
+                
+                <div class="architecture">
+                    <div class="arch-row">
+                        <div class="arch-box frontend">
+                            <div class="arch-box-icon">🖥️</div>
+                            <div class="arch-box-title">Frontend</div>
+                            <div class="arch-box-sub">React + Vite</div>
+                        </div>
+                    </div>
+                    
+                    <div class="arch-arrow">↕️</div>
+                    
+                    <div class="arch-row">
+                        <div class="arch-box backend">
+                            <div class="arch-box-icon">⚡</div>
+                            <div class="arch-box-title">Backend</div>
+                            <div class="arch-box-sub">Node.js + Express</div>
+                        </div>
+                    </div>
+                    
+                    <div class="arch-arrow">↕️</div>
+                    
+                    <div class="arch-row">
+                        <div class="arch-box service">
+                            <div class="arch-box-icon">📈</div>
+                            <div class="arch-box-title">Deriv WS</div>
+                            <div class="arch-box-sub">Datos de Mercado</div>
+                        </div>
+                        <div class="arch-box service">
+                            <div class="arch-box-icon">🗄️</div>
+                            <div class="arch-box-title">Supabase</div>
+                            <div class="arch-box-sub">Auth + DB</div>
+                        </div>
+                        <div class="arch-box ai">
+                            <div class="arch-box-icon">🤖</div>
+                            <div class="arch-box-title">OpenAI</div>
+                            <div class="arch-box-sub">GPT-4 (ELISA)</div>
+                        </div>
+                        <div class="arch-box service">
+                            <div class="arch-box-icon">📱</div>
+                            <div class="arch-box-title">Telegram</div>
+                            <div class="arch-box-sub">Alertas</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Stack Tecnológico -->
+            <section class="section" id="stack">
+                <h2>⚙️ Stack Tecnológico</h2>
+                
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Capa</th>
+                                <th>Tecnología</th>
+                                <th>Propósito</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><span class="tag tag-blue">Frontend</span></td>
+                                <td>React 18 + Vite 5</td>
+                                <td>Interfaz de usuario SPA</td>
+                            </tr>
+                            <tr>
+                                <td><span class="tag tag-blue">Frontend</span></td>
+                                <td>Tailwind CSS</td>
+                                <td>Estilos y diseño responsive</td>
+                            </tr>
+                            <tr>
+                                <td><span class="tag tag-green">Backend</span></td>
+                                <td>Node.js 18+ / Express</td>
+                                <td>API REST y WebSocket</td>
+                            </tr>
+                            <tr>
+                                <td><span class="tag tag-green">Backend</span></td>
+                                <td>Motor SMC (Custom)</td>
+                                <td>Análisis técnico y señales</td>
+                            </tr>
+                            <tr>
+                                <td><span class="tag tag-purple">Database</span></td>
+                                <td>Supabase (PostgreSQL)</td>
+                                <td>Usuarios, suscripciones, datos</td>
+                            </tr>
+                            <tr>
+                                <td><span class="tag tag-pink">AI</span></td>
+                                <td>OpenAI GPT-4</td>
+                                <td>ELISA - Asistente inteligente</td>
+                            </tr>
+                            <tr>
+                                <td><span class="tag tag-orange">External</span></td>
+                                <td>Deriv WebSocket API</td>
+                                <td>Datos de mercado en tiempo real</td>
+                            </tr>
+                            <tr>
+                                <td><span class="tag tag-orange">External</span></td>
+                                <td>Telegram Bot API</td>
+                                <td>Notificaciones de señales</td>
+                            </tr>
+                            <tr>
+                                <td><span class="tag tag-blue">Deploy</span></td>
+                                <td>Vercel</td>
+                                <td>Hosting frontend</td>
+                            </tr>
+                            <tr>
+                                <td><span class="tag tag-green">Deploy</span></td>
+                                <td>Railway</td>
+                                <td>Hosting backend</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Flujo de Datos -->
+            <section class="section" id="flujo">
+                <h2>🔄 Flujo de Datos</h2>
+                <p>Así funciona el sistema desde que llega un dato de mercado hasta que se genera una señal:</p>
+                
+                <div class="flow">
+                    <div class="flow-step">
+                        <div class="flow-number">1</div>
+                        <div class="flow-content">
+                            <strong>Conexión WebSocket</strong><br>
+                            <span style="color: var(--text-muted);">El backend se conecta a Deriv y suscribe a 9 activos (M5 + H1).</span>
+                        </div>
+                    </div>
+                    <div class="flow-step">
+                        <div class="flow-number">2</div>
+                        <div class="flow-content">
+                            <strong>Recepción de Velas</strong><br>
+                            <span style="color: var(--text-muted);">Cada 5 minutos llega una nueva vela. Se almacena en memoria (últimas 100-200).</span>
+                        </div>
+                    </div>
+                    <div class="flow-step">
+                        <div class="flow-number">3</div>
+                        <div class="flow-content">
+                            <strong>Análisis SMC</strong><br>
+                            <span style="color: var(--text-muted);">El Motor SMC analiza: Swings, Estructura, Zonas OB, CHoCH, BOS, FVG, Liquidez.</span>
+                        </div>
+                    </div>
+                    <div class="flow-step">
+                        <div class="flow-number">4</div>
+                        <div class="flow-content">
+                            <strong>Evaluación de Modelos</strong><br>
+                            <span style="color: var(--text-muted);">Se prueban los 6 modelos de entrada. Solo pasan los que cumplen todos los requisitos.</span>
+                        </div>
+                    </div>
+                    <div class="flow-step">
+                        <div class="flow-number">5</div>
+                        <div class="flow-content">
+                            <strong>Generación de Señal</strong><br>
+                            <span style="color: var(--text-muted);">Si score ≥ 75%, se crea la señal con Entry, SL, TP1, TP2, TP3.</span>
+                        </div>
+                    </div>
+                    <div class="flow-step">
+                        <div class="flow-number">6</div>
+                        <div class="flow-content">
+                            <strong>Distribución</strong><br>
+                            <span style="color: var(--text-muted);">La señal se envía al Frontend (API) y a Telegram (Bot).</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Smart Money Concepts -->
+            <section class="section" id="smc">
+                <h2>📊 Smart Money Concepts</h2>
+                <p>
+                    SMC es una metodología de análisis técnico que se enfoca en identificar cómo operan 
+                    los grandes participantes del mercado (bancos, fondos, instituciones).
+                </p>
+                
+                <h3>Conceptos Clave Implementados</h3>
+                
+                <div class="cards-grid">
+                    <div class="card">
+                        <div class="card-icon">📈</div>
+                        <h4>Estructura de Mercado</h4>
+                        <p>HH/HL (alcista) y LH/LL (bajista). Identificación automática de tendencias.</p>
+                    </div>
+                    <div class="card">
+                        <div class="card-icon">🔄</div>
+                        <h4>CHoCH (Change of Character)</h4>
+                        <p>Cambio de tendencia. Ruptura del último HL (bajista) o LH (alcista).</p>
+                    </div>
+                    <div class="card">
+                        <div class="card-icon">💥</div>
+                        <h4>BOS (Break of Structure)</h4>
+                        <p>Continuación de tendencia. Nuevo HH o LL confirma la dirección.</p>
+                    </div>
+                    <div class="card">
+                        <div class="card-icon">📦</div>
+                        <h4>Order Blocks</h4>
+                        <p>Zonas de demanda (soporte) y supply (resistencia) institucionales.</p>
+                    </div>
+                    <div class="card">
+                        <div class="card-icon">⚡</div>
+                        <h4>FVG (Fair Value Gap)</h4>
+                        <p>Desequilibrios de precio que el mercado tiende a rellenar.</p>
+                    </div>
+                    <div class="card">
+                        <div class="card-icon">💧</div>
+                        <h4>Liquidez</h4>
+                        <p>Puntos donde se acumulan órdenes (stop losses de retailers).</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Modelos de Entrada -->
+            <section class="section" id="modelos">
+                <h2>🎯 6 Modelos de Entrada</h2>
+                <p>
+                    El sistema implementa 6 modelos de entrada, cada uno con sus propios requisitos 
+                    y nivel de exigencia. Solo se generan señales cuando TODOS los requisitos se cumplen.
+                </p>
+                
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Modelo</th>
+                                <th>Score</th>
+                                <th>Requisitos</th>
+                                <th>Nivel</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><strong>MTF_CONFLUENCE</strong></td>
+                                <td><span class="tag tag-green">95-100%</span></td>
+                                <td>M5 = H1 + Pullback + Rechazo</td>
+                                <td>🔴 Muy Estricto</td>
+                            </tr>
+                            <tr>
+                                <td><strong>CHOCH_PULLBACK</strong></td>
+                                <td><span class="tag tag-green">85-90%</span></td>
+                                <td>CHoCH + Pullback a zona</td>
+                                <td>🟡 Moderado</td>
+                            </tr>
+                            <tr>
+                                <td><strong>LIQUIDITY_SWEEP</strong></td>
+                                <td><span class="tag tag-blue">82%</span></td>
+                                <td>MTF + Sweep + Pullback</td>
+                                <td>🔴 Muy Estricto</td>
+                            </tr>
+                            <tr>
+                                <td><strong>BOS_CONTINUATION</strong></td>
+                                <td><span class="tag tag-blue">80%</span></td>
+                                <td>MTF + BOS + Pullback</td>
+                                <td>🔴 Muy Estricto</td>
+                            </tr>
+                            <tr>
+                                <td><strong>BOOM_SPIKE</strong></td>
+                                <td><span class="tag tag-purple">70-95%</span></td>
+                                <td>Estructura + Demanda + Rechazo</td>
+                                <td>🟡 Moderado</td>
+                            </tr>
+                            <tr>
+                                <td><strong>CRASH_SPIKE</strong></td>
+                                <td><span class="tag tag-purple">70-95%</span></td>
+                                <td>Estructura + Supply + Rechazo</td>
+                                <td>🟡 Moderado</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div class="callout callout-info">
+                    <div class="callout-title">ℹ️ Sobre los Scores</div>
+                    <p>
+                        El score representa la probabilidad de éxito basada en las confluencias encontradas. 
+                        A mayor score, más condiciones favorables se alinean para la entrada.
+                    </p>
+                </div>
+            </section>
+
+            <!-- Boom & Crash -->
+            <section class="section" id="boom-crash">
+                <h2>🚀 Boom & Crash</h2>
+                <p>
+                    Los índices Boom y Crash son activos sintéticos con comportamientos únicos 
+                    que requieren estrategias especializadas.
+                </p>
+                
+                <div class="cards-grid">
+                    <div class="card" style="border-color: var(--emerald);">
+                        <div class="card-icon">🚀</div>
+                        <h4>BOOM (500/1000)</h4>
+                        <p>
+                            <strong>Comportamiento:</strong> Baja naturalmente → Spike alcista explosivo<br><br>
+                            <strong>Estrategia:</strong> SOLO COMPRAS (LONG) en pullback a zona de demanda después de CHoCH alcista.
+                        </p>
+                    </div>
+                    <div class="card" style="border-color: var(--red);">
+                        <div class="card-icon">📉</div>
+                        <h4>CRASH (500/1000)</h4>
+                        <p>
+                            <strong>Comportamiento:</strong> Sube naturalmente → Spike bajista explosivo<br><br>
+                            <strong>Estrategia:</strong> SOLO VENTAS (SHORT) en pullback a zona de supply después de CHoCH bajista.
+                        </p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ELISA IA -->
+            <section class="section" id="elisa">
+                <h2>🤖 ELISA - Asistente Inteligente</h2>
+                <p>
+                    ELISA (Enhanced Learning Intelligence for Smart Analysis) es el asistente de IA 
+                    integrado en la plataforma, powered by OpenAI GPT-4.
+                </p>
+                
+                <h3>Capacidades</h3>
+                <ul>
+                    <li><strong>Análisis de Mercado:</strong> Explica el estado actual de cualquier activo con datos en tiempo real.</li>
+                    <li><strong>Educación SMC:</strong> Responde preguntas sobre conceptos de Smart Money.</li>
+                    <li><strong>Mentoría de Trading:</strong> Ayuda con psicotrading, gestión de riesgo y disciplina.</li>
+                    <li><strong>Plan de Trading:</strong> Asiste en la creación de un plan personalizado.</li>
+                    <li><strong>Simulador:</strong> Practica con escenarios hipotéticos.</li>
+                </ul>
+                
+                <h3>Implementación Técnica</h3>
+                <pre><code>// Contexto de ELISA incluye:
+- Estado actual del mercado (precio, estructura M5/H1)
+- Zonas de demanda/supply activas
+- Señales pendientes
+- Historial de conversación
+- Modelos SMC disponibles</code></pre>
+            </section>
+
+            <!-- Sistema de Aprendizaje -->
+            <section class="section" id="aprendizaje">
+                <h2>🧠 Sistema de Aprendizaje Automático</h2>
+                <p>
+                    El sistema incorpora un mecanismo de aprendizaje que ajusta los scores 
+                    de los modelos basándose en los resultados reales de las señales.
+                </p>
+                
+                <h3>Cómo Funciona</h3>
+                <div class="flow">
+                    <div class="flow-step">
+                        <div class="flow-number">1</div>
+                        <div class="flow-content">
+                            <strong>Registro de Resultado</strong><br>
+                            <span style="color: var(--text-muted);">Cuando una señal cierra (Win/Loss), se registra el modelo, activo y condiciones.</span>
+                        </div>
+                    </div>
+                    <div class="flow-step">
+                        <div class="flow-number">2</div>
+                        <div class="flow-content">
+                            <strong>Ajuste de Score</strong><br>
+                            <span style="color: var(--text-muted);">Win: +2 pts al modelo (máx +10). Loss: -3 pts al modelo (máx -15).</span>
+                        </div>
+                    </div>
+                    <div class="flow-step">
+                        <div class="flow-number">3</div>
+                        <div class="flow-content">
+                            <strong>Ajuste por Activo</strong><br>
+                            <span style="color: var(--text-muted);">También se ajusta la combinación modelo+activo para mayor precisión.</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Monetización -->
+            <section class="section" id="monetizacion">
+                <h2>💰 Modelo de Monetización</h2>
+                <p>
+                    Trading Master Pro utiliza un modelo de suscripción mensual con diferentes 
+                    niveles de acceso según las necesidades del trader.
+                </p>
+                
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Plan</th>
+                                <th>Precio COP</th>
+                                <th>Precio USD</th>
+                                <th>Activos</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><strong>Free Trial</strong></td>
+                                <td>$0</td>
+                                <td>$0</td>
+                                <td>Todos (5 días)</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Básico</strong></td>
+                                <td>$29,900</td>
+                                <td>~$9</td>
+                                <td>Step, V75, XAU, BTC</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Premium</strong></td>
+                                <td>$59,900</td>
+                                <td>~$19</td>
+                                <td>+ GBP + Horario nocturno</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Elite</strong></td>
+                                <td>$99,900</td>
+                                <td>~$29</td>
+                                <td>+ Boom/Crash 500/1000</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                
+                <h3>Estrategia de Conversión</h3>
+                <ol>
+                    <li><strong>Trial gratuito de 5 días</strong> con acceso completo para que prueben.</li>
+                    <li><strong>Seguimiento por WhatsApp/Telegram</strong> para resolver dudas.</li>
+                    <li><strong>Demostrar valor</strong> con señales ganadoras durante el trial.</li>
+                    <li><strong>Oferta de upgrade</strong> antes de que termine el trial.</li>
+                </ol>
+            </section>
+
+            <!-- Roadmap -->
+            <section class="section" id="roadmap">
+                <h2>🗺️ Roadmap</h2>
+                
+                <div class="timeline">
+                    <div class="timeline-item">
+                        <div class="timeline-date">✅ Completado</div>
+                        <div class="timeline-title">v14.0 - ELISA AI + Boom/Crash</div>
+                        <div class="timeline-desc">
+                            Motor SMC completo, 6 modelos de entrada, ELISA IA, sistema de aprendizaje, 
+                            lógica especializada para Boom/Crash.
+                        </div>
+                    </div>
+                    <div class="timeline-item">
+                        <div class="timeline-date">🔄 En Progreso</div>
+                        <div class="timeline-title">v15.0 - Mejoras de UI/UX</div>
+                        <div class="timeline-desc">
+                            Nuevo diseño del dashboard, modo oscuro/claro, app móvil nativa, 
+                            notificaciones push.
+                        </div>
+                    </div>
+                    <div class="timeline-item">
+                        <div class="timeline-date">📋 Planeado</div>
+                        <div class="timeline-title">v16.0 - Trading Automático</div>
+                        <div class="timeline-desc">
+                            Integración con brokers para ejecución automática, 
+                            copy trading, gestión de portafolio.
+                        </div>
+                    </div>
+                    <div class="timeline-item">
+                        <div class="timeline-date">🔮 Futuro</div>
+                        <div class="timeline-title">v17.0 - Multi-Broker</div>
+                        <div class="timeline-desc">
+                            Soporte para múltiples brokers (Binance, MT5, etc.), 
+                            más activos (acciones, crypto).
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Stats -->
+            <section class="section">
+                <h2>📊 Estadísticas del Proyecto</h2>
+                
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value">3,500+</div>
+                        <div class="stat-label">Líneas de Código</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">9</div>
+                        <div class="stat-label">Activos</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">6</div>
+                        <div class="stat-label">Modelos SMC</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">24/7</div>
+                        <div class="stat-label">Análisis Continuo</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Footer -->
+            <footer style="margin-top: 4rem; padding-top: 2rem; border-top: 1px solid var(--dark-border); text-align: center; color: var(--text-muted);">
+                <p>Trading Master Pro © 2024-2026 | Documentación del Proyecto</p>
+                <p style="margin-top: 0.5rem; font-size: 0.9rem;">
+                    <a href="https://trading-master-pro.vercel.app">Demo</a> · 
+                    <a href="https://github.com/pedrocubillos20/trading-master-pro">GitHub</a>
+                </p>
+            </footer>
+        </div>
+    </main>
+
+    <script>
+        // Highlight current section in nav
+        const sections = document.querySelectorAll('.section');
+        const navLinks = document.querySelectorAll('.nav-link');
+        
+        window.addEventListener('scroll', () => {
+            let current = '';
+            sections.forEach(section => {
+                const sectionTop = section.offsetTop;
+                if (scrollY >= sectionTop - 100) {
+                    current = section.getAttribute('id');
+                }
+            });
+            
+            navLinks.forEach(link => {
+                link.classList.remove('active');
+                if (link.getAttribute('href') === '#' + current) {
+                    link.classList.add('active');
+                }
+            });
+        });
+    </script>
+</body>
+</html>
