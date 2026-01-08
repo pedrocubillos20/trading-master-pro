@@ -184,7 +184,7 @@ const LearningSystem = {
 // =============================================
 const SIGNAL_CONFIG = {
   // Score mínimo para generar señal
-  MIN_SCORE: 70, // Reducido para más entradas
+  MIN_SCORE: 65, // v14.0: Bajado para más entradas
   
   // Cooldown entre análisis del mismo activo
   ANALYSIS_COOLDOWN: 15000, // 15 segundos (reducido)
@@ -1582,7 +1582,7 @@ const SMC = {
     state.mtfConfluence = mtfConfluence;
     
     const signals = [];
-    const minScore = 60;
+    const minScore = 50; // v14.0: Bajado de 60 a 50 para más señales
     
     if (mtfConfluence && pullback) {
       const sideMatch = (structureH1.trend === 'BULLISH' && pullback.side === 'BUY') ||
@@ -1920,16 +1920,17 @@ const SMC = {
     signals.sort((a, b) => b.baseScore - a.baseScore);
     const best = signals[0];
     
+    // 🔍 LOG: Mostrar score de la mejor señal
+    console.log(`🎯 [${config.shortName}] Mejor: ${best.model} | Score Base: ${best.baseScore} | Side: ${best.pullback?.side}`);
+    
     // ═══════════════════════════════════════════
     // AJUSTE DE SCORE CON SISTEMA DE APRENDIZAJE
     // ═══════════════════════════════════════════
     const learningAdj = LearningSystem.getScoreAdjustment(best.model, symbol);
     const finalScore = Math.min(100, Math.max(0, best.baseScore + learningAdj));
     
-    // Log de aprendizaje aplicado
-    if (learningAdj !== 0) {
-      console.log(`📚 ${symbol} - ${best.model}: Base ${best.baseScore} + Ajuste ${learningAdj} = ${finalScore}`);
-    }
+    // Log siempre para debug
+    console.log(`📊 [${config.shortName}] Final: ${finalScore} (Base ${best.baseScore} + Learning ${learningAdj}) vs Min ${minScore}`);
     
     if (finalScore < minScore) {
       return {
@@ -3024,6 +3025,7 @@ function analyzeAsset(symbol) {
   // ═══════════════════════════════════════════
   const totalPending = signalHistory.filter(s => s.status === 'PENDING').length;
   if (totalPending >= SIGNAL_CONFIG.MAX_PENDING_TOTAL) {
+    console.log(`⏸️ [${config.shortName}] Máximo de señales pendientes (${totalPending}/${SIGNAL_CONFIG.MAX_PENDING_TOTAL})`);
     const signal = SMC.analyze(data.candles, data.candlesH1, config, data);
     data.signal = signal;
     return;
@@ -3033,8 +3035,16 @@ function analyzeAsset(symbol) {
   const signal = SMC.analyze(data.candles, data.candlesH1, config, data);
   data.signal = signal;
   
+  // 🔍 LOG DE DIAGNÓSTICO - Ver qué devuelve el análisis
+  if (signal.action !== 'WAIT' && signal.action !== 'LOADING') {
+    console.log(`🔎 [${config.shortName}] Análisis: ${signal.model} | Score: ${signal.score} | Action: ${signal.action}`);
+  }
+  
   // Ya tiene señal activa?
-  if (data.lockedSignal) return;
+  if (data.lockedSignal) {
+    console.log(`🔒 [${config.shortName}] Ya tiene señal activa #${data.lockedSignal.id}`);
+    return;
+  }
   
   // ═══════════════════════════════════════════
   // FILTRO 5: Score mínimo más alto (75%)
