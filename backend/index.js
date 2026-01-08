@@ -1,9 +1,17 @@
 // =============================================
 // TRADING MASTER PRO v14.0 - PLATAFORMA COMPLETA
 // Motor SMC + ELISA IA + Telegram + Supabase + Admin
-// v14.0: ELISA AI + Aprendizaje + Boom/Crash SMC
+// v14.0: MTF OPCIONAL + Nuevos modelos SMC + Sin restricciones
 // =============================================
 // 
+// CAMBIOS v14.0:
+// - MTF Confluence ahora es OPCIONAL (configurable)
+// - Nuevos modelos: OB_ENTRY, STRUCTURE_BREAK, REVERSAL_PATTERN, PREMIUM_DISCOUNT
+// - Modelos Boom/Crash separados: BOOM_SPIKE, CRASH_SPIKE
+// - Score mínimo reducido a 70 para más entradas
+// - Cooldowns reducidos para operativa más activa
+// - Todos los modelos pueden operar sin MTF con scores base ajustados
+//
 // VARIABLES DE ENTORNO REQUERIDAS:
 // --------------------------------
 // PORT                    - Puerto del servidor (default: 3001)
@@ -171,28 +179,45 @@ const LearningSystem = {
 };
 
 // =============================================
-// CONFIGURACIÓN DE FILTROS v13.2
-// Para reducir señales de 100+/día a ~10-15/día
+// CONFIGURACIÓN DE FILTROS v14.0
+// Versión sin restricciones de MTF - Operativa flexible
 // =============================================
 const SIGNAL_CONFIG = {
-  // Score mínimo para generar señal (antes: 60, ahora: 75)
-  MIN_SCORE: 75,
+  // Score mínimo para generar señal
+  MIN_SCORE: 70, // Reducido para más entradas
   
-  // Cooldown entre análisis del mismo activo (antes: 2000ms, ahora: 30000ms)
-  ANALYSIS_COOLDOWN: 30000, // 30 segundos
+  // Cooldown entre análisis del mismo activo
+  ANALYSIS_COOLDOWN: 15000, // 15 segundos (reducido)
   
-  // Cooldown después de cerrar una señal antes de abrir otra (NUEVO)
-  POST_SIGNAL_COOLDOWN: 300000, // 5 minutos
+  // Cooldown después de cerrar una señal antes de abrir otra
+  POST_SIGNAL_COOLDOWN: 180000, // 3 minutos (reducido)
   
-  // Requiere MTF Confluence para la mayoría de modelos (NUEVO)
-  REQUIRE_MTF_CONFLUENCE: true,
+  // ═══════════════════════════════════════════════════════════════
+  // MTF CONFLUENCE - AHORA ES OPCIONAL
+  // false = NO requiere MTF para operar (más señales)
+  // true = Requiere MTF para la mayoría de modelos (señales más seguras)
+  // ═══════════════════════════════════════════════════════════════
+  REQUIRE_MTF_CONFLUENCE: false, // ⚠️ DESHABILITADO - Operar sin restricciones
   
-  // Modelos que pueden operar SIN MTF Confluence (solo los más fuertes)
-  // BOOM_SPIKE y CRASH_SPIKE tienen su propia lógica de análisis
-  MODELS_WITHOUT_MTF: ['MTF_CONFLUENCE', 'CHOCH_PULLBACK', 'BOOM_SPIKE', 'CRASH_SPIKE'],
+  // Modelos que SIEMPRE pueden operar sin MTF (independiente de la config anterior)
+  // Incluye todos los modelos SMC para máxima flexibilidad
+  MODELS_WITHOUT_MTF: [
+    'MTF_CONFLUENCE', 
+    'CHOCH_PULLBACK', 
+    'BOOM_SPIKE', 
+    'CRASH_SPIKE',
+    'LIQUIDITY_SWEEP',
+    'BOS_CONTINUATION',
+    'ZONE_TOUCH',
+    'FVG_ENTRY',
+    'OB_ENTRY',          // Nuevo
+    'STRUCTURE_BREAK',   // Nuevo
+    'REVERSAL_PATTERN',  // Nuevo
+    'PREMIUM_DISCOUNT'   // Nuevo
+  ],
   
   // Máximo de señales pendientes simultáneas totales
-  MAX_PENDING_TOTAL: 5,
+  MAX_PENDING_TOTAL: 8, // Aumentado para más operativa
   
   // Horas de operación por plan - en UTC
   // Horario base (todos los planes): 6AM-2PM Colombia = 11:00-19:00 UTC
@@ -1609,105 +1634,222 @@ const SMC = {
         return false;
       });
       
-      if (swept && pullback && mtfConfluence) { // v13.2: Requiere MTF
+      // v14.0: MTF ya NO es obligatorio para LIQUIDITY_SWEEP
+      if (swept && pullback) {
         const side = level.type === 'EQUAL_HIGHS' ? 'SELL' : 'BUY';
         if (pullback.side === side) {
+          let score = 78; // Score base sin MTF
+          if (mtfConfluence) score = 85; // Bonus con MTF
           signals.push({
             model: 'LIQUIDITY_SWEEP',
-            baseScore: 82, // v13.2: Ajustado
+            baseScore: score,
             pullback,
-            reason: `Sweep ${level.type} + MTF`
+            reason: `Sweep ${level.type}${mtfConfluence ? ' + MTF' : ''}`
           });
         }
       }
     }
     
-    if (bos && pullback && bos.side === pullback.side && mtfConfluence) { // v13.2: Requiere MTF
+    // v14.0: BOS_CONTINUATION ahora puede operar sin MTF
+    if (bos && pullback && bos.side === pullback.side) {
+      let score = 75; // Score base sin MTF
+      if (mtfConfluence) score = 82; // Bonus con MTF
       signals.push({
         model: 'BOS_CONTINUATION',
-        baseScore: 80,
+        baseScore: score,
         pullback,
-        reason: `${bos.type} + Pullback + MTF`
+        reason: `${bos.type} + Pullback${mtfConfluence ? ' + MTF' : ''}`
       });
     }
     
     const price = candlesM5[candlesM5.length - 1].close;
     const lastCandle = candlesM5[candlesM5.length - 1];
     
-    // *** MODELO ZONE_TOUCH v13.2 - MUY RESTRINGIDO ***
-    // Requiere: MTF + Premium/Discount correcto + Rechazo fuerte
-    if (mtfConfluence) { // v13.2: Solo si hay MTF Confluence
-      for (const zone of demandZones) {
-        const touchingZone = lastCandle.low <= zone.high * 1.002 && lastCandle.low >= zone.low * 0.998;
-        const closeAboveZone = lastCandle.close > zone.mid;
-        
-        // v13.2: Requiere rechazo fuerte (wick > 50% del cuerpo)
-        const wickSize = lastCandle.close - lastCandle.low;
-        const bodySize = Math.abs(lastCandle.close - lastCandle.open);
-        const strongRejection = wickSize > bodySize * 0.5;
-        
-        // v13.2: Requiere H1 BULLISH + DISCOUNT
-        if (touchingZone && closeAboveZone && strongRejection && 
-            structureH1.trend === 'BULLISH' && premiumDiscount === 'DISCOUNT') {
-          
-          const zonePb = {
-            side: 'BUY',
-            entry: lastCandle.close,
-            stop: zone.low - avgRange * 0.5,
-            tp1: lastCandle.close + avgRange * 1.5,
-            tp2: lastCandle.close + avgRange * 2.5,
-            tp3: lastCandle.close + avgRange * 4
-          };
-          
-          signals.push({
-            model: 'ZONE_TOUCH',
-            baseScore: 78, // v13.2: Score fijo
-            pullback: zonePb,
-            reason: `Zona demanda + MTF + DISCOUNT + Rechazo fuerte`
-          });
-        }
-      }
+    // *** MODELO ZONE_TOUCH v14.0 - SIN RESTRICCIÓN MTF ***
+    // Solo requiere: Premium/Discount correcto + Rechazo
+    // MTF es bonus, no requisito
+    for (const zone of demandZones) {
+      const touchingZone = lastCandle.low <= zone.high * 1.002 && lastCandle.low >= zone.low * 0.998;
+      const closeAboveZone = lastCandle.close > zone.mid;
       
-      for (const zone of supplyZones) {
-        const touchingZone = lastCandle.high >= zone.low * 0.998 && lastCandle.high <= zone.high * 1.002;
-        const closeBelowZone = lastCandle.close < zone.mid;
+      // Rechazo (wick > 30% del cuerpo) - reducido para más señales
+      const wickSize = lastCandle.close - lastCandle.low;
+      const bodySize = Math.abs(lastCandle.close - lastCandle.open);
+      const hasRejection = wickSize > bodySize * 0.3;
+      
+      if (touchingZone && closeAboveZone && hasRejection) {
+        // Score base depende de Premium/Discount
+        let score = 70; // Base
+        if (premiumDiscount === 'DISCOUNT') score += 5; // Bonus por P/D correcto
+        if (mtfConfluence && structureH1.trend === 'BULLISH') score += 8; // Bonus por MTF
+        if (wickSize > bodySize * 0.5) score += 3; // Bonus por rechazo fuerte
         
-        // v13.2: Requiere rechazo fuerte (wick > 50% del cuerpo)
-        const wickSize = lastCandle.high - lastCandle.close;
-        const bodySize = Math.abs(lastCandle.close - lastCandle.open);
-        const strongRejection = wickSize > bodySize * 0.5;
+        const zonePb = {
+          side: 'BUY',
+          entry: lastCandle.close,
+          stop: zone.low - avgRange * 0.5,
+          tp1: lastCandle.close + avgRange * 1.5,
+          tp2: lastCandle.close + avgRange * 2.5,
+          tp3: lastCandle.close + avgRange * 4
+        };
         
-        // v13.2: Requiere H1 BEARISH + PREMIUM
-        if (touchingZone && closeBelowZone && strongRejection && 
-            structureH1.trend === 'BEARISH' && premiumDiscount === 'PREMIUM') {
-          
-          const zonePb = {
-            side: 'SELL',
-            entry: lastCandle.close,
-            stop: zone.high + avgRange * 0.5,
-            tp1: lastCandle.close - avgRange * 1.5,
-            tp2: lastCandle.close - avgRange * 2.5,
-            tp3: lastCandle.close - avgRange * 4
-          };
-          
-          signals.push({
-            model: 'ZONE_TOUCH',
-            baseScore: 78, // v13.2: Score fijo
-            pullback: zonePb,
-            reason: `Zona supply + MTF + PREMIUM + Rechazo fuerte`
-          });
-        }
+        signals.push({
+          model: 'ZONE_TOUCH',
+          baseScore: score,
+          pullback: zonePb,
+          reason: `Zona demanda${premiumDiscount === 'DISCOUNT' ? ' + DISCOUNT' : ''}${mtfConfluence ? ' + MTF' : ''}`
+        });
       }
     }
     
+    for (const zone of supplyZones) {
+      const touchingZone = lastCandle.high >= zone.low * 0.998 && lastCandle.high <= zone.high * 1.002;
+      const closeBelowZone = lastCandle.close < zone.mid;
+      
+      // Rechazo (wick > 30% del cuerpo) - reducido para más señales
+      const wickSize = lastCandle.high - lastCandle.close;
+      const bodySize = Math.abs(lastCandle.close - lastCandle.open);
+      const hasRejection = wickSize > bodySize * 0.3;
+      
+      if (touchingZone && closeBelowZone && hasRejection) {
+        // Score base depende de Premium/Discount
+        let score = 70; // Base
+        if (premiumDiscount === 'PREMIUM') score += 5; // Bonus por P/D correcto
+        if (mtfConfluence && structureH1.trend === 'BEARISH') score += 8; // Bonus por MTF
+        if (wickSize > bodySize * 0.5) score += 3; // Bonus por rechazo fuerte
+        
+        const zonePb = {
+          side: 'SELL',
+          entry: lastCandle.close,
+          stop: zone.high + avgRange * 0.5,
+          tp1: lastCandle.close - avgRange * 1.5,
+          tp2: lastCandle.close - avgRange * 2.5,
+          tp3: lastCandle.close - avgRange * 4
+        };
+        
+        signals.push({
+          model: 'ZONE_TOUCH',
+          baseScore: score,
+          pullback: zonePb,
+          reason: `Zona supply${premiumDiscount === 'PREMIUM' ? ' + PREMIUM' : ''}${mtfConfluence ? ' + MTF' : ''}`
+        });
+      }
+    }
+    
+    // v14.0: FVG_ENTRY ahora puede operar sin MTF
     for (const fvg of fvgZones) {
       const inFVG = price >= fvg.low * 0.999 && price <= fvg.high * 1.001;
-      if (inFVG && pullback && fvg.side === pullback.side && mtfConfluence) { // v13.2: Requiere MTF
+      if (inFVG && pullback && fvg.side === pullback.side) {
+        let score = 72; // Score base sin MTF
+        if (mtfConfluence) score = 80; // Bonus con MTF
         signals.push({
           model: 'FVG_ENTRY',
-          baseScore: 77, // v13.2: Ajustado
+          baseScore: score,
           pullback,
-          reason: `En ${fvg.type} + MTF`
+          reason: `En ${fvg.type}${mtfConfluence ? ' + MTF' : ''}`
+        });
+      }
+    }
+    
+    // ═══════════════════════════════════════════
+    // NUEVOS MODELOS SMC v14.0
+    // ═══════════════════════════════════════════
+    
+    // OB_ENTRY - Entrada directa en Order Block
+    if (pullback && (pullback.type === 'DEMAND_ZONE' || pullback.type === 'SUPPLY_ZONE')) {
+      let score = 72;
+      const pdCorrect = (pullback.side === 'BUY' && premiumDiscount === 'DISCOUNT') ||
+                        (pullback.side === 'SELL' && premiumDiscount === 'PREMIUM');
+      if (pdCorrect) score += 5;
+      if (mtfConfluence) score += 5;
+      
+      signals.push({
+        model: 'OB_ENTRY',
+        baseScore: score,
+        pullback,
+        reason: `Order Block ${pullback.side}${pdCorrect ? ' + P/D' : ''}${mtfConfluence ? ' + MTF' : ''}`
+      });
+    }
+    
+    // STRUCTURE_BREAK - Ruptura de estructura sin necesidad de pullback
+    if (bos && !pullback) {
+      // Crear entrada en la ruptura
+      const breakEntry = {
+        side: bos.side,
+        entry: bos.level,
+        stop: bos.side === 'BUY' ? bos.level - avgRange * 1.5 : bos.level + avgRange * 1.5,
+        tp1: bos.side === 'BUY' ? bos.level + avgRange * 1.5 : bos.level - avgRange * 1.5,
+        tp2: bos.side === 'BUY' ? bos.level + avgRange * 2.5 : bos.level - avgRange * 2.5,
+        tp3: bos.side === 'BUY' ? bos.level + avgRange * 4 : bos.level - avgRange * 4
+      };
+      
+      let score = 70;
+      if (mtfConfluence) score += 5;
+      
+      signals.push({
+        model: 'STRUCTURE_BREAK',
+        baseScore: score,
+        pullback: breakEntry,
+        reason: `${bos.type} directo${mtfConfluence ? ' + MTF' : ''}`
+      });
+    }
+    
+    // REVERSAL_PATTERN - CHoCH sin necesidad de pullback completo
+    if (choch && structureM5.strength >= 60) {
+      // Verificar si hay un pequeño retroceso (no necesita llegar a zona)
+      const recentCandles = candlesM5.slice(-5);
+      const hasMinorRetracement = recentCandles.some(c => {
+        if (choch.side === 'BUY') return c.low < choch.level;
+        return c.high > choch.level;
+      });
+      
+      if (hasMinorRetracement && !pullback) {
+        const revEntry = {
+          side: choch.side,
+          entry: lastCandle.close,
+          stop: choch.side === 'BUY' ? lastCandle.close - avgRange * 2 : lastCandle.close + avgRange * 2,
+          tp1: choch.side === 'BUY' ? lastCandle.close + avgRange * 1.5 : lastCandle.close - avgRange * 1.5,
+          tp2: choch.side === 'BUY' ? lastCandle.close + avgRange * 2.5 : lastCandle.close - avgRange * 2.5,
+          tp3: choch.side === 'BUY' ? lastCandle.close + avgRange * 4 : lastCandle.close - avgRange * 4
+        };
+        
+        let score = 71;
+        if (mtfConfluence || structureH1.trend === choch.side.replace('BUY', 'BULLISH').replace('SELL', 'BEARISH')) score += 5;
+        
+        signals.push({
+          model: 'REVERSAL_PATTERN',
+          baseScore: score,
+          pullback: revEntry,
+          reason: `${choch.type} + Retroceso${mtfConfluence ? ' + MTF' : ''}`
+        });
+      }
+    }
+    
+    // PREMIUM_DISCOUNT - Entrada basada solo en zonas P/D con estructura
+    if (!pullback && structureM5.trend !== 'NEUTRAL') {
+      const inDiscount = premiumDiscount === 'DISCOUNT';
+      const inPremium = premiumDiscount === 'PREMIUM';
+      const trendMatch = (structureM5.trend === 'BULLISH' && inDiscount) ||
+                         (structureM5.trend === 'BEARISH' && inPremium);
+      
+      if (trendMatch) {
+        const pdEntry = {
+          side: inDiscount ? 'BUY' : 'SELL',
+          entry: lastCandle.close,
+          stop: inDiscount ? lastCandle.close - avgRange * 2 : lastCandle.close + avgRange * 2,
+          tp1: inDiscount ? lastCandle.close + avgRange * 1.5 : lastCandle.close - avgRange * 1.5,
+          tp2: inDiscount ? lastCandle.close + avgRange * 2.5 : lastCandle.close - avgRange * 2.5,
+          tp3: inDiscount ? lastCandle.close + avgRange * 4 : lastCandle.close - avgRange * 4
+        };
+        
+        let score = 70;
+        if (mtfConfluence) score += 6;
+        
+        signals.push({
+          model: 'PREMIUM_DISCOUNT',
+          baseScore: score,
+          pullback: pdEntry,
+          reason: `M5 ${structureM5.trend} en ${premiumDiscount}${mtfConfluence ? ' + MTF' : ''}`
         });
       }
     }
@@ -2976,7 +3118,7 @@ function analyzeAsset(symbol) {
 // =============================================
 app.get('/', (req, res) => res.json({ 
   name: 'Trading Master Pro', 
-  version: '13.2', 
+  version: '14.0', 
   connected: isConnected,
   supabase: !!supabase,
   filters: {
@@ -2984,10 +3126,50 @@ app.get('/', (req, res) => res.json({
     analysisCooldown: SIGNAL_CONFIG.ANALYSIS_COOLDOWN,
     postSignalCooldown: SIGNAL_CONFIG.POST_SIGNAL_COOLDOWN,
     requireMTF: SIGNAL_CONFIG.REQUIRE_MTF_CONFLUENCE,
+    modelsWithoutMTF: SIGNAL_CONFIG.MODELS_WITHOUT_MTF,
     maxPending: SIGNAL_CONFIG.MAX_PENDING_TOTAL,
     tradingHours: SIGNAL_CONFIG.TRADING_HOURS
+  },
+  features: {
+    mtfOptional: true,
+    newModels: ['OB_ENTRY', 'STRUCTURE_BREAK', 'REVERSAL_PATTERN', 'PREMIUM_DISCOUNT'],
+    boomCrashModels: ['BOOM_SPIKE', 'CRASH_SPIKE']
   }
 }));
+
+// Endpoint para cambiar configuración de MTF dinámicamente
+app.post('/api/config/mtf', (req, res) => {
+  const { requireMTF } = req.body;
+  if (typeof requireMTF === 'boolean') {
+    SIGNAL_CONFIG.REQUIRE_MTF_CONFLUENCE = requireMTF;
+    console.log(`⚙️ Configuración MTF cambiada a: ${requireMTF ? 'OBLIGATORIO' : 'OPCIONAL'}`);
+    res.json({ 
+      success: true, 
+      requireMTF: SIGNAL_CONFIG.REQUIRE_MTF_CONFLUENCE,
+      message: `MTF ahora es ${requireMTF ? 'obligatorio' : 'opcional'}`
+    });
+  } else {
+    res.status(400).json({ error: 'Parámetro requireMTF debe ser boolean' });
+  }
+});
+
+// Endpoint para obtener configuración actual
+app.get('/api/config', (req, res) => {
+  res.json({
+    version: '14.0',
+    signalConfig: {
+      minScore: SIGNAL_CONFIG.MIN_SCORE,
+      analysisCooldown: SIGNAL_CONFIG.ANALYSIS_COOLDOWN,
+      postSignalCooldown: SIGNAL_CONFIG.POST_SIGNAL_COOLDOWN,
+      requireMTFConfluence: SIGNAL_CONFIG.REQUIRE_MTF_CONFLUENCE,
+      modelsWithoutMTF: SIGNAL_CONFIG.MODELS_WITHOUT_MTF,
+      maxPendingTotal: SIGNAL_CONFIG.MAX_PENDING_TOTAL,
+      tradingHours: SIGNAL_CONFIG.TRADING_HOURS
+    },
+    smcModels: SMC_MODELS_DATA.models ? Object.keys(SMC_MODELS_DATA.models) : [],
+    learningStats: LearningSystem.getStats()
+  });
+});
 
 app.get('/api/dashboard', (req, res) => {
   res.json({

@@ -1,8 +1,8 @@
 {
-  "version": "2.0.0",
-  "name": "ELISA SMC Models",
-  "description": "Smart Money Concepts Models for Professional Trading",
-  "lastUpdated": "2026-01-04",
+  "version": "3.0.0",
+  "name": "ELISA SMC Models v14",
+  "description": "Smart Money Concepts Models - Sin restricciones MTF, operativa flexible",
+  "lastUpdated": "2026-01-08",
   
   "models": {
     "MTF_CONFLUENCE": {
@@ -16,7 +16,7 @@
       "difficulty": "intermediate",
       "winRate": 78,
       "frequency": "medium",
-      "requiresMTF": true,
+      "requiresMTF": false,
       
       "description": {
         "short": "Confluencia entre H1 y M5 en la misma dirección con pullback a zona.",
@@ -232,7 +232,7 @@
       "difficulty": "intermediate",
       "winRate": 73,
       "frequency": "medium-low",
-      "requiresMTF": true,
+      "requiresMTF": false,
       
       "description": {
         "short": "Barrido de liquidez (stops) seguido de reversión.",
@@ -337,7 +337,7 @@
       "difficulty": "beginner",
       "winRate": 72,
       "frequency": "medium",
-      "requiresMTF": true,
+      "requiresMTF": false,
       
       "description": {
         "short": "Ruptura de estructura que confirma continuación de tendencia.",
@@ -442,7 +442,7 @@
       "difficulty": "intermediate",
       "winRate": 70,
       "frequency": "medium-high",
-      "requiresMTF": true,
+      "requiresMTF": false,
       
       "description": {
         "short": "Toque de Order Block o zona institucional con rechazo fuerte.",
@@ -547,7 +547,7 @@
       "difficulty": "beginner",
       "winRate": 68,
       "frequency": "high",
-      "requiresMTF": true,
+      "requiresMTF": false,
       
       "description": {
         "short": "Entrada cuando el precio llena un Fair Value Gap.",
@@ -639,6 +639,344 @@
         "Los FVGs de H1 son más fuertes que los de M5",
         "En tendencias fuertes, los FVGs suelen llenarse parcialmente"
       ]
+    },
+    
+    "OB_ENTRY": {
+      "id": "ob_entry",
+      "name": "Order Block Entry",
+      "shortName": "OB",
+      "emoji": "🧱",
+      "baseScore": 72,
+      "maxScore": 85,
+      "category": "zone",
+      "difficulty": "beginner",
+      "winRate": 70,
+      "frequency": "high",
+      "requiresMTF": false,
+      
+      "description": {
+        "short": "Entrada directa cuando el precio toca un Order Block válido.",
+        "full": "Este modelo simplificado busca entradas cuando el precio retrocede a un Order Block identificado. No requiere MTF obligatorio, lo que permite más oportunidades de entrada. El score aumenta con confirmaciones adicionales como Premium/Discount correcto y MTF.",
+        "psychology": "Los Order Blocks son zonas donde el Smart Money dejó órdenes pendientes. Cuando el precio regresa, estas órdenes se activan."
+      },
+      
+      "requirements": [
+        {
+          "id": "ob_identified",
+          "name": "Order Block identificado",
+          "description": "Última vela contraria antes de impulso visible",
+          "weight": 0.4
+        },
+        {
+          "id": "price_at_ob",
+          "name": "Precio en la zona",
+          "description": "El precio actual debe estar tocando el Order Block",
+          "weight": 0.4
+        },
+        {
+          "id": "direction_clear",
+          "name": "Dirección clara",
+          "description": "M5 muestra estructura definida",
+          "weight": 0.2
+        }
+      ],
+      
+      "bonuses": [
+        {
+          "id": "pd_correct",
+          "name": "Premium/Discount correcto",
+          "points": 5,
+          "condition": "Compras en Discount, ventas en Premium"
+        },
+        {
+          "id": "mtf_bonus",
+          "name": "MTF Confluence",
+          "points": 5,
+          "condition": "H1 alineado con la dirección"
+        }
+      ],
+      
+      "entryRules": {
+        "trigger": "Precio toca el Order Block",
+        "confirmation": "Muestra señal de rechazo",
+        "invalidation": "Cierre más allá del Order Block"
+      },
+      
+      "riskManagement": {
+        "stopLoss": "Más allá del Order Block completo",
+        "tp1": "1:1.5 Risk:Reward",
+        "tp2": "1:2.5 Risk:Reward",
+        "tp3": "1:4 Risk:Reward",
+        "trailingStop": "Mover SL a breakeven después de TP1"
+      }
+    },
+    
+    "STRUCTURE_BREAK": {
+      "id": "structure_break",
+      "name": "Structure Break",
+      "shortName": "SB",
+      "emoji": "💥",
+      "baseScore": 70,
+      "maxScore": 80,
+      "category": "momentum",
+      "difficulty": "beginner",
+      "winRate": 68,
+      "frequency": "high",
+      "requiresMTF": false,
+      
+      "description": {
+        "short": "Entrada en la ruptura de estructura sin esperar pullback.",
+        "full": "Para traders más agresivos, este modelo permite entrar directamente cuando hay una ruptura de estructura (BOS) sin necesidad de esperar un pullback completo. Útil en mercados con momentum fuerte donde el pullback puede no llegar.",
+        "psychology": "A veces el mercado se mueve tan rápido que esperar el pullback significa perderse el movimiento. Este modelo captura esas oportunidades."
+      },
+      
+      "requirements": [
+        {
+          "id": "bos_detected",
+          "name": "BOS detectado",
+          "description": "Ruptura clara de swing high o swing low",
+          "weight": 0.5
+        },
+        {
+          "id": "momentum_strong",
+          "name": "Momentum fuerte",
+          "description": "Velas de impulso con cuerpos grandes",
+          "weight": 0.3
+        },
+        {
+          "id": "no_pullback_yet",
+          "name": "Sin pullback aún",
+          "description": "El precio no ha retrocedido significativamente",
+          "weight": 0.2
+        }
+      ],
+      
+      "bonuses": [
+        {
+          "id": "mtf_support",
+          "name": "MTF Support",
+          "points": 5,
+          "condition": "H1 en la misma dirección"
+        }
+      ],
+      
+      "riskManagement": {
+        "stopLoss": "Debajo/encima del punto de ruptura",
+        "tp1": "1:1.5 Risk:Reward",
+        "tp2": "1:2.5 Risk:Reward",
+        "tp3": "1:4 Risk:Reward",
+        "trailingStop": "Agresivo - proteger ganancias rápido"
+      }
+    },
+    
+    "REVERSAL_PATTERN": {
+      "id": "reversal_pattern",
+      "name": "Reversal Pattern",
+      "shortName": "REV",
+      "emoji": "🔄",
+      "baseScore": 71,
+      "maxScore": 82,
+      "category": "reversal",
+      "difficulty": "intermediate",
+      "winRate": 69,
+      "frequency": "medium",
+      "requiresMTF": false,
+      
+      "description": {
+        "short": "CHoCH con retroceso menor, sin necesidad de llegar a zona.",
+        "full": "Similar a CHOCH_PULLBACK pero más flexible. Detecta cambios de carácter y permite entrada cuando hay un retroceso menor, sin necesidad de que el precio llegue a una zona de demanda/supply específica.",
+        "psychology": "A veces el cambio de tendencia es tan fuerte que el pullback es mínimo. Este modelo captura esas reversiones tempranas."
+      },
+      
+      "requirements": [
+        {
+          "id": "choch_confirmed",
+          "name": "CHoCH confirmado",
+          "description": "Cambio de carácter visible en la estructura",
+          "weight": 0.4
+        },
+        {
+          "id": "minor_retracement",
+          "name": "Retroceso menor",
+          "description": "Pequeño pullback después del CHoCH",
+          "weight": 0.35
+        },
+        {
+          "id": "structure_strength",
+          "name": "Estructura M5 fuerte",
+          "description": "Fuerza de estructura >= 60%",
+          "weight": 0.25
+        }
+      ],
+      
+      "bonuses": [
+        {
+          "id": "h1_support",
+          "name": "H1 soporta dirección",
+          "points": 5,
+          "condition": "H1 neutral o en la nueva dirección"
+        }
+      ],
+      
+      "riskManagement": {
+        "stopLoss": "Más allá del origen del CHoCH",
+        "tp1": "1:1.5 Risk:Reward",
+        "tp2": "1:2.5 Risk:Reward",
+        "tp3": "1:4 Risk:Reward",
+        "trailingStop": "Mover SL según estructura"
+      }
+    },
+    
+    "PREMIUM_DISCOUNT": {
+      "id": "premium_discount",
+      "name": "Premium Discount Entry",
+      "shortName": "P/D",
+      "emoji": "💰",
+      "baseScore": 70,
+      "maxScore": 82,
+      "category": "value",
+      "difficulty": "beginner",
+      "winRate": 67,
+      "frequency": "high",
+      "requiresMTF": false,
+      
+      "description": {
+        "short": "Entrada basada en zonas de valor (Premium/Discount) con tendencia.",
+        "full": "Este modelo busca compras cuando el precio está en Discount durante una tendencia alcista, y ventas cuando está en Premium durante tendencia bajista. Es un modelo de alta frecuencia que no requiere pullback a zona específica.",
+        "psychology": "Comprar barato (Discount) y vender caro (Premium) es la base del trading institucional. Este modelo simplifica ese concepto."
+      },
+      
+      "requirements": [
+        {
+          "id": "trend_defined",
+          "name": "Tendencia definida",
+          "description": "M5 muestra estructura BULLISH o BEARISH clara",
+          "weight": 0.4
+        },
+        {
+          "id": "pd_correct",
+          "name": "P/D correcto para dirección",
+          "description": "Discount para compras, Premium para ventas",
+          "weight": 0.4
+        },
+        {
+          "id": "no_opposing_zone",
+          "name": "Sin zona opuesta cercana",
+          "description": "No hay supply cerca en compras, ni demand cerca en ventas",
+          "weight": 0.2
+        }
+      ],
+      
+      "bonuses": [
+        {
+          "id": "mtf_confluence",
+          "name": "MTF Confluence",
+          "points": 6,
+          "condition": "H1 en la misma dirección que M5"
+        }
+      ],
+      
+      "riskManagement": {
+        "stopLoss": "Más allá del extremo del rango P/D",
+        "tp1": "1:1.5 Risk:Reward",
+        "tp2": "1:2.5 Risk:Reward",
+        "tp3": "Extremo opuesto del rango",
+        "trailingStop": "Por estructura de M5"
+      }
+    },
+    
+    "BOOM_SPIKE": {
+      "id": "boom_spike",
+      "name": "Boom Spike Setup",
+      "shortName": "BOOM",
+      "emoji": "🚀",
+      "baseScore": 80,
+      "maxScore": 92,
+      "category": "synthetic",
+      "difficulty": "advanced",
+      "winRate": 72,
+      "frequency": "medium",
+      "requiresMTF": false,
+      
+      "description": {
+        "short": "Setup específico para índices Boom - SOLO COMPRAS en zonas de demanda.",
+        "full": "Los índices Boom tienen una tendencia bajista natural con spikes alcistas periódicos. Este modelo busca compras en zonas de demanda durante la fase de caída, anticipando el próximo spike alcista. NUNCA vende en Boom.",
+        "psychology": "Los spikes en Boom son predecibles en términos de que SIEMPRE ocurren. La clave es estar posicionado en una zona de demanda cuando llegue."
+      },
+      
+      "requirements": [
+        {
+          "id": "demand_zone",
+          "name": "En zona de demanda",
+          "description": "Precio debe estar tocando o cerca de una zona de demanda",
+          "weight": 0.4
+        },
+        {
+          "id": "discount_zone",
+          "name": "En Discount",
+          "description": "Precio en la mitad inferior del rango",
+          "weight": 0.3
+        },
+        {
+          "id": "rejection_sign",
+          "name": "Señal de rechazo",
+          "description": "Vela con wick inferior significativo",
+          "weight": 0.3
+        }
+      ],
+      
+      "entryRules": {
+        "trigger": "Toque de zona de demanda + señal de rechazo",
+        "confirmation": "Vela alcista o wick inferior fuerte",
+        "invalidation": "Cierre por debajo de la zona de demanda"
+      }
+    },
+    
+    "CRASH_SPIKE": {
+      "id": "crash_spike",
+      "name": "Crash Spike Setup",
+      "shortName": "CRASH",
+      "emoji": "💣",
+      "baseScore": 80,
+      "maxScore": 92,
+      "category": "synthetic",
+      "difficulty": "advanced",
+      "winRate": 72,
+      "frequency": "medium",
+      "requiresMTF": false,
+      
+      "description": {
+        "short": "Setup específico para índices Crash - SOLO VENTAS en zonas de supply.",
+        "full": "Los índices Crash tienen una tendencia alcista natural con spikes bajistas periódicos. Este modelo busca ventas en zonas de supply durante la fase de subida, anticipando el próximo spike bajista. NUNCA compra en Crash.",
+        "psychology": "Los spikes en Crash son predecibles en términos de que SIEMPRE ocurren. La clave es estar posicionado en una zona de supply cuando llegue."
+      },
+      
+      "requirements": [
+        {
+          "id": "supply_zone",
+          "name": "En zona de supply",
+          "description": "Precio debe estar tocando o cerca de una zona de supply",
+          "weight": 0.4
+        },
+        {
+          "id": "premium_zone",
+          "name": "En Premium",
+          "description": "Precio en la mitad superior del rango",
+          "weight": 0.3
+        },
+        {
+          "id": "rejection_sign",
+          "name": "Señal de rechazo",
+          "description": "Vela con wick superior significativo",
+          "weight": 0.3
+        }
+      ],
+      
+      "entryRules": {
+        "trigger": "Toque de zona de supply + señal de rechazo",
+        "confirmation": "Vela bajista o wick superior fuerte",
+        "invalidation": "Cierre por encima de la zona de supply"
+      }
     }
   },
   
