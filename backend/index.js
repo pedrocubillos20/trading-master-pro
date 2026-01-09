@@ -892,6 +892,111 @@ const SMC = {
     return { trend: 'NEUTRAL', strength: 0 };
   },
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // ANÁLISIS DE ESTRUCTURA ESPECÍFICO PARA BOOM/CRASH
+  // Detecta spikes y no se confunde con rebotes temporales
+  // ═══════════════════════════════════════════════════════════════════════
+  analyzeStructureBoomCrash(candles, assetType) {
+    if (!candles || candles.length < 30) return { trend: 'NEUTRAL', strength: 0 };
+    
+    const recent = candles.slice(-30);
+    const avgRange = this.getAvgRange(candles.slice(-50));
+    
+    // Buscar spike en las últimas 30 velas
+    let biggestBullSpike = 0;
+    let biggestBearSpike = 0;
+    let bullSpikeIndex = -1;
+    let bearSpikeIndex = -1;
+    
+    for (let i = 5; i < recent.length; i++) {
+      const candle = recent[i];
+      const candleRange = Math.abs(candle.close - candle.open);
+      
+      // Spike alcista: vela verde muy grande (>3x promedio)
+      if (candle.close > candle.open && candleRange > avgRange * 3) {
+        if (candleRange > biggestBullSpike) {
+          biggestBullSpike = candleRange;
+          bullSpikeIndex = i;
+        }
+      }
+      
+      // Spike bajista: vela roja muy grande (>3x promedio)
+      if (candle.close < candle.open && candleRange > avgRange * 3) {
+        if (candleRange > biggestBearSpike) {
+          biggestBearSpike = candleRange;
+          bearSpikeIndex = i;
+        }
+      }
+    }
+    
+    // Para Crash: si hubo spike bajista reciente, la estructura es BEARISH
+    // aunque las últimas velas sean de rebote
+    if (assetType === 'crash' && bearSpikeIndex > bullSpikeIndex && biggestBearSpike > avgRange * 3) {
+      // Verificar que no se ha recuperado completamente
+      const spikeCandle = recent[bearSpikeIndex];
+      const currentPrice = recent[recent.length - 1].close;
+      const spikeRecovery = (currentPrice - spikeCandle.low) / (spikeCandle.open - spikeCandle.low);
+      
+      // Si no se ha recuperado más del 80%, la estructura sigue siendo BEARISH
+      if (spikeRecovery < 0.8) {
+        return { 
+          trend: 'BEARISH', 
+          strength: Math.min(100, Math.round(biggestBearSpike / avgRange * 10)),
+          reason: 'Spike bajista reciente'
+        };
+      }
+    }
+    
+    // Para Boom: si hubo spike alcista reciente, la estructura es BULLISH
+    if (assetType === 'boom' && bullSpikeIndex > bearSpikeIndex && biggestBullSpike > avgRange * 3) {
+      const spikeCandle = recent[bullSpikeIndex];
+      const currentPrice = recent[recent.length - 1].close;
+      const spikeRetracement = (spikeCandle.high - currentPrice) / (spikeCandle.high - spikeCandle.open);
+      
+      if (spikeRetracement < 0.8) {
+        return { 
+          trend: 'BULLISH', 
+          strength: Math.min(100, Math.round(biggestBullSpike / avgRange * 10)),
+          reason: 'Spike alcista reciente'
+        };
+      }
+    }
+    
+    // Si no hay spike claro, analizar estructura normal
+    // Pero usar más velas (últimas 20 en lugar de 8)
+    const last20 = candles.slice(-20);
+    let higherHighs = 0, higherLows = 0, lowerHighs = 0, lowerLows = 0;
+    
+    // Comparar cada 5 velas
+    for (let i = 5; i < last20.length; i += 5) {
+      const prev = last20.slice(i - 5, i);
+      const curr = last20.slice(i, i + 5);
+      if (curr.length < 5) continue;
+      
+      const prevHigh = Math.max(...prev.map(c => c.high));
+      const prevLow = Math.min(...prev.map(c => c.low));
+      const currHigh = Math.max(...curr.map(c => c.high));
+      const currLow = Math.min(...curr.map(c => c.low));
+      
+      if (currHigh > prevHigh) higherHighs++;
+      if (currHigh < prevHigh) lowerHighs++;
+      if (currLow > prevLow) higherLows++;
+      if (currLow < prevLow) lowerLows++;
+    }
+    
+    const bullScore = higherHighs + higherLows;
+    const bearScore = lowerHighs + lowerLows;
+    
+    if (bearScore > bullScore && bearScore >= 2) {
+      return { trend: 'BEARISH', strength: Math.min(100, bearScore * 25) };
+    }
+    if (bullScore > bearScore && bullScore >= 2) {
+      return { trend: 'BULLISH', strength: Math.min(100, bullScore * 25) };
+    }
+    
+    return { trend: 'NEUTRAL', strength: 0 };
+  },
+
   getPremiumDiscount(candles, swings) {
     if (candles.length < 20 || swings.length < 2) return 'EQUILIBRIUM';
     
@@ -928,9 +1033,9 @@ const SMC = {
     const prevCandle = candles[candles.length - 2];
     const price = lastCandle.close;
     
-    // Obtener swings y estructura M5
+    // Obtener swings y estructura M5 (usando función específica para Boom/Crash)
     const swings = this.findSwings(candles, 3);
-    const structure = this.analyzeStructure(swings);
+    const structure = this.analyzeStructureBoomCrash(candles, assetType);
     const { demandZones, supplyZones } = state;
     
     // ════════════════════════════════════════════════════════════════════
@@ -1650,7 +1755,13 @@ const SMC = {
     }
     
     const swingsM5 = this.findSwings(candlesM5, 3);
-    const structureM5 = this.analyzeStructure(swingsM5);
+    
+    // Para Boom/Crash usar función de estructura específica
+    const isBoomCrash = config.type === 'boom' || config.type === 'crash';
+    const structureM5 = isBoomCrash 
+      ? this.analyzeStructureBoomCrash(candlesM5, config.type)
+      : this.analyzeStructure(swingsM5);
+    
     const { demandZones, supplyZones } = this.findZones(candlesM5);
     const fvgZones = this.findFVGs(candlesM5);
     const avgRange = this.getAvgRange(candlesM5);
