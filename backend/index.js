@@ -1,16 +1,15 @@
 // =============================================
-// TRADING MASTER PRO v14.0 - PLATAFORMA COMPLETA
+// TRADING MASTER PRO v16.0 - PLATAFORMA COMPLETA
 // Motor SMC + ELISA IA + Telegram + Supabase + Admin
-// v14.0: MTF OPCIONAL + Nuevos modelos SMC + Sin restricciones
+// v16.0: 12 Modelos SMC con Zona Válida de Order Block
 // =============================================
 // 
-// CAMBIOS v14.0:
-// - MTF Confluence ahora es OPCIONAL (configurable)
-// - Nuevos modelos: OB_ENTRY, STRUCTURE_BREAK, REVERSAL_PATTERN, PREMIUM_DISCOUNT
-// - Modelos Boom/Crash separados: BOOM_SPIKE, CRASH_SPIKE
-// - Score mínimo reducido a 70 para más entradas
-// - Cooldowns reducidos para operativa más activa
-// - Todos los modelos pueden operar sin MTF con scores base ajustados
+// CAMBIOS v16.0:
+// - 12 Modelos SMC optimizados con validación de Zona OB
+// - Eliminados: ZONE_TOUCH, LIQUIDITY_SWEEP, STRUCTURE_BREAK, REVERSAL_PATTERN, PREMIUM_DISCOUNT
+// - Todos los modelos requieren zona válida de Order Block
+// - LONG: Vela ROJA + VERDE envolvente (acumulación)
+// - SHORT: Vela VERDE + ROJA envolvente (distribución)
 //
 // VARIABLES DE ENTORNO REQUERIDAS:
 // --------------------------------
@@ -200,26 +199,20 @@ const SIGNAL_CONFIG = {
   REQUIRE_MTF_CONFLUENCE: false, // ⚠️ DESHABILITADO - Operar sin restricciones
   
   // Modelos que SIEMPRE pueden operar sin MTF (independiente de la config anterior)
-  // Incluye todos los modelos SMC para máxima flexibilidad
+  // v16: 12 Modelos SMC con Zona Válida de Order Block
   MODELS_WITHOUT_MTF: [
-    'MTF_CONFLUENCE', 
-    'CHOCH_PULLBACK', 
-    'BOOM_SPIKE', 
-    'CRASH_SPIKE',
-    'LIQUIDITY_SWEEP',
-    'BOS_CONTINUATION',
-    'ZONE_TOUCH',
-    'FVG_ENTRY',
-    'OB_ENTRY',
-    'STRUCTURE_BREAK',
-    'REVERSAL_PATTERN',
-    'PREMIUM_DISCOUNT',
-    // v14.3: Nuevos modelos avanzados
-    'BREAKER_BLOCK',
-    'INDUCEMENT',
-    'OTE_ENTRY',
-    'LIQUIDITY_GRAB',
-    'SMART_MONEY_TRAP'
+    'MTF_CONFLUENCE',    // Tier S
+    'OTE_ENTRY',         // Tier S
+    'CHOCH_PULLBACK',    // Tier A
+    'INDUCEMENT',        // Tier A
+    'BOOM_SPIKE',        // Tier A
+    'CRASH_SPIKE',       // Tier A
+    'BREAKER_BLOCK',     // Tier B
+    'LIQUIDITY_GRAB',    // Tier B
+    'BOS_CONTINUATION',  // Tier B
+    'SMART_MONEY_TRAP',  // Tier C
+    'FVG_ENTRY',         // Tier C
+    'OB_ENTRY'           // Tier C
   ],
   
   // Máximo de señales pendientes simultáneas totales

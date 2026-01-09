@@ -83,15 +83,25 @@ const ElisaChat = ({ selectedAsset, isMobile }) => {
   if (!isOpen) {
     return (
       <button onClick={openChat}
-        className={`fixed z-[100] flex items-center gap-2 bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-400 hover:to-purple-500 text-white rounded-2xl shadow-xl transition-transform hover:scale-105 ${
+        className={`fixed z-[100] flex items-center gap-3 bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-400 hover:to-purple-500 text-white rounded-2xl shadow-xl transition-transform hover:scale-105 ${
           isMobile ? 'bottom-4 right-4 px-3 py-2.5' : 'bottom-6 right-6 px-4 py-3'
         }`}>
-        <AIIcon size={24} />
-        <div className="text-left">
-          <p className="font-semibold text-sm">Elisa</p>
-          {!isMobile && <p className="text-xs text-white/70">IA Assistant</p>}
+        <div className="relative">
+          <img 
+            src="/elisa.png" 
+            alt="ELISA" 
+            className="w-10 h-10 rounded-full object-cover border-2 border-white/30"
+            onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
+          />
+          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-pink-400 to-purple-500 items-center justify-center text-lg font-bold hidden">
+            <AIIcon size={24} />
+          </div>
+          <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-400 rounded-full border-2 border-purple-600 animate-pulse" />
         </div>
-        <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+        <div className="text-left">
+          <p className="font-bold text-sm">ELISA</p>
+          {!isMobile && <p className="text-xs text-white/70">IA Trading Expert</p>}
+        </div>
       </button>
     );
   }
@@ -99,15 +109,24 @@ const ElisaChat = ({ selectedAsset, isMobile }) => {
   return (
     <div className={`fixed z-[100] bg-[#0d0d12] rounded-2xl shadow-2xl border border-white/10 flex flex-col ${
       isMobile ? 'inset-2' : 'bottom-6 right-6 w-[380px]'
-    }`} style={{ height: isMobile ? 'calc(100% - 16px)' : '500px' }}>
+    }`} style={{ height: isMobile ? 'calc(100% - 16px)' : '520px' }}>
       <div className="flex items-center justify-between p-3 bg-gradient-to-r from-pink-500 to-purple-600 rounded-t-2xl">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
-            <AIIcon size={28} />
+          <div className="relative">
+            <img 
+              src="/elisa.png" 
+              alt="ELISA" 
+              className="w-11 h-11 rounded-full object-cover border-2 border-white/30 shadow-lg"
+              onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
+            />
+            <div className="w-11 h-11 rounded-full bg-white/20 items-center justify-center hidden">
+              <AIIcon size={28} />
+            </div>
+            <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-400 rounded-full border-2 border-purple-600" />
           </div>
           <div>
-            <p className="font-semibold text-white">Elisa</p>
-            <p className="text-xs text-white/70">IA Trading Assistant</p>
+            <p className="font-bold text-white">ELISA</p>
+            <p className="text-xs text-white/70">IA Trading Expert</p>
           </div>
         </div>
         <button onClick={() => setIsOpen(false)} className="w-8 h-8 rounded-lg bg-white/20 hover:bg-white/30 flex items-center justify-center">
@@ -121,9 +140,12 @@ const ElisaChat = ({ selectedAsset, isMobile }) => {
         {messages.map((msg, i) => (
           <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             {msg.role === 'assistant' && (
-              <div className="w-7 h-7 rounded-full bg-gradient-to-r from-pink-500 to-purple-600 flex items-center justify-center mr-2 flex-shrink-0">
-                <AIIcon size={18} />
-              </div>
+              <img 
+                src="/elisa.png" 
+                alt="ELISA" 
+                className="w-8 h-8 rounded-full object-cover mr-2 flex-shrink-0 border border-pink-500/30"
+                onError={(e) => { e.target.src = ''; e.target.className = 'w-8 h-8 rounded-full bg-gradient-to-r from-pink-500 to-purple-600 mr-2 flex-shrink-0'; }}
+              />
             )}
             <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 ${
               msg.role === 'user' ? 'bg-gradient-to-r from-pink-500 to-purple-600 text-white' : 'bg-white/5 text-white/90'
@@ -134,9 +156,12 @@ const ElisaChat = ({ selectedAsset, isMobile }) => {
         ))}
         {loading && (
           <div className="flex justify-start">
-            <div className="w-7 h-7 rounded-full bg-gradient-to-r from-pink-500 to-purple-600 flex items-center justify-center mr-2">
-              <AIIcon size={18} />
-            </div>
+            <img 
+              src="/elisa.png" 
+              alt="ELISA" 
+              className="w-8 h-8 rounded-full object-cover mr-2 flex-shrink-0 border border-pink-500/30"
+              onError={(e) => { e.target.src = ''; e.target.className = 'w-8 h-8 rounded-full bg-gradient-to-r from-pink-500 to-purple-600 mr-2 flex-shrink-0'; }}
+            />
             <div className="bg-white/5 rounded-2xl px-4 py-3 flex gap-1.5">
               <div className="w-2 h-2 bg-pink-400 rounded-full animate-bounce" />
               <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
