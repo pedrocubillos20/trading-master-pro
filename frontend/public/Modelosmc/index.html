@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ELISA v16 - Modelos SMC con Zona Válida OB</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: linear-gradient(135deg, #0a0a1a 0%, #1a1a3a 100%);
+            color: #e0e0e0;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container { max-width: 1400px; margin: 0 auto; }
+        
+        /* Header */
+        .header {
+            text-align: center;
+            padding: 30px;
+            background: linear-gradient(135deg, #1a1a3a, #2a2a5a);
+            border-radius: 20px;
+            margin-bottom: 30px;
+            border: 2px solid #ffd700;
+        }
+        .header h1 {
+            font-size: 2.5em;
+            background: linear-gradient(90deg, #ffd700, #ff8c00);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+        }
+        .version {
+            font-size: 1.2em;
+            color: #00ff88;
+        }
+        
+        /* Requisito Universal */
+        .universal-req {
+            background: linear-gradient(135deg, #2d1f1f, #3d2f2f);
+            border: 3px solid #ff4444;
+            border-radius: 20px;
+            padding: 30px;
+            margin-bottom: 30px;
+        }
+        .universal-req h2 {
+            color: #ff4444;
+            font-size: 1.8em;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        .universal-req .subtitle {
+            text-align: center;
+            color: #ffaa00;
+            font-size: 1.2em;
+            margin-bottom: 25px;
+        }
+        
+        /* Zona OB Grid */
+        .ob-zone-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-top: 20px;
+        }
+        .ob-zone-card {
+            background: rgba(0,0,0,0.3);
+            border-radius: 15px;
+            padding: 25px;
+            border: 2px solid;
+        }
+        .ob-zone-card.buy { border-color: #00ff88; }
+        .ob-zone-card.sell { border-color: #ff4444; }
+        
+        .ob-zone-card h3 {
+            font-size: 1.5em;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        .ob-zone-card.buy h3 { color: #00ff88; }
+        .ob-zone-card.sell h3 { color: #ff4444; }
+        
+        /* Candlestick Visual */
+        .candle-visual {
+            display: flex;
+            justify-content: center;
+            align-items: flex-end;
+            gap: 20px;
+            margin: 25px 0;
+            padding: 30px;
+            background: rgba(0,0,0,0.4);
+            border-radius: 10px;
+            min-height: 180px;
+        }
+        .candle-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .candle {
+            width: 50px;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .candle .wick {
+            width: 3px;
+            background: #888;
+        }
+        .candle .body {
+            width: 100%;
+            border-radius: 3px;
+        }
+        .candle.red .body { background: linear-gradient(180deg, #ff4444, #cc0000); }
+        .candle.green .body { background: linear-gradient(180deg, #00ff88, #00aa55); }
+        .candle-label {
+            margin-top: 10px;
+            font-size: 0.9em;
+            color: #aaa;
+            text-align: center;
+        }
+        .arrow {
+            font-size: 2em;
+            color: #ffd700;
+            margin: 0 10px;
+            align-self: center;
+        }
+        
+        /* Explanation */
+        .explanation {
+            margin-top: 20px;
+            padding: 15px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 10px;
+        }
+        .explanation p {
+            margin-bottom: 10px;
+            line-height: 1.6;
+        }
+        .explanation strong {
+            color: #ffd700;
+        }
+        
+        /* SMC Concept */
+        .smc-concept {
+            background: linear-gradient(135deg, #1f2d1f, #2f3d2f);
+            border: 2px solid #00ff88;
+            border-radius: 15px;
+            padding: 20px;
+            margin-top: 25px;
+            text-align: center;
+        }
+        .smc-concept h4 {
+            color: #00ff88;
+            margin-bottom: 10px;
+        }
+        
+        /* Tiers */
+        .tier-section {
+            margin-bottom: 30px;
+        }
+        .tier-header {
+            padding: 15px 25px;
+            border-radius: 15px 15px 0 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .tier-header.tier-s { background: linear-gradient(90deg, #ffd700, #ff8c00); color: #000; }
+        .tier-header.tier-a { background: linear-gradient(90deg, #00ff88, #00aa55); color: #000; }
+        .tier-header.tier-b { background: linear-gradient(90deg, #4488ff, #2255cc); color: #fff; }
+        .tier-header.tier-c { background: linear-gradient(90deg, #888888, #555555); color: #fff; }
+        
+        .tier-header h3 { font-size: 1.3em; }
+        .score-range {
+            background: rgba(0,0,0,0.3);
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-weight: bold;
+        }
+        
+        /* Models Grid */
+        .models-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+            padding: 20px;
+            background: rgba(0,0,0,0.3);
+            border-radius: 0 0 15px 15px;
+        }
+        
+        /* Model Card */
+        .model-card {
+            background: linear-gradient(135deg, #1a1a3a, #2a2a4a);
+            border-radius: 15px;
+            padding: 20px;
+            border: 1px solid rgba(255,255,255,0.1);
+            transition: all 0.3s;
+        }
+        .model-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            border-color: #ffd700;
+        }
+        .model-card h4 {
+            font-size: 1.2em;
+            margin-bottom: 10px;
+            color: #ffd700;
+        }
+        .model-card .description {
+            color: #aaa;
+            font-size: 0.9em;
+            margin-bottom: 15px;
+        }
+        
+        /* Requirements */
+        .requirements {
+            background: rgba(0,0,0,0.3);
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+        .requirements h5 {
+            color: #00ff88;
+            margin-bottom: 10px;
+            font-size: 0.9em;
+        }
+        .requirements ul {
+            list-style: none;
+            font-size: 0.85em;
+        }
+        .requirements li {
+            padding: 5px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        .requirements li:last-child { border: none; }
+        .requirements .ob-req {
+            color: #ff8800;
+            font-weight: bold;
+        }
+        
+        /* Entry Conditions */
+        .entry-conditions {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+        .entry-box {
+            padding: 10px;
+            border-radius: 8px;
+            font-size: 0.8em;
+        }
+        .entry-box.buy {
+            background: rgba(0, 255, 136, 0.1);
+            border: 1px solid #00ff88;
+        }
+        .entry-box.sell {
+            background: rgba(255, 68, 68, 0.1);
+            border: 1px solid #ff4444;
+        }
+        .entry-box strong {
+            display: block;
+            margin-bottom: 5px;
+        }
+        .entry-box.buy strong { color: #00ff88; }
+        .entry-box.sell strong { color: #ff4444; }
+        
+        /* OB Zone Badge */
+        .ob-badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 5px;
+            font-size: 0.75em;
+            margin-top: 5px;
+        }
+        .ob-badge.buy {
+            background: rgba(0, 255, 136, 0.2);
+            color: #00ff88;
+        }
+        .ob-badge.sell {
+            background: rgba(255, 68, 68, 0.2);
+            color: #ff4444;
+        }
+        
+        /* Score Badge */
+        .score-badge {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: linear-gradient(135deg, #ffd700, #ff8c00);
+            color: #000;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-weight: bold;
+            font-size: 0.9em;
+        }
+        .model-card { position: relative; }
+        
+        /* Footer */
+        .footer {
+            text-align: center;
+            padding: 30px;
+            margin-top: 30px;
+            color: #666;
+        }
+        .footer .highlight {
+            color: #ffd700;
+            font-weight: bold;
+        }
+        
+        @media (max-width: 768px) {
+            .ob-zone-grid { grid-template-columns: 1fr; }
+            .entry-conditions { grid-template-columns: 1fr; }
+            .models-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>🤖 ELISA Trading Platform</h1>
+            <div class="version">Versión 16.0 - Zona Válida de Order Block</div>
+            <p style="margin-top: 15px; color: #aaa;">12 Modelos SMC con requisito universal de formación OB correcta</p>
+        </div>
+        
+        <!-- Requisito Universal -->
+        <div class="universal-req">
+            <h2>⚠️ REQUISITO UNIVERSAL - TODOS LOS MODELOS</h2>
+            <div class="subtitle">Zona Válida de Order Block - La verdadera formación SMC</div>
+            
+            <div class="ob-zone-grid">
+                <!-- BUY Zone -->
+                <div class="ob-zone-card buy">
+                    <h3>🟢 ZONA VÁLIDA PARA COMPRA (LONG)</h3>
+                    <div class="candle-visual">
+                        <div class="candle-container">
+                            <div class="candle red">
+                                <div class="wick" style="height: 20px;"></div>
+                                <div class="body" style="height: 60px;"></div>
+                                <div class="wick" style="height: 15px;"></div>
+                            </div>
+                            <div class="candle-label">Vela ROJA<br>(Base)</div>
+                        </div>
+                        <span class="arrow">→</span>
+                        <div class="candle-container">
+                            <div class="candle green">
+                                <div class="wick" style="height: 15px;"></div>
+                                <div class="body" style="height: 90px;"></div>
+                                <div class="wick" style="height: 10px;"></div>
+                            </div>
+                            <div class="candle-label">Vela VERDE<br>(Envolvente)</div>
+                        </div>
+                    </div>
+                    <div class="explanation">
+                        <p><strong>🔴 Vela Roja (Base):</strong> Representa distribución FALSA. Smart Money está acumulando mientras retail vende.</p>
+                        <p><strong>🟢 Vela Verde (Envolvente):</strong> Confirma la acumulación real. El cuerpo verde debe envolver completamente al cuerpo rojo.</p>
+                        <p><strong>📏 Requisito:</strong> Cuerpo verde ≥ 1.2x el cuerpo rojo</p>
+                    </div>
+                </div>
+                
+                <!-- SELL Zone -->
+                <div class="ob-zone-card sell">
+                    <h3>🔴 ZONA VÁLIDA PARA VENTA (SHORT)</h3>
+                    <div class="candle-visual">
+                        <div class="candle-container">
+                            <div class="candle green">
+                                <div class="wick" style="height: 15px;"></div>
+                                <div class="body" style="height: 60px;"></div>
+                                <div class="wick" style="height: 20px;"></div>
+                            </div>
+                            <div class="candle-label">Vela VERDE<br>(Base)</div>
+                        </div>
+                        <span class="arrow">→</span>
+                        <div class="candle-container">
+                            <div class="candle red">
+                                <div class="wick" style="height: 10px;"></div>
+                                <div class="body" style="height: 90px;"></div>
+                                <div class="wick" style="height: 15px;"></div>
+                            </div>
+                            <div class="candle-label">Vela ROJA<br>(Envolvente)</div>
+                        </div>
+                    </div>
+                    <div class="explanation">
+                        <p><strong>🟢 Vela Verde (Base):</strong> Representa acumulación FALSA. Smart Money está distribuyendo mientras retail compra.</p>
+                        <p><strong>🔴 Vela Roja (Envolvente):</strong> Confirma la distribución real. El cuerpo rojo debe envolver completamente al cuerpo verde.</p>
+                        <p><strong>📏 Requisito:</strong> Cuerpo rojo ≥ 1.2x el cuerpo verde</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="smc-concept">
+                <h4>💡 CONCEPTO SMC</h4>
+                <p>Esta es la <strong>VERDADERA</strong> formación de Order Block según Smart Money Concepts.<br>
+                Sin esta formación, <strong>NO HAY Order Block válido</strong> y la señal NO se genera.</p>
+            </div>
+        </div>
+        
+        <!-- TIER S -->
+        <div class="tier-section">
+            <div class="tier-header tier-s">
+                <h3>⭐ TIER S - MODELOS ELITE</h3>
+                <span class="score-range">95-100 pts</span>
+            </div>
+            <div class="models-grid">
+                <div class="model-card">
+                    <span class="score-badge">95-100</span>
+                    <h4>MTF_CONFLUENCE</h4>
+                    <div class="description">Confluencia Multi-Timeframe con Zona OB válida</div>
+                    <div class="requirements">
+                        <h5>Requisitos Obligatorios:</h5>
+                        <ul>
+                            <li class="ob-req">✅ ZONA VÁLIDA OB (roja+verde / verde+roja)</li>
+                            <li>✅ H1 y M5 alineados en misma dirección</li>
+                            <li>✅ Pullback hacia zona de valor</li>
+                            <li>✅ Side coincide con tendencia H1</li>
+                        </ul>
+                    </div>
+                    <div class="entry-conditions">
+                        <div class="entry-box buy">
+                            <strong>🟢 LONG</strong>
+                            H1 BULLISH + Pullback BUY
+                            <div class="ob-badge buy">🔴→🟢 Zona OB</div>
+                        </div>
+                        <div class="entry-box sell">
+                            <strong>🔴 SHORT</strong>
+                            H1 BEARISH + Pullback SELL
+                            <div class="ob-badge sell">🟢→🔴 Zona OB</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="model-card">
+                    <span class="score-badge">82-95</span>
+                    <h4>OTE_ENTRY</h4>
+                    <div class="description">Zona Fibonacci 62-79% con OB válido</div>
+                    <div class="requirements">
+                        <h5>Requisitos Obligatorios:</h5>
+                        <ul>
+                            <li class="ob-req">✅ ZONA VÁLIDA OB (roja+verde / verde+roja)</li>
+                            <li>✅ CHoCH detectado</li>
+                            <li>✅ Precio en zona OTE (Fib 62-79%)</li>
+                            <li>✅ Pullback activo</li>
+                        </ul>
+                    </div>
+                    <div class="entry-conditions">
+                        <div class="entry-box buy">
+                            <strong>🟢 LONG</strong>
+                            OTE alcista + CHoCH BUY
+                            <div class="ob-badge buy">🔴→🟢 Zona OB</div>
+                        </div>
+                        <div class="entry-box sell">
+                            <strong>🔴 SHORT</strong>
+                            OTE bajista + CHoCH SELL
+                            <div class="ob-badge sell">🟢→🔴 Zona OB</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- TIER A -->
+        <div class="tier-section">
+            <div class="tier-header tier-a">
+                <h3>🥇 TIER A - ALTA CALIDAD</h3>
+                <span class="score-range">80-95 pts</span>
+            </div>
+            <div class="models-grid">
+                <div class="model-card">
+                    <span class="score-badge">85-95</span>
+                    <h4>CHOCH_PULLBACK</h4>
+                    <div class="description">Change of Character + Pullback + OB válido</div>
+                    <div class="requirements">
+                        <h5>Requisitos Obligatorios:</h5>
+                        <ul>
+                            <li class="ob-req">✅ ZONA VÁLIDA OB (roja+verde / verde+roja)</li>
+                            <li>✅ CHoCH detectado</li>
+                            <li>✅ Pullback en misma dirección</li>
+                            <li>✅ H1 no en contra</li>
+                        </ul>
+                    </div>
+                    <div class="entry-conditions">
+                        <div class="entry-box buy">
+                            <strong>🟢 LONG</strong>
+                            CHoCH alcista + Pullback
+                            <div class="ob-badge buy">🔴→🟢 Zona OB</div>
+                        </div>
+                        <div class="entry-box sell">
+                            <strong>🔴 SHORT</strong>
+                            CHoCH bajista + Pullback
+                            <div class="ob-badge sell">🟢→🔴 Zona OB</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="model-card">
+                    <span class="score-badge">80-92</span>
+                    <h4>INDUCEMENT</h4>
+                    <div class="description">Barrido de Liquidez + Reversión + OB válido</div>
+                    <div class="requirements">
+                        <h5>Requisitos Obligatorios:</h5>
+                        <ul>
+                            <li class="ob-req">✅ ZONA VÁLIDA OB (roja+verde / verde+roja)</li>
+                            <li>✅ Barrido de máx/mín recientes</li>
+                            <li>✅ Reversión inmediata</li>
+                            <li>✅ Mecha > 50% cuerpo</li>
+                        </ul>
+                    </div>
+                    <div class="entry-conditions">
+                        <div class="entry-box buy">
+                            <strong>🟢 LONG</strong>
+                            Barrido mínimos + reversión
+                            <div class="ob-badge buy">🔴→🟢 Zona OB</div>
+                        </div>
+                        <div class="entry-box sell">
+                            <strong>🔴 SHORT</strong>
+                            Barrido máximos + reversión
+                            <div class="ob-badge sell">🟢→🔴 Zona OB</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="model-card">
+                    <span class="score-badge">80-92</span>
+                    <h4>BOOM_SPIKE</h4>
+                    <div class="description">Spike en Boom 500/1000 (SOLO LONG)</div>
+                    <div class="requirements">
+                        <h5>Requisitos Obligatorios:</h5>
+                        <ul>
+                            <li class="ob-req">✅ ZONA VÁLIDA OB (roja+verde)</li>
+                            <li>✅ Activo: Boom 500/1000</li>
+                            <li>✅ Spike alcista (cuerpo > 3x promedio)</li>
+                            <li>✅ SOLO operaciones LONG</li>
+                        </ul>
+                    </div>
+                    <div class="entry-conditions">
+                        <div class="entry-box buy">
+                            <strong>🟢 LONG</strong>
+                            Spike detectado
+                            <div class="ob-badge buy">🔴→🟢 Zona OB</div>
+                        </div>
+                        <div class="entry-box sell" style="opacity: 0.3;">
+                            <strong>❌ SHORT</strong>
+                            NO PERMITIDO
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="model-card">
+                    <span class="score-badge">80-92</span>
+                    <h4>CRASH_SPIKE</h4>
+                    <div class="description">Spike en Crash 500/1000 (SOLO SHORT)</div>
+                    <div class="requirements">
+                        <h5>Requisitos Obligatorios:</h5>
+                        <ul>
+                            <li class="ob-req">✅ ZONA VÁLIDA OB (verde+roja)</li>
+                            <li>✅ Activo: Crash 500/1000</li>
+                            <li>✅ Spike bajista (cuerpo > 3x promedio)</li>
+                            <li>✅ SOLO operaciones SHORT</li>
+                        </ul>
+                    </div>
+                    <div class="entry-conditions">
+                        <div class="entry-box buy" style="opacity: 0.3;">
+                            <strong>❌ LONG</strong>
+                            NO PERMITIDO
+                        </div>
+                        <div class="entry-box sell">
+                            <strong>🔴 SHORT</strong>
+                            Spike detectado
+                            <div class="ob-badge sell">🟢→🔴 Zona OB</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- TIER B -->
+        <div class="tier-section">
+            <div class="tier-header tier-b">
+                <h3>🥈 TIER B - BUENA CALIDAD</h3>
+                <span class="score-range">75-90 pts</span>
+            </div>
+            <div class="models-grid">
+                <div class="model-card">
+                    <span class="score-badge">78-90</span>
+                    <h4>BREAKER_BLOCK</h4>
+                    <div class="description">OB fallido = Zona opuesta + OB válido</div>
+                    <div class="requirements">
+                        <h5>Requisitos Obligatorios:</h5>
+                        <ul>
+                            <li class="ob-req">✅ ZONA VÁLIDA OB (roja+verde / verde+roja)</li>
+                            <li>✅ BOS detectado</li>
+                            <li>✅ CHoCH detectado</li>
+                            <li>✅ OB previo roto</li>
+                        </ul>
+                    </div>
+                    <div class="entry-conditions">
+                        <div class="entry-box buy">
+                            <strong>🟢 LONG</strong>
+                            Breaker alcista
+                            <div class="ob-badge buy">🔴→🟢 Zona OB</div>
+                        </div>
+                        <div class="entry-box sell">
+                            <strong>🔴 SHORT</strong>
+                            Breaker bajista
+                            <div class="ob-badge sell">🟢→🔴 Zona OB</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="model-card">
+                    <span class="score-badge">78-90</span>
+                    <h4>LIQUIDITY_GRAB</h4>
+                    <div class="description">Patrón 2-3 velas + reversión + OB válido</div>
+                    <div class="requirements">
+                        <h5>Requisitos Obligatorios:</h5>
+                        <ul>
+                            <li class="ob-req">✅ ZONA VÁLIDA OB (roja+verde / verde+roja)</li>
+                            <li>✅ Rompe máx/mín previo</li>
+                            <li>✅ Cierre dentro del rango</li>
+                            <li>✅ Confirmación de reversión</li>
+                        </ul>
+                    </div>
+                    <div class="entry-conditions">
+                        <div class="entry-box buy">
+                            <strong>🟢 LONG</strong>
+                            Grab bajista fallido
+                            <div class="ob-badge buy">🔴→🟢 Zona OB</div>
+                        </div>
+                        <div class="entry-box sell">
+                            <strong>🔴 SHORT</strong>
+                            Grab alcista fallido
+                            <div class="ob-badge sell">🟢→🔴 Zona OB</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="model-card">
+                    <span class="score-badge">75-88</span>
+                    <h4>BOS_CONTINUATION</h4>
+                    <div class="description">Break of Structure + Pullback + OB válido</div>
+                    <div class="requirements">
+                        <h5>Requisitos Obligatorios:</h5>
+                        <ul>
+                            <li class="ob-req">✅ ZONA VÁLIDA OB (roja+verde / verde+roja)</li>
+                            <li>✅ BOS detectado</li>
+                            <li>✅ Pullback en misma dirección</li>
+                            <li>✅ No es CHoCH (continuación)</li>
+                        </ul>
+                    </div>
+                    <div class="entry-conditions">
+                        <div class="entry-box buy">
+                            <strong>🟢 LONG</strong>
+                            BOS alcista + pullback
+                            <div class="ob-badge buy">🔴→🟢 Zona OB</div>
+                        </div>
+                        <div class="entry-box sell">
+                            <strong>🔴 SHORT</strong>
+                            BOS bajista + pullback
+                            <div class="ob-badge sell">🟢→🔴 Zona OB</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- TIER C -->
+        <div class="tier-section">
+            <div class="tier-header tier-c">
+                <h3>🥉 TIER C - COMPLEMENTARIOS</h3>
+                <span class="score-range">72-88 pts</span>
+            </div>
+            <div class="models-grid">
+                <div class="model-card">
+                    <span class="score-badge">75-87</span>
+                    <h4>SMART_MONEY_TRAP</h4>
+                    <div class="description">Falso breakout + trampa retail + OB válido</div>
+                    <div class="requirements">
+                        <h5>Requisitos Obligatorios:</h5>
+                        <ul>
+                            <li class="ob-req">✅ ZONA VÁLIDA OB (roja+verde / verde+roja)</li>
+                            <li>✅ BOS aparente detectado</li>
+                            <li>✅ Order Flow >= 60%</li>
+                            <li>✅ Precio revierte post-BOS</li>
+                        </ul>
+                    </div>
+                    <div class="entry-conditions">
+                        <div class="entry-box buy">
+                            <strong>🟢 LONG</strong>
+                            Trampa bajista
+                            <div class="ob-badge buy">🔴→🟢 Zona OB</div>
+                        </div>
+                        <div class="entry-box sell">
+                            <strong>🔴 SHORT</strong>
+                            Trampa alcista
+                            <div class="ob-badge sell">🟢→🔴 Zona OB</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="model-card">
+                    <span class="score-badge">72-85</span>
+                    <h4>FVG_ENTRY</h4>
+                    <div class="description">Fair Value Gap + OB válido</div>
+                    <div class="requirements">
+                        <h5>Requisitos Obligatorios:</h5>
+                        <ul>
+                            <li class="ob-req">✅ ZONA VÁLIDA OB (roja+verde / verde+roja)</li>
+                            <li>✅ FVG detectado</li>
+                            <li>✅ Precio en zona FVG</li>
+                            <li>✅ Pullback alineado</li>
+                        </ul>
+                    </div>
+                    <div class="entry-conditions">
+                        <div class="entry-box buy">
+                            <strong>🟢 LONG</strong>
+                            En FVG alcista
+                            <div class="ob-badge buy">🔴→🟢 Zona OB</div>
+                        </div>
+                        <div class="entry-box sell">
+                            <strong>🔴 SHORT</strong>
+                            En FVG bajista
+                            <div class="ob-badge sell">🟢→🔴 Zona OB</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="model-card">
+                    <span class="score-badge">72-88</span>
+                    <h4>OB_ENTRY</h4>
+                    <div class="description">Entrada directa en Order Block válido</div>
+                    <div class="requirements">
+                        <h5>Requisitos Obligatorios:</h5>
+                        <ul>
+                            <li class="ob-req">✅ ZONA VÁLIDA OB (roja+verde / verde+roja)</li>
+                            <li>✅ Pullback a zona demanda/oferta</li>
+                            <li>✅ Tipo: DEMAND o SUPPLY ZONE</li>
+                        </ul>
+                    </div>
+                    <div class="entry-conditions">
+                        <div class="entry-box buy">
+                            <strong>🟢 LONG</strong>
+                            Pullback a Demand Zone
+                            <div class="ob-badge buy">🔴→🟢 Zona OB</div>
+                        </div>
+                        <div class="entry-box sell">
+                            <strong>🔴 SHORT</strong>
+                            Pullback a Supply Zone
+                            <div class="ob-badge sell">🟢→🔴 Zona OB</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Footer -->
+        <div class="footer">
+            <p><span class="highlight">ELISA Trading Platform v16.0</span></p>
+            <p>12 Modelos SMC con Zona Válida de Order Block</p>
+            <p style="margin-top: 10px;">Última actualización: 9 de Enero 2026</p>
+        </div>
+    </div>
+</body>
+</html>

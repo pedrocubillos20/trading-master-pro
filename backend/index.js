@@ -210,10 +210,16 @@ const SIGNAL_CONFIG = {
     'BOS_CONTINUATION',
     'ZONE_TOUCH',
     'FVG_ENTRY',
-    'OB_ENTRY',          // Nuevo
-    'STRUCTURE_BREAK',   // Nuevo
-    'REVERSAL_PATTERN',  // Nuevo
-    'PREMIUM_DISCOUNT'   // Nuevo
+    'OB_ENTRY',
+    'STRUCTURE_BREAK',
+    'REVERSAL_PATTERN',
+    'PREMIUM_DISCOUNT',
+    // v14.3: Nuevos modelos avanzados
+    'BREAKER_BLOCK',
+    'INDUCEMENT',
+    'OTE_ENTRY',
+    'LIQUIDITY_GRAB',
+    'SMART_MONEY_TRAP'
   ],
   
   // Máximo de señales pendientes simultáneas totales
@@ -1170,9 +1176,23 @@ const SMC = {
       const bodySize = Math.abs(curr.close - curr.open);
       if (bodySize < avgRange * 0.3) continue;
       
-      if (curr.close < curr.open) {
+      // ═══════════════════════════════════════════════════════════════
+      // DEMAND ZONE: Vela ROJA + Vela VERDE envolvente + Impulso
+      // Patrón correcto: Vela bajista seguida de vela alcista que envuelve
+      // ═══════════════════════════════════════════════════════════════
+      if (curr.close < curr.open) { // Vela ROJA (bajista)
+        const isNext1Bullish = next1.close > next1.open; // Siguiente es VERDE
+        
+        // Verificar si next1 es envolvente (cubre el cuerpo de curr)
+        const isEngulfing = isNext1Bullish && 
+                           next1.close > curr.open && // Cierre verde > apertura roja
+                           next1.open <= curr.close;  // Apertura verde <= cierre roja
+        
+        // También aceptar impulso fuerte aunque no sea envolvente perfecta
         const bullMove = Math.max(next1.close, next2.close) - curr.high;
-        if (bullMove > avgRange * 0.5) {
+        const hasStrongMove = bullMove > avgRange * 0.5;
+        
+        if (isEngulfing || hasStrongMove) {
           const exists = demandZones.some(z => Math.abs(z.mid - curr.low) < avgRange * 0.5);
           if (!exists) {
             demandZones.push({
@@ -1181,16 +1201,31 @@ const SMC = {
               low: curr.low,
               mid: (curr.open + curr.low) / 2,
               index: i,
-              strength: bullMove > avgRange ? 'STRONG' : 'NORMAL',
+              strength: isEngulfing ? 'STRONG' : (bullMove > avgRange ? 'STRONG' : 'NORMAL'),
+              pattern: isEngulfing ? 'ENGULFING' : 'IMPULSE',
               tested: false
             });
           }
         }
       }
       
-      if (curr.close > curr.open) {
+      // ═══════════════════════════════════════════════════════════════
+      // SUPPLY ZONE: Vela VERDE + Vela ROJA envolvente + Impulso bajista
+      // Patrón correcto: Vela alcista seguida de vela bajista que envuelve
+      // ═══════════════════════════════════════════════════════════════
+      if (curr.close > curr.open) { // Vela VERDE (alcista)
+        const isNext1Bearish = next1.close < next1.open; // Siguiente es ROJA
+        
+        // Verificar si next1 es envolvente bajista
+        const isEngulfing = isNext1Bearish &&
+                           next1.close < curr.open && // Cierre roja < apertura verde
+                           next1.open >= curr.close;  // Apertura roja >= cierre verde
+        
+        // También aceptar impulso fuerte aunque no sea envolvente perfecta
         const bearMove = curr.low - Math.min(next1.close, next2.close);
-        if (bearMove > avgRange * 0.5) {
+        const hasStrongMove = bearMove > avgRange * 0.5;
+        
+        if (isEngulfing || hasStrongMove) {
           const exists = supplyZones.some(z => Math.abs(z.mid - curr.high) < avgRange * 0.5);
           if (!exists) {
             supplyZones.push({
@@ -1199,7 +1234,8 @@ const SMC = {
               low: Math.min(curr.open, curr.close),
               mid: (curr.high + curr.open) / 2,
               index: i,
-              strength: bearMove > avgRange ? 'STRONG' : 'NORMAL',
+              strength: isEngulfing ? 'STRONG' : (bearMove > avgRange ? 'STRONG' : 'NORMAL'),
+              pattern: isEngulfing ? 'ENGULFING' : 'IMPULSE',
               tested: false
             });
           }
@@ -1678,8 +1714,8 @@ const SMC = {
       const hasRejection = wickSize > bodySize * 0.3;
       
       if (touchingZone && closeAboveZone && hasRejection) {
-        // Score base depende de Premium/Discount
-        let score = 70; // Base
+        // v14.3: ZONE_TOUCH reducido - es muy simple
+        let score = 60; // Base reducido (antes 70)
         if (premiumDiscount === 'DISCOUNT') score += 5; // Bonus por P/D correcto
         if (mtfConfluence && structureH1.trend === 'BULLISH') score += 8; // Bonus por MTF
         if (wickSize > bodySize * 0.5) score += 3; // Bonus por rechazo fuerte
@@ -1712,8 +1748,8 @@ const SMC = {
       const hasRejection = wickSize > bodySize * 0.3;
       
       if (touchingZone && closeBelowZone && hasRejection) {
-        // Score base depende de Premium/Discount
-        let score = 70; // Base
+        // v14.3: ZONE_TOUCH reducido - es muy simple
+        let score = 60; // Base reducido (antes 70)
         if (premiumDiscount === 'PREMIUM') score += 5; // Bonus por P/D correcto
         if (mtfConfluence && structureH1.trend === 'BEARISH') score += 8; // Bonus por MTF
         if (wickSize > bodySize * 0.5) score += 3; // Bonus por rechazo fuerte
@@ -1874,6 +1910,224 @@ const SMC = {
     }
     */
     
+    // ═══════════════════════════════════════════
+    // MODELOS SMC AVANZADOS v14.3
+    // ═══════════════════════════════════════════
+    
+    // 1. BREAKER_BLOCK - Order Block que falla y se convierte en zona opuesta
+    // Un OB alcista que es roto se convierte en resistencia (y viceversa)
+    if (bos && choch) {
+      // Si hay BOS y CHoCH juntos, el OB anterior falló = Breaker Block
+      const breakerEntry = {
+        side: choch.side,
+        entry: lastCandle.close,
+        stop: choch.side === 'BUY' ? choch.level - avgRange * 1.5 : choch.level + avgRange * 1.5,
+        tp1: choch.side === 'BUY' ? lastCandle.close + avgRange * 2 : lastCandle.close - avgRange * 2,
+        tp2: choch.side === 'BUY' ? lastCandle.close + avgRange * 3.5 : lastCandle.close - avgRange * 3.5,
+        tp3: choch.side === 'BUY' ? lastCandle.close + avgRange * 5 : lastCandle.close - avgRange * 5
+      };
+      
+      let score = 78;
+      if (mtfConfluence) score += 7;
+      const pdCorrect = (choch.side === 'BUY' && premiumDiscount === 'DISCOUNT') ||
+                        (choch.side === 'SELL' && premiumDiscount === 'PREMIUM');
+      if (pdCorrect) score += 5;
+      
+      signals.push({
+        model: 'BREAKER_BLOCK',
+        baseScore: score,
+        pullback: breakerEntry,
+        reason: `Breaker ${choch.side} + ${bos.type}${mtfConfluence ? ' + MTF' : ''}${pdCorrect ? ' + P/D' : ''}`
+      });
+    }
+    
+    // 2. INDUCEMENT - Trampa de liquidez (igual highs/lows que son barridos)
+    // Detecta cuando el precio barre un nivel obvio y revierte
+    const recentHighs = candlesM5.slice(-20).map(c => c.high);
+    const recentLows = candlesM5.slice(-20).map(c => c.low);
+    const highestRecent = Math.max(...recentHighs.slice(0, -3));
+    const lowestRecent = Math.min(...recentLows.slice(0, -3));
+    
+    // Barrido de máximos + reversión = SELL
+    if (lastCandle.high > highestRecent && lastCandle.close < highestRecent) {
+      const sweepWick = lastCandle.high - Math.max(lastCandle.open, lastCandle.close);
+      const sweepBody = Math.abs(lastCandle.close - lastCandle.open);
+      
+      if (sweepWick > sweepBody * 0.5) {
+        const indEntry = {
+          side: 'SELL',
+          entry: lastCandle.close,
+          stop: lastCandle.high + avgRange * 0.3,
+          tp1: lastCandle.close - avgRange * 2,
+          tp2: lastCandle.close - avgRange * 3.5,
+          tp3: lastCandle.close - avgRange * 5
+        };
+        
+        let score = 80;
+        if (structureH1.trend === 'BEARISH') score += 5;
+        if (premiumDiscount === 'PREMIUM') score += 5;
+        
+        signals.push({
+          model: 'INDUCEMENT',
+          baseScore: score,
+          pullback: indEntry,
+          reason: `Barrido de máximos + reversión${structureH1.trend === 'BEARISH' ? ' + H1 BEAR' : ''}`
+        });
+      }
+    }
+    
+    // Barrido de mínimos + reversión = BUY
+    if (lastCandle.low < lowestRecent && lastCandle.close > lowestRecent) {
+      const sweepWick = Math.min(lastCandle.open, lastCandle.close) - lastCandle.low;
+      const sweepBody = Math.abs(lastCandle.close - lastCandle.open);
+      
+      if (sweepWick > sweepBody * 0.5) {
+        const indEntry = {
+          side: 'BUY',
+          entry: lastCandle.close,
+          stop: lastCandle.low - avgRange * 0.3,
+          tp1: lastCandle.close + avgRange * 2,
+          tp2: lastCandle.close + avgRange * 3.5,
+          tp3: lastCandle.close + avgRange * 5
+        };
+        
+        let score = 80;
+        if (structureH1.trend === 'BULLISH') score += 5;
+        if (premiumDiscount === 'DISCOUNT') score += 5;
+        
+        signals.push({
+          model: 'INDUCEMENT',
+          baseScore: score,
+          pullback: indEntry,
+          reason: `Barrido de mínimos + reversión${structureH1.trend === 'BULLISH' ? ' + H1 BULL' : ''}`
+        });
+      }
+    }
+    
+    // 3. OPTIMAL_TRADE_ENTRY (OTE) - Entrada en el 62-79% del movimiento (Fibonacci)
+    if (choch && pullback) {
+      // Calcular el rango del movimiento
+      const moveHigh = Math.max(...candlesM5.slice(-10).map(c => c.high));
+      const moveLow = Math.min(...candlesM5.slice(-10).map(c => c.low));
+      const moveRange = moveHigh - moveLow;
+      
+      // Zona OTE = 62% - 79% del retroceso
+      const ote62 = choch.side === 'BUY' ? moveLow + moveRange * 0.21 : moveHigh - moveRange * 0.21;
+      const ote79 = choch.side === 'BUY' ? moveLow + moveRange * 0.38 : moveHigh - moveRange * 0.38;
+      
+      const inOTE = choch.side === 'BUY' 
+        ? (lastCandle.close >= ote62 && lastCandle.close <= ote79)
+        : (lastCandle.close <= ote62 && lastCandle.close >= ote79);
+      
+      if (inOTE) {
+        let score = 82;
+        if (mtfConfluence) score += 5;
+        const pdCorrect = (choch.side === 'BUY' && premiumDiscount === 'DISCOUNT') ||
+                          (choch.side === 'SELL' && premiumDiscount === 'PREMIUM');
+        if (pdCorrect) score += 5;
+        
+        signals.push({
+          model: 'OTE_ENTRY',
+          baseScore: score,
+          pullback,
+          reason: `OTE Fib 62-79%${mtfConfluence ? ' + MTF' : ''}${pdCorrect ? ' + P/D' : ''}`
+        });
+      }
+    }
+    
+    // 4. LIQUIDITY_GRAB - Barrido rápido de liquidez con rechazo inmediato
+    const prev2Candle = candlesM5[candlesM5.length - 3];
+    const prevCandle = candlesM5[candlesM5.length - 2];
+    
+    if (prev2Candle && prevCandle) {
+      // Patrón: vela rompe nivel, siguiente vela revierte fuerte
+      const brokeHigh = prevCandle.high > prev2Candle.high && prevCandle.close < prev2Candle.high;
+      const brokeLow = prevCandle.low < prev2Candle.low && prevCandle.close > prev2Candle.low;
+      
+      // Confirmación: vela actual continúa la reversión
+      if (brokeHigh && lastCandle.close < prevCandle.close) {
+        const lgEntry = {
+          side: 'SELL',
+          entry: lastCandle.close,
+          stop: prevCandle.high + avgRange * 0.3,
+          tp1: lastCandle.close - avgRange * 1.8,
+          tp2: lastCandle.close - avgRange * 3,
+          tp3: lastCandle.close - avgRange * 4.5
+        };
+        
+        let score = 78;
+        if (structureH1.trend === 'BEARISH') score += 5;
+        if (premiumDiscount === 'PREMIUM') score += 5;
+        
+        signals.push({
+          model: 'LIQUIDITY_GRAB',
+          baseScore: score,
+          pullback: lgEntry,
+          reason: `Grab alcista fallido${structureH1.trend === 'BEARISH' ? ' + H1 BEAR' : ''}`
+        });
+      }
+      
+      if (brokeLow && lastCandle.close > prevCandle.close) {
+        const lgEntry = {
+          side: 'BUY',
+          entry: lastCandle.close,
+          stop: prevCandle.low - avgRange * 0.3,
+          tp1: lastCandle.close + avgRange * 1.8,
+          tp2: lastCandle.close + avgRange * 3,
+          tp3: lastCandle.close + avgRange * 4.5
+        };
+        
+        let score = 78;
+        if (structureH1.trend === 'BULLISH') score += 5;
+        if (premiumDiscount === 'DISCOUNT') score += 5;
+        
+        signals.push({
+          model: 'LIQUIDITY_GRAB',
+          baseScore: score,
+          pullback: lgEntry,
+          reason: `Grab bajista fallido${structureH1.trend === 'BULLISH' ? ' + H1 BULL' : ''}`
+        });
+      }
+    }
+    
+    // 5. SMART_MONEY_TRAP - Falso breakout con volumen
+    // Detecta cuando el precio rompe un nivel y revierte rápido (trampa institucional)
+    if (bos && orderFlow.strength >= 60) {
+      const bosRecent = candlesM5.slice(-3).some(c => 
+        (bos.side === 'BUY' && c.high > bos.level) ||
+        (bos.side === 'SELL' && c.low < bos.level)
+      );
+      
+      // Si el BOS fue reciente pero el precio ya revirtió = trampa
+      const priceReversed = (bos.side === 'BUY' && lastCandle.close < bos.level) ||
+                           (bos.side === 'SELL' && lastCandle.close > bos.level);
+      
+      if (bosRecent && priceReversed) {
+        const trapSide = bos.side === 'BUY' ? 'SELL' : 'BUY';
+        const trapEntry = {
+          side: trapSide,
+          entry: lastCandle.close,
+          stop: trapSide === 'BUY' ? lastCandle.low - avgRange * 0.5 : lastCandle.high + avgRange * 0.5,
+          tp1: trapSide === 'BUY' ? lastCandle.close + avgRange * 2 : lastCandle.close - avgRange * 2,
+          tp2: trapSide === 'BUY' ? lastCandle.close + avgRange * 3.5 : lastCandle.close - avgRange * 3.5,
+          tp3: trapSide === 'BUY' ? lastCandle.close + avgRange * 5 : lastCandle.close - avgRange * 5
+        };
+        
+        let score = 75;
+        if (orderFlow.strength >= 70) score += 5;
+        const pdCorrect = (trapSide === 'BUY' && premiumDiscount === 'DISCOUNT') ||
+                          (trapSide === 'SELL' && premiumDiscount === 'PREMIUM');
+        if (pdCorrect) score += 5;
+        
+        signals.push({
+          model: 'SMART_MONEY_TRAP',
+          baseScore: score,
+          pullback: trapEntry,
+          reason: `Trampa ${bos.type}${orderFlow.strength >= 70 ? ' + Flow fuerte' : ''}${pdCorrect ? ' + P/D' : ''}`
+        });
+      }
+    }
+    
     if (signals.length === 0) {
       let reason = 'Esperando setup';
       if (!pullback) reason = 'Sin pullback a zona';
@@ -1926,13 +2180,16 @@ const SMC = {
     // ═══════════════════════════════════════════
     // AJUSTE DE SCORE CON SISTEMA DE APRENDIZAJE
     // ═══════════════════════════════════════════
-    const learningAdj = LearningSystem.getScoreAdjustment(best.model, symbol);
+    // Nota: Usamos config.shortName en lugar de symbol (que no existe en este contexto)
+    const learningAdj = LearningSystem.getScoreAdjustment(best.model, config.shortName);
     const finalScore = Math.min(100, Math.max(0, best.baseScore + learningAdj));
     
-    // Log siempre para debug
-    console.log(`📊 [${config.shortName}] Final: ${finalScore} (Base ${best.baseScore} + Learning ${learningAdj}) vs Min ${minScore}`);
+    // Log SIEMPRE para ver el score final
+    console.log(`📊 [${config.shortName}] Score Final: ${finalScore} vs Min: ${minScore} → ${finalScore >= minScore ? '✅ PASA' : '❌ NO PASA'}`);
     
+    // v14.1: Si el score es mayor a minScore, generar señal
     if (finalScore < minScore) {
+      console.log(`❌ [${config.shortName}] Rechazada internamente: ${finalScore} < ${minScore}`);
       return {
         action: 'WAIT',
         score: finalScore,
@@ -1946,6 +2203,9 @@ const SMC = {
         }
       };
     }
+    
+    // ✅ SCORE SUFICIENTE - GENERAR SEÑAL
+    console.log(`✅ [${config.shortName}] APROBADA: ${best.model} con score ${finalScore}`);
     
     const pb = best.pullback;
     return {
@@ -3035,25 +3295,31 @@ function analyzeAsset(symbol) {
   const signal = SMC.analyze(data.candles, data.candlesH1, config, data);
   data.signal = signal;
   
-  // 🔍 LOG DE DIAGNÓSTICO - Ver qué devuelve el análisis
-  if (signal.action !== 'WAIT' && signal.action !== 'LOADING') {
-    console.log(`🔎 [${config.shortName}] Análisis: ${signal.model} | Score: ${signal.score} | Action: ${signal.action}`);
-  }
+  // 🔍 LOG SIEMPRE - Ver qué devuelve el análisis
+  console.log(`🔎 [${config.shortName}] Resultado: ${signal.action} | ${signal.model} | Score: ${signal.score}`);
   
   // Ya tiene señal activa?
   if (data.lockedSignal) {
-    console.log(`🔒 [${config.shortName}] Ya tiene señal activa #${data.lockedSignal.id}`);
+    console.log(`🔒 [${config.shortName}] Bloqueado: Ya tiene señal activa #${data.lockedSignal.id}`);
     return;
   }
   
   // ═══════════════════════════════════════════
-  // FILTRO 5: Score mínimo más alto (75%)
+  // FILTRO 5: Score mínimo
   // ═══════════════════════════════════════════
-  if (signal.action === 'WAIT' || signal.action === 'LOADING') return;
-  if (signal.score < SIGNAL_CONFIG.MIN_SCORE) {
-    console.log(`⚠️ [${config.shortName}] Señal ${signal.model} rechazada - Score ${signal.score} < ${SIGNAL_CONFIG.MIN_SCORE}`);
+  if (signal.action === 'WAIT' || signal.action === 'LOADING') {
+    // No loguear WAIT porque sería spam
     return;
   }
+  
+  console.log(`📈 [${config.shortName}] Señal activa detectada: ${signal.action} ${signal.model} (${signal.score}pts)`);
+  
+  if (signal.score < SIGNAL_CONFIG.MIN_SCORE) {
+    console.log(`⚠️ [${config.shortName}] RECHAZADA: Score ${signal.score} < ${SIGNAL_CONFIG.MIN_SCORE} mínimo`);
+    return;
+  }
+  
+  console.log(`✅ [${config.shortName}] Pasó filtro de score: ${signal.score} >= ${SIGNAL_CONFIG.MIN_SCORE}`);
   
   // ═══════════════════════════════════════════
   // FILTRO 6: Requiere MTF Confluence (excepto modelos específicos)
