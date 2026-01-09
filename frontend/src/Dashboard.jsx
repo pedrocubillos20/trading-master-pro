@@ -204,7 +204,7 @@ const MiniChart = ({ candles, height = 200, signal = null }) => {
     const rect = svg.getBoundingClientRect();
     const w = rect.width || 600;
     const h = height;
-    const padding = { top: 10, right: 70, bottom: 20, left: 10 };
+    const padding = { top: 30, right: 70, bottom: 25, left: 10 };
     
     const visibleCandles = candles.slice(-60);
     
@@ -227,7 +227,165 @@ const MiniChart = ({ candles, height = 200, signal = null }) => {
     
     let html = '';
     
+    // ═══════════════════════════════════════════════════════════════
+    // ANOTACIONES EDUCATIVAS - Dibujar zonas y textos explicativos
+    // ═══════════════════════════════════════════════════════════════
+    
+    if (signal && signal.entry) {
+      const isLong = signal.action === 'LONG';
+      const model = signal.model || '';
+      
+      // Calcular zona del Order Block (aproximada entre entry y stop)
+      const obTop = isLong ? signal.entry : signal.stop;
+      const obBottom = isLong ? signal.stop : signal.entry;
+      const obZoneY = scaleY(obTop);
+      const obZoneH = scaleY(obBottom) - obZoneY;
+      
+      // Dibujar zona de demanda/supply (Order Block)
+      const zoneColor = isLong ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)';
+      const zoneBorder = isLong ? '#10b981' : '#ef4444';
+      const zoneName = isLong ? 'DEMAND ZONE' : 'SUPPLY ZONE';
+      
+      // Zona sombreada del OB
+      html += `<rect x="${padding.left}" y="${obZoneY}" width="${w - padding.left - padding.right}" height="${Math.abs(obZoneH)}" fill="${zoneColor}" stroke="${zoneBorder}" stroke-width="1" stroke-dasharray="4,2" opacity="0.8"/>`;
+      
+      // Etiqueta de la zona
+      html += `<text x="${padding.left + 10}" y="${obZoneY + Math.abs(obZoneH)/2 + 4}" fill="${zoneBorder}" font-family="Arial" font-size="11" font-weight="bold" opacity="0.9">— ${zoneName} —</text>`;
+      
+      // ═══════════════════════════════════════════════════════════════
+      // Buscar velas del Order Block (Roja + Verde para LONG, Verde + Roja para SHORT)
+      // ═══════════════════════════════════════════════════════════════
+      
+      let obIndex = -1;
+      for (let i = visibleCandles.length - 15; i < visibleCandles.length - 2; i++) {
+        if (i < 0) continue;
+        const c1 = visibleCandles[i];
+        const c2 = visibleCandles[i + 1];
+        if (!c1 || !c2) continue;
+        
+        const c1Red = c1.close < c1.open;
+        const c1Green = c1.close > c1.open;
+        const c2Red = c2.close < c2.open;
+        const c2Green = c2.close > c2.open;
+        
+        if (isLong && c1Red && c2Green) {
+          // OB para LONG: Vela Roja + Vela Verde
+          obIndex = i;
+          break;
+        } else if (!isLong && c1Green && c2Red) {
+          // OB para SHORT: Vela Verde + Vela Roja
+          obIndex = i;
+          break;
+        }
+      }
+      
+      // ═══════════════════════════════════════════════════════════════
+      // Dibujar anotaciones en las velas del OB
+      // ═══════════════════════════════════════════════════════════════
+      
+      if (obIndex >= 0) {
+        const c1 = visibleCandles[obIndex];
+        const c2 = visibleCandles[obIndex + 1];
+        const x1 = padding.left + obIndex * candleW + candleW / 2;
+        const x2 = padding.left + (obIndex + 1) * candleW + candleW / 2;
+        
+        // Círculo alrededor de la vela base
+        const c1Top = scaleY(Math.max(c1.open, c1.close));
+        const c1Bottom = scaleY(Math.min(c1.open, c1.close));
+        const c1Mid = (c1Top + c1Bottom) / 2;
+        
+        html += `<circle cx="${x1}" cy="${c1Mid}" r="${candleW * 0.8}" fill="none" stroke="#f59e0b" stroke-width="2" stroke-dasharray="3,2"/>`;
+        
+        // Etiqueta "Vela ROJA" o "Vela VERDE"
+        const c1Label = isLong ? 'Vela ROJA' : 'Vela VERDE';
+        const c1Color = isLong ? '#ef4444' : '#10b981';
+        html += `<text x="${x1}" y="${c1Bottom + 20}" text-anchor="middle" fill="${c1Color}" font-family="Arial" font-size="9" font-weight="bold">${c1Label}</text>`;
+        
+        // Flecha hacia la vela envolvente
+        html += `<line x1="${x1 + candleW * 0.5}" y1="${c1Mid}" x2="${x2 - candleW * 0.5}" y2="${c1Mid}" stroke="#f59e0b" stroke-width="2" marker-end="url(#arrowOrange)"/>`;
+        
+        // Etiqueta "Vela VERDE Envolvente" o "Vela ROJA Envolvente"
+        const c2Top = scaleY(Math.max(c2.open, c2.close));
+        const c2Bottom = scaleY(Math.min(c2.open, c2.close));
+        const c2Label = isLong ? 'VERDE' : 'ROJA';
+        const c2Color = isLong ? '#10b981' : '#ef4444';
+        html += `<text x="${x2}" y="${c2Bottom + 20}" text-anchor="middle" fill="${c2Color}" font-family="Arial" font-size="9" font-weight="bold">${c2Label}</text>`;
+        html += `<text x="${x2}" y="${c2Bottom + 32}" text-anchor="middle" fill="${c2Color}" font-family="Arial" font-size="8">Envolvente</text>`;
+        
+        // Flecha de Impulso después del OB
+        if (obIndex + 3 < visibleCandles.length) {
+          const impulseStart = scaleY(c2.close);
+          const impulseEnd = isLong ? scaleY(visibleCandles[obIndex + 3].high) : scaleY(visibleCandles[obIndex + 3].low);
+          const xImpulse = padding.left + (obIndex + 2) * candleW + candleW / 2;
+          
+          html += `<line x1="${xImpulse}" y1="${impulseStart}" x2="${xImpulse + 15}" y2="${impulseEnd}" stroke="${isLong ? '#10b981' : '#ef4444'}" stroke-width="2" marker-end="url(#arrow${isLong ? 'Green' : 'Red'})"/>`;
+          html += `<text x="${xImpulse + 20}" y="${(impulseStart + impulseEnd) / 2}" fill="${isLong ? '#10b981' : '#ef4444'}" font-family="Arial" font-size="10" font-weight="bold">Impulso</text>`;
+        }
+      }
+      
+      // ═══════════════════════════════════════════════════════════════
+      // Marcar la vela de ENTRY con círculo y etiqueta
+      // ═══════════════════════════════════════════════════════════════
+      
+      const lastCandle = visibleCandles[visibleCandles.length - 1];
+      const entryX = padding.left + (visibleCandles.length - 1) * candleW + candleW / 2;
+      const entryY = scaleY(signal.entry);
+      
+      // Círculo de ENTRY
+      html += `<circle cx="${entryX}" cy="${entryY}" r="8" fill="none" stroke="#10b981" stroke-width="3"/>`;
+      html += `<circle cx="${entryX}" cy="${entryY}" r="4" fill="#10b981"/>`;
+      
+      // Etiqueta ENTRY
+      html += `<text x="${entryX - 35}" y="${entryY + 4}" fill="#10b981" font-family="Arial" font-size="11" font-weight="bold">ENTRY</text>`;
+      
+      // ═══════════════════════════════════════════════════════════════
+      // Flecha de Pullback (si hay señal reciente)
+      // ═══════════════════════════════════════════════════════════════
+      
+      if (visibleCandles.length > 10) {
+        // Buscar el punto más bajo/alto reciente para el pullback
+        let pullbackIdx = visibleCandles.length - 5;
+        let pullbackPrice = isLong ? Infinity : -Infinity;
+        
+        for (let i = visibleCandles.length - 8; i < visibleCandles.length - 2; i++) {
+          if (i < 0) continue;
+          const c = visibleCandles[i];
+          if (isLong && c.low < pullbackPrice) {
+            pullbackPrice = c.low;
+            pullbackIdx = i;
+          } else if (!isLong && c.high > pullbackPrice) {
+            pullbackPrice = c.high;
+            pullbackIdx = i;
+          }
+        }
+        
+        const pullbackX = padding.left + pullbackIdx * candleW + candleW / 2;
+        const pullbackY = scaleY(pullbackPrice);
+        
+        // Flecha de pullback
+        html += `<line x1="${pullbackX + 15}" y1="${pullbackY + (isLong ? -20 : 20)}" x2="${pullbackX + 5}" y2="${pullbackY + (isLong ? -5 : 5)}" stroke="#6b7280" stroke-width="2" marker-end="url(#arrowGray)"/>`;
+        html += `<text x="${pullbackX + 20}" y="${pullbackY + (isLong ? -25 : 35)}" fill="#6b7280" font-family="Arial" font-size="10" font-style="italic">Pullback</text>`;
+      }
+      
+      // ═══════════════════════════════════════════════════════════════
+      // Mostrar nombre del modelo en la esquina superior
+      // ═══════════════════════════════════════════════════════════════
+      
+      const modelDisplay = model.replace(/_/g, ' ');
+      html += `<rect x="${w - 180}" y="5" width="170" height="22" rx="4" fill="rgba(0,0,0,0.7)"/>`;
+      html += `<text x="${w - 95}" y="20" text-anchor="middle" fill="#f59e0b" font-family="Arial" font-size="11" font-weight="bold">📊 ${modelDisplay}</text>`;
+      
+      // Score del modelo
+      if (signal.score) {
+        html += `<rect x="${w - 180}" y="30" width="170" height="18" rx="4" fill="rgba(16, 185, 129, 0.2)"/>`;
+        html += `<text x="${w - 95}" y="43" text-anchor="middle" fill="#10b981" font-family="Arial" font-size="10">Score: ${signal.score}%</text>`;
+      }
+    }
+    
+    // ═══════════════════════════════════════════════════════════════
     // Dibujar velas
+    // ═══════════════════════════════════════════════════════════════
+    
     visibleCandles.forEach((c, i) => {
       const x = padding.left + i * candleW + candleW / 2;
       const isGreen = c.close >= c.open;
@@ -240,7 +398,10 @@ const MiniChart = ({ candles, height = 200, signal = null }) => {
       html += `<rect x="${x - candleW * 0.35}" y="${bodyTop}" width="${candleW * 0.7}" height="${bodyH}" fill="${color}"/>`;
     });
     
-    // Dibujar niveles de señal
+    // ═══════════════════════════════════════════════════════════════
+    // Dibujar niveles de señal (Entry, SL, TPs)
+    // ═══════════════════════════════════════════════════════════════
+    
     if (signal && signal.entry) {
       const drawLevel = (price, color, label, dashArray = '') => {
         if (!price || price < minP || price > maxP) return '';
@@ -248,7 +409,7 @@ const MiniChart = ({ candles, height = 200, signal = null }) => {
         let levelHtml = '';
         levelHtml += `<line x1="${padding.left}" y1="${y}" x2="${w - padding.right}" y2="${y}" stroke="${color}" stroke-width="1.5" ${dashArray ? `stroke-dasharray="${dashArray}"` : ''} opacity="0.8"/>`;
         levelHtml += `<rect x="${w - padding.right + 2}" y="${y - 8}" width="58" height="16" rx="3" fill="${color}"/>`;
-        levelHtml += `<text x="${w - padding.right + 31}" y="${y + 4}" text-anchor="middle" fill="white" font-size="9" font-weight="bold">${label} ${price.toFixed(2)}</text>`;
+        levelHtml += `<text x="${w - padding.right + 31}" y="${y + 4}" text-anchor="middle" fill="white" font-size="9" font-weight="bold">${label}</text>`;
         return levelHtml;
       };
       
@@ -277,7 +438,28 @@ const MiniChart = ({ candles, height = 200, signal = null }) => {
       html += `<text x="${w - padding.right + 31}" y="${y + 4}" text-anchor="middle" fill="white" font-size="9" font-weight="bold">${lastPrice.toFixed(2)}</text>`;
     }
     
-    svg.innerHTML = html;
+    // ═══════════════════════════════════════════════════════════════
+    // Definir marcadores para flechas
+    // ═══════════════════════════════════════════════════════════════
+    
+    const defs = `
+      <defs>
+        <marker id="arrowGreen" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L0,6 L9,3 z" fill="#10b981"/>
+        </marker>
+        <marker id="arrowRed" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L0,6 L9,3 z" fill="#ef4444"/>
+        </marker>
+        <marker id="arrowOrange" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L0,6 L9,3 z" fill="#f59e0b"/>
+        </marker>
+        <marker id="arrowGray" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L0,6 L9,3 z" fill="#6b7280"/>
+        </marker>
+      </defs>
+    `;
+    
+    svg.innerHTML = defs + html;
   }, [candles, height, signal]);
   
   return <svg ref={svgRef} className="w-full" style={{ height }} />;
@@ -769,38 +951,38 @@ export default function Dashboard({ user, onLogout }) {
   const SignalsSection = () => (
     <div className="space-y-4">
       <div className="bg-[#0d0d12] rounded-xl border border-white/5 p-4">
-        <h3 className="text-white font-medium mb-3">📊 Todas las Señales</h3>
+        <h3 className="text-white font-medium mb-3">📊 Señales Pendientes</h3>
         <div className="space-y-2 max-h-[60vh] overflow-y-auto">
-          {data?.recentSignals?.map(s => (
-            <div key={s.id} className={`p-3 rounded-lg border ${
-              s.status === 'PENDING' ? 'bg-cyan-500/10 border-cyan-500/30' :
-              s.status === 'WIN' ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-red-500/10 border-red-500/30'
-            }`}>
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <span>{s.emoji}</span>
-                  <span className="text-white font-medium">{s.assetName}</span>
-                  <span className={`px-2 py-0.5 text-xs font-bold rounded ${
-                    s.action === 'LONG' ? 'bg-emerald-500 text-black' : 'bg-red-500 text-white'
-                  }`}>{s.action}</span>
-                </div>
-                <span className={`px-2 py-0.5 text-xs font-medium rounded ${
-                  s.status === 'PENDING' ? 'bg-cyan-500/20 text-cyan-400' :
-                  s.status === 'WIN' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'
-                }`}>{s.status}</span>
-              </div>
-              <div className="flex items-center justify-between text-xs text-white/50">
-                <span>{s.model} · {s.score}%</span>
-                <span>{new Date(s.timestamp).toLocaleString()}</span>
-              </div>
-              {s.status === 'PENDING' && (
-                <div className="flex gap-2 mt-2">
-                  <button onClick={() => markSignal(s.id, 'WIN')} className="flex-1 py-1.5 bg-emerald-500/20 text-emerald-400 rounded text-xs">✓ Win</button>
-                  <button onClick={() => markSignal(s.id, 'LOSS')} className="flex-1 py-1.5 bg-red-500/20 text-red-400 rounded text-xs">✗ Loss</button>
-                </div>
-              )}
+          {pendingSignals.length === 0 ? (
+            <div className="text-center py-8 text-white/40">
+              <span className="text-4xl mb-2 block">⏳</span>
+              <p>No hay señales pendientes</p>
+              <p className="text-xs mt-1">Las señales aparecerán aquí cuando se generen</p>
             </div>
-          ))}
+          ) : (
+            pendingSignals.map(s => (
+              <div key={s.id} className="p-3 rounded-lg border bg-cyan-500/10 border-cyan-500/30">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <span>{s.emoji}</span>
+                    <span className="text-white font-medium">{s.assetName}</span>
+                    <span className={`px-2 py-0.5 text-xs font-bold rounded ${
+                      s.action === 'LONG' ? 'bg-emerald-500 text-black' : 'bg-red-500 text-white'
+                    }`}>{s.action}</span>
+                  </div>
+                  <span className="px-2 py-0.5 text-xs font-medium rounded bg-cyan-500/20 text-cyan-400">PENDING</span>
+                </div>
+                <div className="flex items-center justify-between text-xs text-white/50">
+                  <span>{s.model} · {s.score}%</span>
+                  <span>{new Date(s.timestamp).toLocaleString()}</span>
+                </div>
+                <div className="flex gap-2 mt-2">
+                  <button onClick={() => markSignal(s.id, 'WIN')} className="flex-1 py-1.5 bg-emerald-500/20 text-emerald-400 rounded text-xs hover:bg-emerald-500/30 transition-colors">✓ Win</button>
+                  <button onClick={() => markSignal(s.id, 'LOSS')} className="flex-1 py-1.5 bg-red-500/20 text-red-400 rounded text-xs hover:bg-red-500/30 transition-colors">✗ Loss</button>
+                </div>
+              </div>
+            ))
+          )}
         </div>
       </div>
     </div>
