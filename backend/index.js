@@ -1062,24 +1062,30 @@ const SMC = {
         return null;
       }
       
-      // REGLA 2: Necesitamos estructura M5 alcista O CHoCH alcista
-      const hasBullishStructure = structure.trend === 'BULLISH' || 
-                                   (state.choch && state.choch.type === 'BULLISH_CHOCH');
-      
-      if (!hasBullishStructure) {
-        return null;
-      }
-      
-      // REGLA 3: Buscar pullback a zona de demanda
+      // REGLA 2: Buscar pullback a zona de demanda (M5 o H1)
       let validZone = null;
       let touchingDemand = false;
+      let zoneSource = '';
       
+      // Primero buscar en zonas M5
       for (const zone of demandZones) {
         const inZone = lastCandle.low <= zone.high * 1.002 && lastCandle.low >= zone.low * 0.995;
         if (inZone) {
           touchingDemand = true;
           validZone = zone;
+          zoneSource = 'M5';
           break;
+        }
+      }
+      
+      // Si no hay zona M5, buscar en OB válido de H1
+      if (!touchingDemand && obValidH1 && obValidH1.valid) {
+        const obZone = obValidH1.zone;
+        const inOBZone = lastCandle.low <= obZone.high * 1.002 && lastCandle.low >= obZone.low * 0.995;
+        if (inOBZone) {
+          touchingDemand = true;
+          validZone = obZone;
+          zoneSource = 'H1_OB';
         }
       }
       
@@ -1087,20 +1093,28 @@ const SMC = {
         return null;
       }
       
-      // REGLA 4: Confirmar con vela de rechazo o engulfing
+      // REGLA 3: Confirmar con vela de rechazo, engulfing, o vela verde después de tocar zona
       const body = Math.abs(lastCandle.close - lastCandle.open);
       const lowerWick = Math.min(lastCandle.open, lastCandle.close) - lastCandle.low;
       
-      const hasRejection = lowerWick > body * 0.5 && lastCandle.close > lastCandle.open;
+      // Rechazo: mecha inferior > 40% del cuerpo Y cierre alcista
+      const hasRejection = lowerWick > body * 0.4 && lastCandle.close > lastCandle.open;
+      
+      // Engulfing alcista
       const hasEngulfing = prevCandle.close < prevCandle.open && 
                            lastCandle.close > lastCandle.open &&
                            lastCandle.close > prevCandle.open;
       
-      if (!hasRejection && !hasEngulfing) {
+      // Vela verde simple si H1 es BULLISH y hay OB válido
+      const hasSimpleConfirm = lastCandle.close > lastCandle.open && 
+                               structureH1.trend === 'BULLISH' && 
+                               obValidH1?.valid;
+      
+      if (!hasRejection && !hasEngulfing && !hasSimpleConfirm) {
         return null;
       }
       
-      // REGLA 5: No comprar en premium
+      // REGLA 4: No comprar en premium extremo
       if (state.premiumDiscount === 'PREMIUM') {
         return null;
       }
@@ -1113,8 +1127,8 @@ const SMC = {
       const recentHighs = swings.filter(s => s.type === 'high').slice(-3);
       const targetHigh = recentHighs.length > 0 ? Math.max(...recentHighs.map(h => h.price)) : entry + risk * 3;
       
-      // Score base más alto para Boom (75)
-      let score = 75;
+      // Score base para Boom
+      let score = 72;
       let reasons = [];
       
       // ═══ BONIFICACIONES ═══
@@ -1125,13 +1139,16 @@ const SMC = {
         reasons.push('H1 BULLISH ✓');
       }
       
-      // +8 si hay OB válido en H1
-      if (obValidH1 && obValidH1.valid) {
-        score += 8;
-        reasons.push('OB H1 Válido ✓');
+      // +10 si la zona es del OB H1
+      if (zoneSource === 'H1_OB') {
+        score += 10;
+        reasons.push('Zona OB H1 ✓');
+      } else if (obValidH1?.valid) {
+        score += 5;
+        reasons.push('OB H1 existe');
       }
       
-      // +5 por estructura M5
+      // +5 por estructura M5 alcista (bonus, no requerido)
       if (structure.trend === 'BULLISH') {
         score += 5;
         reasons.push('M5 Alcista');
@@ -1143,13 +1160,14 @@ const SMC = {
         reasons.push('CHoCH Alcista');
       }
       
-      // +3 por confirmación
+      // +4 por rechazo fuerte
       if (hasRejection) {
-        score += 3;
+        score += 4;
         reasons.push('Rechazo');
       }
+      // +4 por engulfing
       if (hasEngulfing) {
-        score += 3;
+        score += 4;
         reasons.push('Engulfing');
       }
       
@@ -1176,8 +1194,9 @@ const SMC = {
           structureM5: structure.trend,
           structureH1: structureH1.trend,
           obH1Valid: obValidH1?.valid || false,
+          zoneSource: zoneSource,
           zone: 'demand',
-          confirmation: hasRejection ? 'rejection' : 'engulfing'
+          confirmation: hasRejection ? 'rejection' : (hasEngulfing ? 'engulfing' : 'simple')
         }
       };
     }
@@ -1192,24 +1211,30 @@ const SMC = {
         return null;
       }
       
-      // REGLA 2: Necesitamos estructura M5 bajista O CHoCH bajista
-      const hasBearishStructure = structure.trend === 'BEARISH' || 
-                                   (state.choch && state.choch.type === 'BEARISH_CHOCH');
-      
-      if (!hasBearishStructure) {
-        return null;
-      }
-      
-      // REGLA 3: Buscar pullback a zona de supply
+      // REGLA 2: Buscar pullback a zona de supply (M5 o H1)
       let validZone = null;
       let touchingSupply = false;
+      let zoneSource = '';
       
+      // Primero buscar en zonas M5
       for (const zone of supplyZones) {
         const inZone = lastCandle.high >= zone.low * 0.998 && lastCandle.high <= zone.high * 1.005;
         if (inZone) {
           touchingSupply = true;
           validZone = zone;
+          zoneSource = 'M5';
           break;
+        }
+      }
+      
+      // Si no hay zona M5, buscar en OB válido de H1
+      if (!touchingSupply && obValidH1 && obValidH1.valid) {
+        const obZone = obValidH1.zone;
+        const inOBZone = lastCandle.high >= obZone.low * 0.998 && lastCandle.high <= obZone.high * 1.005;
+        if (inOBZone) {
+          touchingSupply = true;
+          validZone = obZone;
+          zoneSource = 'H1_OB';
         }
       }
       
@@ -1217,20 +1242,28 @@ const SMC = {
         return null;
       }
       
-      // REGLA 4: Confirmar con vela de rechazo o engulfing
+      // REGLA 3: Confirmar con vela de rechazo, engulfing, o vela roja después de tocar zona
       const body = Math.abs(lastCandle.close - lastCandle.open);
       const upperWick = lastCandle.high - Math.max(lastCandle.open, lastCandle.close);
       
-      const hasRejection = upperWick > body * 0.5 && lastCandle.close < lastCandle.open;
+      // Rechazo: mecha superior > 50% del cuerpo Y cierre bajista
+      const hasRejection = upperWick > body * 0.4 && lastCandle.close < lastCandle.open;
+      
+      // Engulfing bajista
       const hasEngulfing = prevCandle.close > prevCandle.open && 
                            lastCandle.close < lastCandle.open &&
                            lastCandle.close < prevCandle.open;
       
-      if (!hasRejection && !hasEngulfing) {
+      // Vela roja simple (cierre < apertura) si H1 es BEARISH y hay OB válido
+      const hasSimpleConfirm = lastCandle.close < lastCandle.open && 
+                               structureH1.trend === 'BEARISH' && 
+                               obValidH1?.valid;
+      
+      if (!hasRejection && !hasEngulfing && !hasSimpleConfirm) {
         return null;
       }
       
-      // REGLA 5: No vender en discount
+      // REGLA 4: No vender en discount extremo
       if (state.premiumDiscount === 'DISCOUNT') {
         return null;
       }
@@ -1243,8 +1276,8 @@ const SMC = {
       const recentLows = swings.filter(s => s.type === 'low').slice(-3);
       const targetLow = recentLows.length > 0 ? Math.min(...recentLows.map(l => l.price)) : entry - risk * 3;
       
-      // Score base más alto para Crash (75)
-      let score = 75;
+      // Score base para Crash
+      let score = 72;
       let reasons = [];
       
       // ═══ BONIFICACIONES ═══
@@ -1255,13 +1288,16 @@ const SMC = {
         reasons.push('H1 BEARISH ✓');
       }
       
-      // +8 si hay OB válido en H1
-      if (obValidH1 && obValidH1.valid) {
-        score += 8;
-        reasons.push('OB H1 Válido ✓');
+      // +10 si la zona es del OB H1
+      if (zoneSource === 'H1_OB') {
+        score += 10;
+        reasons.push('Zona OB H1 ✓');
+      } else if (obValidH1?.valid) {
+        score += 5;
+        reasons.push('OB H1 existe');
       }
       
-      // +5 por estructura M5
+      // +5 por estructura M5 bajista (bonus, no requerido)
       if (structure.trend === 'BEARISH') {
         score += 5;
         reasons.push('M5 Bajista');
@@ -1273,13 +1309,14 @@ const SMC = {
         reasons.push('CHoCH Bajista');
       }
       
-      // +3 por confirmación
+      // +4 por rechazo fuerte
       if (hasRejection) {
-        score += 3;
+        score += 4;
         reasons.push('Rechazo');
       }
+      // +4 por engulfing
       if (hasEngulfing) {
-        score += 3;
+        score += 4;
         reasons.push('Engulfing');
       }
       
@@ -1306,8 +1343,9 @@ const SMC = {
           structureM5: structure.trend,
           structureH1: structureH1.trend,
           obH1Valid: obValidH1?.valid || false,
+          zoneSource: zoneSource,
           zone: 'supply',
-          confirmation: hasRejection ? 'rejection' : 'engulfing'
+          confirmation: hasRejection ? 'rejection' : (hasEngulfing ? 'engulfing' : 'simple')
         }
       };
     }
@@ -1349,6 +1387,11 @@ const SMC = {
             side: 'BUY',
             zoneHigh: baseCandle.open,
             zoneLow: baseCandle.close,
+            zone: {
+              high: baseCandle.open,
+              low: baseCandle.close,
+              mid: (baseCandle.open + baseCandle.close) / 2
+            },
             strength: Math.min(100, (engulfBody / baseBody) * 50),
             candlesAgo: recentCandles.length - i,
             timeframe: 'H1'
@@ -1365,6 +1408,11 @@ const SMC = {
             side: 'SELL',
             zoneHigh: baseCandle.close,
             zoneLow: baseCandle.open,
+            zone: {
+              high: baseCandle.close,
+              low: baseCandle.open,
+              mid: (baseCandle.close + baseCandle.open) / 2
+            },
             strength: Math.min(100, (engulfBody / baseBody) * 50),
             candlesAgo: recentCandles.length - i,
             timeframe: 'H1'
