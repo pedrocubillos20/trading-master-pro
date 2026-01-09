@@ -185,11 +185,17 @@ const SIGNAL_CONFIG = {
   // Score mínimo para generar señal
   MIN_SCORE: 65, // v14.0: Bajado para más entradas
   
+  // Score mínimo específico para Boom/Crash (más estricto)
+  MIN_SCORE_BOOM_CRASH: 82, // v16: Requiere H1 + OB válido para llegar a este score
+  
   // Cooldown entre análisis del mismo activo
   ANALYSIS_COOLDOWN: 15000, // 15 segundos (reducido)
   
   // Cooldown después de cerrar una señal antes de abrir otra
   POST_SIGNAL_COOLDOWN: 180000, // 3 minutos (reducido)
+  
+  // Cooldown específico para Boom/Crash (más largo para evitar sobreoperar)
+  POST_SIGNAL_COOLDOWN_BOOM_CRASH: 300000, // 5 minutos
   
   // ═══════════════════════════════════════════════════════════════
   // MTF CONFLUENCE - AHORA ES OPCIONAL
@@ -909,9 +915,10 @@ const SMC = {
   },
 
   // =============================================
-  // ANÁLISIS ESPECÍFICO BOOM/CRASH - SMC PURO
+  // ANÁLISIS ESPECÍFICO BOOM/CRASH v16 - CON H1 + OB VÁLIDO
+  // Requiere: Estructura H1 + Order Block válido en H1
   // =============================================
-  analyzeBoomCrash(candles, config, state, rules) {
+  analyzeBoomCrash(candles, config, state, rules, candlesH1 = null) {
     if (candles.length < 50) return null;
     
     const assetType = config.type; // 'boom' o 'crash'
@@ -921,32 +928,49 @@ const SMC = {
     const prevCandle = candles[candles.length - 2];
     const price = lastCandle.close;
     
-    // Obtener swings y estructura
+    // Obtener swings y estructura M5
     const swings = this.findSwings(candles, 3);
     const structure = this.analyzeStructure(swings);
     const { demandZones, supplyZones } = state;
     
+    // ════════════════════════════════════════════════════════════════════
+    // NUEVO v16: Analizar estructura H1 (OBLIGATORIO para Boom/Crash)
+    // ════════════════════════════════════════════════════════════════════
+    let structureH1 = { trend: 'NEUTRAL', strength: 0 };
+    let obValidH1 = null;
+    
+    if (candlesH1 && candlesH1.length >= 20) {
+      const swingsH1 = this.findSwings(candlesH1, 2);
+      structureH1 = this.analyzeStructure(swingsH1);
+      
+      // Detectar Order Block válido en H1
+      obValidH1 = this.detectValidOBZoneH1(candlesH1, assetType === 'boom' ? 'BUY' : 'SELL');
+    }
+    
     // ═══════════════════════════════════════════
-    // BOOM: SOLO COMPRAS en pullback a demanda
+    // BOOM: SOLO COMPRAS con confirmación H1
     // ═══════════════════════════════════════════
     if (assetType === 'boom') {
-      // REGLA 1: Necesitamos CHoCH alcista O estructura alcista
+      // REGLA 1: H1 debe ser BULLISH o NEUTRAL (NUNCA operar contra H1)
+      if (structureH1.trend === 'BEARISH') {
+        // console.log(`⛔ [${config.shortName}] BOOM bloqueado: H1 BEARISH`);
+        return null;
+      }
+      
+      // REGLA 2: Necesitamos estructura M5 alcista O CHoCH alcista
       const hasBullishStructure = structure.trend === 'BULLISH' || 
                                    (state.choch && state.choch.type === 'BULLISH_CHOCH');
       
       if (!hasBullishStructure) {
-        // Sin estructura alcista, no hay setup
         return null;
       }
       
-      // REGLA 2: Buscar pullback a zona de demanda
+      // REGLA 3: Buscar pullback a zona de demanda
       let validZone = null;
       let touchingDemand = false;
       
       for (const zone of demandZones) {
-        // ¿El precio está tocando o dentro de la zona?
         const inZone = lastCandle.low <= zone.high * 1.002 && lastCandle.low >= zone.low * 0.995;
-        
         if (inZone) {
           touchingDemand = true;
           validZone = zone;
@@ -955,27 +979,25 @@ const SMC = {
       }
       
       if (!touchingDemand || !validZone) {
-        return null; // No hay pullback a zona de demanda
+        return null;
       }
       
-      // REGLA 3: Confirmar con vela de rechazo (wick inferior > cuerpo)
+      // REGLA 4: Confirmar con vela de rechazo o engulfing
       const body = Math.abs(lastCandle.close - lastCandle.open);
       const lowerWick = Math.min(lastCandle.open, lastCandle.close) - lastCandle.low;
-      const upperWick = lastCandle.high - Math.max(lastCandle.open, lastCandle.close);
       
       const hasRejection = lowerWick > body * 0.5 && lastCandle.close > lastCandle.open;
-      // También aceptar si la vela anterior fue bajista y esta es alcista (engulfing)
       const hasEngulfing = prevCandle.close < prevCandle.open && 
                            lastCandle.close > lastCandle.open &&
                            lastCandle.close > prevCandle.open;
       
       if (!hasRejection && !hasEngulfing) {
-        return null; // Sin confirmación de reversión
+        return null;
       }
       
-      // REGLA 4: El precio debe estar en zona de descuento o equilibrio
+      // REGLA 5: No comprar en premium
       if (state.premiumDiscount === 'PREMIUM') {
-        return null; // No comprar en premium
+        return null;
       }
       
       // ✅ SETUP VÁLIDO PARA BOOM
@@ -983,40 +1005,56 @@ const SMC = {
       const stop = validZone.low - avgRange * 0.3;
       const risk = entry - stop;
       
-      // Buscar el high anterior para TP
       const recentHighs = swings.filter(s => s.type === 'high').slice(-3);
       const targetHigh = recentHighs.length > 0 ? Math.max(...recentHighs.map(h => h.price)) : entry + risk * 3;
       
-      let score = 70;
+      // Score base más alto para Boom (75)
+      let score = 75;
       let reasons = [];
       
-      // Bonus por estructura
-      if (structure.trend === 'BULLISH') {
-        score += 10;
-        reasons.push('Estructura Alcista');
+      // ═══ BONIFICACIONES ═══
+      
+      // +12 si H1 es BULLISH (alineación perfecta)
+      if (structureH1.trend === 'BULLISH') {
+        score += 12;
+        reasons.push('H1 BULLISH ✓');
       }
+      
+      // +8 si hay OB válido en H1
+      if (obValidH1 && obValidH1.valid) {
+        score += 8;
+        reasons.push('OB H1 Válido ✓');
+      }
+      
+      // +5 por estructura M5
+      if (structure.trend === 'BULLISH') {
+        score += 5;
+        reasons.push('M5 Alcista');
+      }
+      
+      // +5 por CHoCH
       if (state.choch?.type === 'BULLISH_CHOCH') {
-        score += 10;
+        score += 5;
         reasons.push('CHoCH Alcista');
       }
       
-      // Bonus por confirmación
+      // +3 por confirmación
       if (hasRejection) {
-        score += 5;
-        reasons.push('Rechazo en Demanda');
+        score += 3;
+        reasons.push('Rechazo');
       }
       if (hasEngulfing) {
-        score += 5;
-        reasons.push('Engulfing Alcista');
+        score += 3;
+        reasons.push('Engulfing');
       }
       
-      // Bonus por Premium/Discount
+      // +3 por discount
       if (state.premiumDiscount === 'DISCOUNT') {
-        score += 5;
-        reasons.push('Zona Discount');
+        score += 3;
+        reasons.push('Discount');
       }
       
-      reasons.unshift('Pullback a Demanda');
+      reasons.unshift('BOOM Pullback Demanda');
       
       return {
         action: 'LONG',
@@ -1030,8 +1068,9 @@ const SMC = {
         reason: reasons.join(' + '),
         analysis: {
           type: 'boom',
-          structure: structure.trend,
-          choch: state.choch?.type,
+          structureM5: structure.trend,
+          structureH1: structureH1.trend,
+          obH1Valid: obValidH1?.valid || false,
           zone: 'demand',
           confirmation: hasRejection ? 'rejection' : 'engulfing'
         }
@@ -1039,26 +1078,29 @@ const SMC = {
     }
     
     // ═══════════════════════════════════════════
-    // CRASH: SOLO VENTAS en pullback a supply
+    // CRASH: SOLO VENTAS con confirmación H1
     // ═══════════════════════════════════════════
     if (assetType === 'crash') {
-      // REGLA 1: Necesitamos CHoCH bajista O estructura bajista
+      // REGLA 1: H1 debe ser BEARISH o NEUTRAL (NUNCA operar contra H1)
+      if (structureH1.trend === 'BULLISH') {
+        // console.log(`⛔ [${config.shortName}] CRASH bloqueado: H1 BULLISH`);
+        return null;
+      }
+      
+      // REGLA 2: Necesitamos estructura M5 bajista O CHoCH bajista
       const hasBearishStructure = structure.trend === 'BEARISH' || 
                                    (state.choch && state.choch.type === 'BEARISH_CHOCH');
       
       if (!hasBearishStructure) {
-        // Sin estructura bajista, no hay setup
         return null;
       }
       
-      // REGLA 2: Buscar pullback a zona de supply
+      // REGLA 3: Buscar pullback a zona de supply
       let validZone = null;
       let touchingSupply = false;
       
       for (const zone of supplyZones) {
-        // ¿El precio está tocando o dentro de la zona?
         const inZone = lastCandle.high >= zone.low * 0.998 && lastCandle.high <= zone.high * 1.005;
-        
         if (inZone) {
           touchingSupply = true;
           validZone = zone;
@@ -1067,27 +1109,25 @@ const SMC = {
       }
       
       if (!touchingSupply || !validZone) {
-        return null; // No hay pullback a zona de supply
+        return null;
       }
       
-      // REGLA 3: Confirmar con vela de rechazo (wick superior > cuerpo)
+      // REGLA 4: Confirmar con vela de rechazo o engulfing
       const body = Math.abs(lastCandle.close - lastCandle.open);
       const upperWick = lastCandle.high - Math.max(lastCandle.open, lastCandle.close);
-      const lowerWick = Math.min(lastCandle.open, lastCandle.close) - lastCandle.low;
       
       const hasRejection = upperWick > body * 0.5 && lastCandle.close < lastCandle.open;
-      // También aceptar engulfing bajista
       const hasEngulfing = prevCandle.close > prevCandle.open && 
                            lastCandle.close < lastCandle.open &&
                            lastCandle.close < prevCandle.open;
       
       if (!hasRejection && !hasEngulfing) {
-        return null; // Sin confirmación de reversión
+        return null;
       }
       
-      // REGLA 4: El precio debe estar en zona premium o equilibrio
+      // REGLA 5: No vender en discount
       if (state.premiumDiscount === 'DISCOUNT') {
-        return null; // No vender en discount
+        return null;
       }
       
       // ✅ SETUP VÁLIDO PARA CRASH
@@ -1095,40 +1135,56 @@ const SMC = {
       const stop = validZone.high + avgRange * 0.3;
       const risk = stop - entry;
       
-      // Buscar el low anterior para TP
       const recentLows = swings.filter(s => s.type === 'low').slice(-3);
       const targetLow = recentLows.length > 0 ? Math.min(...recentLows.map(l => l.price)) : entry - risk * 3;
       
-      let score = 70;
+      // Score base más alto para Crash (75)
+      let score = 75;
       let reasons = [];
       
-      // Bonus por estructura
-      if (structure.trend === 'BEARISH') {
-        score += 10;
-        reasons.push('Estructura Bajista');
+      // ═══ BONIFICACIONES ═══
+      
+      // +12 si H1 es BEARISH (alineación perfecta)
+      if (structureH1.trend === 'BEARISH') {
+        score += 12;
+        reasons.push('H1 BEARISH ✓');
       }
+      
+      // +8 si hay OB válido en H1
+      if (obValidH1 && obValidH1.valid) {
+        score += 8;
+        reasons.push('OB H1 Válido ✓');
+      }
+      
+      // +5 por estructura M5
+      if (structure.trend === 'BEARISH') {
+        score += 5;
+        reasons.push('M5 Bajista');
+      }
+      
+      // +5 por CHoCH
       if (state.choch?.type === 'BEARISH_CHOCH') {
-        score += 10;
+        score += 5;
         reasons.push('CHoCH Bajista');
       }
       
-      // Bonus por confirmación
+      // +3 por confirmación
       if (hasRejection) {
-        score += 5;
-        reasons.push('Rechazo en Supply');
+        score += 3;
+        reasons.push('Rechazo');
       }
       if (hasEngulfing) {
-        score += 5;
-        reasons.push('Engulfing Bajista');
+        score += 3;
+        reasons.push('Engulfing');
       }
       
-      // Bonus por Premium/Discount
+      // +3 por premium
       if (state.premiumDiscount === 'PREMIUM') {
-        score += 5;
-        reasons.push('Zona Premium');
+        score += 3;
+        reasons.push('Premium');
       }
       
-      reasons.unshift('Pullback a Supply');
+      reasons.unshift('CRASH Pullback Supply');
       
       return {
         action: 'SHORT',
@@ -1142,12 +1198,74 @@ const SMC = {
         reason: reasons.join(' + '),
         analysis: {
           type: 'crash',
-          structure: structure.trend,
-          choch: state.choch?.type,
+          structureM5: structure.trend,
+          structureH1: structureH1.trend,
+          obH1Valid: obValidH1?.valid || false,
           zone: 'supply',
           confirmation: hasRejection ? 'rejection' : 'engulfing'
         }
       };
+    }
+    
+    return null;
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // DETECTAR ORDER BLOCK VÁLIDO EN H1 (Nuevo v16)
+  // LONG: Vela ROJA + VERDE envolvente
+  // SHORT: Vela VERDE + ROJA envolvente
+  // ═══════════════════════════════════════════════════════════════════════
+  detectValidOBZoneH1(candlesH1, side, lookback = 10) {
+    if (!candlesH1 || candlesH1.length < 5) return null;
+    
+    const recentCandles = candlesH1.slice(-lookback);
+    
+    for (let i = recentCandles.length - 2; i >= 1; i--) {
+      const baseCandle = recentCandles[i - 1];
+      const engulfCandle = recentCandles[i];
+      
+      if (!baseCandle || !engulfCandle) continue;
+      
+      const baseBody = Math.abs(baseCandle.close - baseCandle.open);
+      const engulfBody = Math.abs(engulfCandle.close - engulfCandle.open);
+      
+      if (baseBody < 0.00001 || engulfBody < 0.00001) continue;
+      
+      const isEngulfing = engulfBody >= baseBody * 1.2;
+      
+      if (side === 'BUY') {
+        const isBaseRed = baseCandle.close < baseCandle.open;
+        const isEngulfGreen = engulfCandle.close > engulfCandle.open;
+        const engulfsBody = engulfCandle.close > baseCandle.open && engulfCandle.open <= baseCandle.close;
+        
+        if (isBaseRed && isEngulfGreen && isEngulfing && engulfsBody) {
+          return {
+            valid: true,
+            side: 'BUY',
+            zoneHigh: baseCandle.open,
+            zoneLow: baseCandle.close,
+            strength: Math.min(100, (engulfBody / baseBody) * 50),
+            candlesAgo: recentCandles.length - i,
+            timeframe: 'H1'
+          };
+        }
+      } else if (side === 'SELL') {
+        const isBaseGreen = baseCandle.close > baseCandle.open;
+        const isEngulfRed = engulfCandle.close < engulfCandle.open;
+        const engulfsBody = engulfCandle.open > baseCandle.close && engulfCandle.close <= baseCandle.open;
+        
+        if (isBaseGreen && isEngulfRed && isEngulfing && engulfsBody) {
+          return {
+            valid: true,
+            side: 'SELL',
+            zoneHigh: baseCandle.close,
+            zoneLow: baseCandle.open,
+            strength: Math.min(100, (engulfBody / baseBody) * 50),
+            candlesAgo: recentCandles.length - i,
+            timeframe: 'H1'
+          };
+        }
+      }
     }
     
     return null;
@@ -1575,11 +1693,12 @@ const SMC = {
     state.h1Loaded = h1Loaded;
     
     // ═══════════════════════════════════════════
-    // ANÁLISIS ESPECIAL PARA BOOM/CRASH
+    // ANÁLISIS ESPECIAL PARA BOOM/CRASH v16
+    // Ahora con confirmación H1 + OB Válido
     // ═══════════════════════════════════════════
     if (config.type === 'boom' || config.type === 'crash') {
       const rules = BOOM_CRASH_RULES[config.type];
-      const boomCrashSignal = this.analyzeBoomCrash(candlesM5, config, state, rules);
+      const boomCrashSignal = this.analyzeBoomCrash(candlesM5, config, state, rules, candlesH1);
       
       if (boomCrashSignal) {
         console.log(`🚀 [${config.shortName}] Señal ${config.type.toUpperCase()}: ${boomCrashSignal.reason} (Score: ${boomCrashSignal.score})`);
@@ -3264,10 +3383,15 @@ function analyzeAsset(symbol) {
   }
   
   // ═══════════════════════════════════════════
-  // FILTRO 3: Cooldown post-señal (5 minutos)
+  // FILTRO 3: Cooldown post-señal (3-5 minutos según activo)
   // ═══════════════════════════════════════════
+  const isBoomCrash = config.type === 'boom' || config.type === 'crash';
+  const cooldownTime = isBoomCrash 
+    ? SIGNAL_CONFIG.POST_SIGNAL_COOLDOWN_BOOM_CRASH 
+    : SIGNAL_CONFIG.POST_SIGNAL_COOLDOWN;
+  
   if (data.lastSignalClosed && 
-      now - data.lastSignalClosed < SIGNAL_CONFIG.POST_SIGNAL_COOLDOWN) {
+      now - data.lastSignalClosed < cooldownTime) {
     const signal = SMC.analyze(data.candles, data.candlesH1, config, data);
     data.signal = signal;
     return;
@@ -3307,12 +3431,20 @@ function analyzeAsset(symbol) {
   
   console.log(`📈 [${config.shortName}] Señal activa detectada: ${signal.action} ${signal.model} (${signal.score}pts)`);
   
-  if (signal.score < SIGNAL_CONFIG.MIN_SCORE) {
-    console.log(`⚠️ [${config.shortName}] RECHAZADA: Score ${signal.score} < ${SIGNAL_CONFIG.MIN_SCORE} mínimo`);
+  // ═══════════════════════════════════════════
+  // FILTRO 5: Score mínimo (más estricto para Boom/Crash)
+  // ═══════════════════════════════════════════
+  const isBoomCrashAsset = config.type === 'boom' || config.type === 'crash';
+  const minScoreRequired = isBoomCrashAsset 
+    ? SIGNAL_CONFIG.MIN_SCORE_BOOM_CRASH 
+    : SIGNAL_CONFIG.MIN_SCORE;
+  
+  if (signal.score < minScoreRequired) {
+    console.log(`⚠️ [${config.shortName}] RECHAZADA: Score ${signal.score} < ${minScoreRequired} mínimo${isBoomCrashAsset ? ' (Boom/Crash requiere H1+OB)' : ''}`);
     return;
   }
   
-  console.log(`✅ [${config.shortName}] Pasó filtro de score: ${signal.score} >= ${SIGNAL_CONFIG.MIN_SCORE}`);
+  console.log(`✅ [${config.shortName}] Pasó filtro de score: ${signal.score} >= ${minScoreRequired}`);
   
   // ═══════════════════════════════════════════
   // FILTRO 6: Requiere MTF Confluence (excepto modelos específicos)
