@@ -1775,6 +1775,11 @@ const SMC = {
     }
     
     const last3 = candlesM5.slice(-3);
+    // ═══════════════════════════════════════════════════════════════
+    // LIQUIDITY_SWEEP - DESACTIVADO (No está en los 12 modelos oficiales)
+    // Usar LIQUIDITY_GRAB en su lugar
+    // ═══════════════════════════════════════════════════════════════
+    /*
     for (const level of liquidityLevels) {
       const swept = last3.some(c => {
         if (level.type === 'EQUAL_HIGHS') return c.high > level.price && c.close < level.price;
@@ -1782,12 +1787,11 @@ const SMC = {
         return false;
       });
       
-      // v14.0: MTF ya NO es obligatorio para LIQUIDITY_SWEEP
       if (swept && pullback) {
         const side = level.type === 'EQUAL_HIGHS' ? 'SELL' : 'BUY';
         if (pullback.side === side) {
-          let score = 78; // Score base sin MTF
-          if (mtfConfluence) score = 85; // Bonus con MTF
+          let score = 78;
+          if (mtfConfluence) score = 85;
           signals.push({
             model: 'LIQUIDITY_SWEEP',
             baseScore: score,
@@ -1797,6 +1801,7 @@ const SMC = {
         }
       }
     }
+    */
     
     // v14.0: BOS_CONTINUATION ahora puede operar sin MTF
     if (bos && pullback && bos.side === pullback.side) {
@@ -1813,24 +1818,23 @@ const SMC = {
     const price = candlesM5[candlesM5.length - 1].close;
     const lastCandle = candlesM5[candlesM5.length - 1];
     
-    // *** MODELO ZONE_TOUCH v14.0 - SIN RESTRICCIÓN MTF ***
-    // Solo requiere: Premium/Discount correcto + Rechazo
-    // MTF es bonus, no requisito
+    // ═══════════════════════════════════════════════════════════════
+    // ZONE_TOUCH - DESACTIVADO (No está en los 12 modelos oficiales)
+    // Usar OB_ENTRY en su lugar
+    // ═══════════════════════════════════════════════════════════════
+    /*
     for (const zone of demandZones) {
       const touchingZone = lastCandle.low <= zone.high * 1.002 && lastCandle.low >= zone.low * 0.998;
       const closeAboveZone = lastCandle.close > zone.mid;
-      
-      // Rechazo (wick > 30% del cuerpo) - reducido para más señales
       const wickSize = lastCandle.close - lastCandle.low;
       const bodySize = Math.abs(lastCandle.close - lastCandle.open);
       const hasRejection = wickSize > bodySize * 0.3;
       
       if (touchingZone && closeAboveZone && hasRejection) {
-        // v14.3: ZONE_TOUCH reducido - es muy simple
-        let score = 60; // Base reducido (antes 70)
-        if (premiumDiscount === 'DISCOUNT') score += 5; // Bonus por P/D correcto
-        if (mtfConfluence && structureH1.trend === 'BULLISH') score += 8; // Bonus por MTF
-        if (wickSize > bodySize * 0.5) score += 3; // Bonus por rechazo fuerte
+        let score = 60;
+        if (premiumDiscount === 'DISCOUNT') score += 5;
+        if (mtfConfluence && structureH1.trend === 'BULLISH') score += 8;
+        if (wickSize > bodySize * 0.5) score += 3;
         
         const zonePb = {
           side: 'BUY',
@@ -1853,18 +1857,15 @@ const SMC = {
     for (const zone of supplyZones) {
       const touchingZone = lastCandle.high >= zone.low * 0.998 && lastCandle.high <= zone.high * 1.002;
       const closeBelowZone = lastCandle.close < zone.mid;
-      
-      // Rechazo (wick > 30% del cuerpo) - reducido para más señales
       const wickSize = lastCandle.high - lastCandle.close;
       const bodySize = Math.abs(lastCandle.close - lastCandle.open);
       const hasRejection = wickSize > bodySize * 0.3;
       
       if (touchingZone && closeBelowZone && hasRejection) {
-        // v14.3: ZONE_TOUCH reducido - es muy simple
-        let score = 60; // Base reducido (antes 70)
-        if (premiumDiscount === 'PREMIUM') score += 5; // Bonus por P/D correcto
-        if (mtfConfluence && structureH1.trend === 'BEARISH') score += 8; // Bonus por MTF
-        if (wickSize > bodySize * 0.5) score += 3; // Bonus por rechazo fuerte
+        let score = 60;
+        if (premiumDiscount === 'PREMIUM') score += 5;
+        if (mtfConfluence && structureH1.trend === 'BEARISH') score += 8;
+        if (wickSize > bodySize * 0.5) score += 3;
         
         const zonePb = {
           side: 'SELL',
@@ -1883,6 +1884,7 @@ const SMC = {
         });
       }
     }
+    */
     
     // v14.0: FVG_ENTRY ahora puede operar sin MTF
     for (const fvg of fvgZones) {
@@ -1919,9 +1921,12 @@ const SMC = {
       });
     }
     
-    // STRUCTURE_BREAK - Ruptura de estructura sin necesidad de pullback
+    // ═══════════════════════════════════════════════════════════════
+    // STRUCTURE_BREAK - DESACTIVADO (No está en los 12 modelos oficiales)
+    // Usar BOS_CONTINUATION en su lugar
+    // ═══════════════════════════════════════════════════════════════
+    /*
     if (bos && !pullback) {
-      // Crear entrada en la ruptura
       const breakEntry = {
         side: bos.side,
         entry: bos.level,
@@ -1941,10 +1946,13 @@ const SMC = {
         reason: `${bos.type} directo${mtfConfluence ? ' + MTF' : ''}`
       });
     }
+    */
     
-    // REVERSAL_PATTERN - CHoCH sin necesidad de pullback completo
+    // ═══════════════════════════════════════════════════════════════
+    // REVERSAL_PATTERN - DESACTIVADO (No está en los 12 modelos oficiales)
+    // ═══════════════════════════════════════════════════════════════
+    /*
     if (choch && structureM5.strength >= 60) {
-      // Verificar si hay un pequeño retroceso (no necesita llegar a zona)
       const recentCandles = candlesM5.slice(-5);
       const hasMinorRetracement = recentCandles.some(c => {
         if (choch.side === 'BUY') return c.low < choch.level;
@@ -1972,8 +1980,12 @@ const SMC = {
         });
       }
     }
+    */
     
-    // PREMIUM_DISCOUNT - Entrada basada solo en zonas P/D con estructura
+    // ═══════════════════════════════════════════════════════════════
+    // PREMIUM_DISCOUNT - DESACTIVADO (No está en los 12 modelos oficiales)
+    // ═══════════════════════════════════════════════════════════════
+    /*
     if (!pullback && structureM5.trend !== 'NEUTRAL') {
       const inDiscount = premiumDiscount === 'DISCOUNT';
       const inPremium = premiumDiscount === 'PREMIUM';
@@ -2001,6 +2013,7 @@ const SMC = {
         });
       }
     }
+    */
     
     // v13.2: ORDER_FLOW DESACTIVADO - Generaba demasiadas señales falsas
     // Si quieres reactivarlo, descomenta el bloque siguiente
