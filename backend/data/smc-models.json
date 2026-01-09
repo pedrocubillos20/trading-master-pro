@@ -1,1073 +1,433 @@
 {
-  "version": "3.0.0",
-  "name": "ELISA SMC Models v14",
-  "description": "Smart Money Concepts Models - Sin restricciones MTF, operativa flexible",
-  "lastUpdated": "2026-01-08",
+  "version": "16.0",
+  "lastUpdate": "2026-01-09",
+  "description": "12 Modelos SMC con requisito universal de Zona Válida de Order Block",
+  
+  "universalRequirement": {
+    "name": "ZONA_VALIDA_OB",
+    "description": "Todos los modelos REQUIEREN una zona válida de Order Block",
+    "buyCondition": {
+      "description": "Vela ROJA (base) + Vela VERDE envolvente",
+      "explanation": "La vela roja representa distribución falsa (smart money acumulando). La vela verde envolvente confirma la acumulación y el inicio del movimiento alcista.",
+      "requirements": [
+        "Vela base debe ser ROJA (close < open)",
+        "Vela siguiente debe ser VERDE (close > open)",
+        "Vela verde debe envolver el cuerpo de la roja",
+        "Cuerpo verde >= 1.2x cuerpo rojo"
+      ]
+    },
+    "sellCondition": {
+      "description": "Vela VERDE (base) + Vela ROJA envolvente",
+      "explanation": "La vela verde representa acumulación falsa (smart money distribuyendo). La vela roja envolvente confirma la distribución y el inicio del movimiento bajista.",
+      "requirements": [
+        "Vela base debe ser VERDE (close > open)",
+        "Vela siguiente debe ser ROJA (close < open)",
+        "Vela roja debe envolver el cuerpo de la verde",
+        "Cuerpo rojo >= 1.2x cuerpo verde"
+      ]
+    },
+    "smcConcept": "Esta es la VERDADERA formación de Order Block según Smart Money Concepts. Sin esta formación, no hay Order Block válido."
+  },
+  
+  "tiers": {
+    "S": {
+      "description": "Modelos Elite - Máxima precisión",
+      "scoreRange": "95-100",
+      "models": ["MTF_CONFLUENCE", "OTE_ENTRY"]
+    },
+    "A": {
+      "description": "Alta Calidad - Muy confiables",
+      "scoreRange": "80-95",
+      "models": ["CHOCH_PULLBACK", "INDUCEMENT", "BOOM_SPIKE", "CRASH_SPIKE"]
+    },
+    "B": {
+      "description": "Buena Calidad - Confiables con confirmación",
+      "scoreRange": "75-90",
+      "models": ["BREAKER_BLOCK", "LIQUIDITY_GRAB", "BOS_CONTINUATION"]
+    },
+    "C": {
+      "description": "Complementarios - Usar con otros modelos",
+      "scoreRange": "72-88",
+      "models": ["SMART_MONEY_TRAP", "FVG_ENTRY", "OB_ENTRY"]
+    }
+  },
   
   "models": {
     "MTF_CONFLUENCE": {
-      "id": "mtf_confluence",
-      "name": "MTF Confluence",
-      "shortName": "MTF",
-      "emoji": "🎯",
+      "id": 1,
+      "name": "MTF_CONFLUENCE",
+      "tier": "S",
       "baseScore": 95,
       "maxScore": 100,
-      "category": "continuation",
-      "difficulty": "intermediate",
-      "winRate": 78,
-      "frequency": "medium",
-      "requiresMTF": false,
-      
-      "description": {
-        "short": "Confluencia entre H1 y M5 en la misma dirección con pullback a zona.",
-        "full": "El modelo de Confluencia Multi-Timeframe es el más poderoso. Busca alineación perfecta entre el timeframe superior (H1) y el de entrada (M5), combinado con un pullback a una zona institucional. Cuando ambos timeframes apuntan en la misma dirección y el precio retrocede a una zona de interés, la probabilidad de éxito aumenta significativamente.",
-        "psychology": "El Smart Money opera en timeframes superiores. Cuando H1 y M5 están alineados, significa que las instituciones están activas en esa dirección. El pullback es la oportunidad de entrar con ellos."
+      "description": "Confluencia Multi-Timeframe con Zona OB válida",
+      "requirements": {
+        "mandatory": [
+          "✅ ZONA VÁLIDA OB: Vela roja + verde (BUY) o verde + roja (SELL)",
+          "✅ H1 y M5 alineados en misma dirección",
+          "✅ Pullback detectado hacia zona de valor",
+          "✅ Side del pullback coincide con tendencia H1"
+        ],
+        "bonus": [
+          "+3 pts: Premium/Discount correcto",
+          "+2 pts: Zona OB formada en últimas 5 velas"
+        ]
       },
-      
-      "requirements": [
-        {
-          "id": "h1_trend",
-          "name": "Tendencia H1 clara",
-          "description": "H1 debe mostrar estructura BULLISH o BEARISH definida",
-          "weight": 0.3
-        },
-        {
-          "id": "m5_alignment",
-          "name": "M5 alineado con H1",
-          "description": "La estructura de M5 debe ir en la misma dirección que H1",
-          "weight": 0.3
-        },
-        {
-          "id": "pullback_zone",
-          "name": "Pullback a zona",
-          "description": "El precio debe retroceder a un Order Block, FVG o zona de demanda/supply",
-          "weight": 0.25
-        },
-        {
-          "id": "premium_discount",
-          "name": "Premium/Discount correcto",
-          "description": "Para LONG: precio en Discount (< 50% del rango). Para SHORT: precio en Premium (> 50% del rango)",
-          "weight": 0.15
-        }
-      ],
-      
-      "bonuses": [
-        {
-          "id": "pd_bonus",
-          "name": "Premium/Discount Bonus",
-          "points": 5,
-          "condition": "Precio en zona óptima de Premium o Discount"
-        },
-        {
-          "id": "liquidity_swept",
-          "name": "Liquidez barrida",
-          "points": 3,
-          "condition": "Se barrió liquidez antes del pullback"
-        }
-      ],
-      
-      "entryRules": {
-        "trigger": "Vela de confirmación en zona después del pullback",
-        "confirmation": "Cierre por encima/debajo de la zona tocada",
-        "invalidation": "Cierre contrario a la dirección esperada"
+      "entry": {
+        "BUY": "Cuando H1=BULLISH + Pullback BUY + Zona OB válida (roja+verde)",
+        "SELL": "Cuando H1=BEARISH + Pullback SELL + Zona OB válida (verde+roja)"
       },
-      
-      "riskManagement": {
-        "stopLoss": "Debajo/encima de la zona + buffer de ATR",
-        "tp1": "1:1 Risk:Reward",
-        "tp2": "1:2 Risk:Reward", 
-        "tp3": "1:3 Risk:Reward",
-        "trailingStop": "Mover SL a breakeven después de TP1"
+      "validOBZone": {
+        "BUY": "🔴 Vela ROJA + 🟢 Vela VERDE envolvente",
+        "SELL": "🟢 Vela VERDE + 🔴 Vela ROJA envolvente"
+      }
+    },
+    
+    "OTE_ENTRY": {
+      "id": 2,
+      "name": "OTE_ENTRY",
+      "tier": "S",
+      "baseScore": 82,
+      "maxScore": 95,
+      "description": "Entrada en Zona Fibonacci 62-79% con OB válido",
+      "requirements": {
+        "mandatory": [
+          "✅ ZONA VÁLIDA OB: Vela roja + verde (BUY) o verde + roja (SELL)",
+          "✅ CHoCH detectado (cambio de carácter)",
+          "✅ Precio en zona OTE (Fib 62-79%)",
+          "✅ Pullback activo"
+        ],
+        "bonus": [
+          "+5 pts: MTF Confluence activo",
+          "+5 pts: Premium/Discount correcto",
+          "+3 pts: Zona OB con fuerza >= 70%"
+        ]
       },
-      
-      "examples": [
-        {
-          "asset": "CRASH500",
-          "direction": "SHORT",
-          "entry": 3768.53,
-          "stopLoss": 3795.00,
-          "tp1": 3742.00,
-          "tp2": 3715.00,
-          "tp3": 3688.00,
-          "score": 97,
-          "result": "WIN",
-          "notes": "H1 BEARISH + M5 BEARISH + Pullback a OB + Premium zone"
-        },
-        {
-          "asset": "XAUUSD",
-          "direction": "LONG",
-          "entry": 2645.30,
-          "stopLoss": 2638.50,
-          "tp1": 2652.10,
-          "tp2": 2658.90,
-          "tp3": 2665.70,
-          "score": 95,
-          "result": "WIN",
-          "notes": "H1 BULLISH + M5 BULLISH + Pullback a demand zone"
-        }
-      ],
-      
-      "commonMistakes": [
-        "Entrar sin esperar el pullback completo",
-        "Ignorar la estructura de H1",
-        "Entrar en zonas de consolidación (sin tendencia clara)",
-        "No respetar el Premium/Discount"
-      ],
-      
-      "proTips": [
-        "Espera siempre confirmación en la zona, no entres anticipado",
-        "Los mejores setups tienen liquidez barrida antes del pullback",
-        "Si H1 está en ranging, evita este modelo",
-        "Combina con sesión de Londres o NY para mejor volumen"
-      ]
+      "entry": {
+        "BUY": "Precio en zona 62-79% de retroceso alcista + Zona OB válida",
+        "SELL": "Precio en zona 62-79% de retroceso bajista + Zona OB válida"
+      },
+      "validOBZone": {
+        "BUY": "🔴 Vela ROJA + 🟢 Vela VERDE envolvente",
+        "SELL": "🟢 Vela VERDE + 🔴 Vela ROJA envolvente"
+      }
     },
     
     "CHOCH_PULLBACK": {
-      "id": "choch_pullback",
-      "name": "CHOCH Pullback",
-      "shortName": "CHoCH",
-      "emoji": "🔄",
+      "id": 3,
+      "name": "CHOCH_PULLBACK",
+      "tier": "A",
       "baseScore": 85,
       "maxScore": 95,
-      "category": "reversal",
-      "difficulty": "advanced",
-      "winRate": 75,
-      "frequency": "low",
-      "requiresMTF": false,
-      
-      "description": {
-        "short": "Cambio de carácter del mercado seguido de pullback para entrada.",
-        "full": "Change of Character (CHoCH) indica un cambio en la estructura del mercado. Cuando una tendencia bajista rompe un alto anterior (o viceversa), señala un posible cambio de dirección. Este modelo busca entrar después del CHoCH, cuando el precio hace pullback a la zona donde ocurrió el cambio.",
-        "psychology": "El CHoCH representa el momento donde el Smart Money cambia de posición. Están distribuyendo o acumulando. El pullback es tu oportunidad de unirte al nuevo movimiento institucional."
+      "description": "Cambio de Carácter + Pullback con OB válido",
+      "requirements": {
+        "mandatory": [
+          "✅ ZONA VÁLIDA OB: Vela roja + verde (BUY) o verde + roja (SELL)",
+          "✅ CHoCH detectado",
+          "✅ Pullback en misma dirección del CHoCH",
+          "✅ H1 no en contra"
+        ],
+        "bonus": [
+          "+5 pts: MTF Confluence activo",
+          "+3 pts: Estructura M5 >= 70% fuerza",
+          "+2 pts: Zona OB en últimas 5 velas"
+        ]
       },
-      
-      "requirements": [
-        {
-          "id": "choch_confirmed",
-          "name": "CHoCH confirmado",
-          "description": "Ruptura de estructura contraria a la tendencia previa (HH en downtrend o LL en uptrend)",
-          "weight": 0.4
-        },
-        {
-          "id": "pullback_to_choch",
-          "name": "Pullback a zona del CHoCH",
-          "description": "El precio debe retroceder al área donde ocurrió el cambio de carácter",
-          "weight": 0.35
-        },
-        {
-          "id": "h1_not_against",
-          "name": "H1 no en contra",
-          "description": "El timeframe superior no debe estar fuertemente en contra de la dirección del CHoCH",
-          "weight": 0.25
-        }
-      ],
-      
-      "bonuses": [
-        {
-          "id": "mtf_bonus",
-          "name": "MTF Confluence Bonus",
-          "points": 5,
-          "condition": "H1 también muestra cambio de estructura o está neutral"
-        },
-        {
-          "id": "imbalance_bonus",
-          "name": "Imbalance en CHoCH",
-          "points": 3,
-          "condition": "El CHoCH creó un FVG o imbalance"
-        }
-      ],
-      
-      "entryRules": {
-        "trigger": "Precio retorna a la zona del CHoCH y muestra rechazo",
-        "confirmation": "Vela de rechazo con wick significativo",
-        "invalidation": "Precio cierra más allá del origen del CHoCH"
+      "entry": {
+        "BUY": "CHoCH alcista + Pullback a zona + OB válido (roja+verde)",
+        "SELL": "CHoCH bajista + Pullback a zona + OB válido (verde+roja)"
       },
-      
-      "riskManagement": {
-        "stopLoss": "Más allá del swing point que causó el CHoCH",
-        "tp1": "1:1 Risk:Reward",
-        "tp2": "1:2 Risk:Reward",
-        "tp3": "Siguiente zona de liquidez",
-        "trailingStop": "Mover SL a breakeven después de TP1"
-      },
-      
-      "examples": [
-        {
-          "asset": "BOOM1000",
-          "direction": "LONG",
-          "entry": 9485.20,
-          "stopLoss": 9450.00,
-          "tp1": 9520.40,
-          "tp2": 9555.60,
-          "tp3": 9590.80,
-          "score": 88,
-          "result": "WIN",
-          "notes": "Downtrend roto con HH, pullback a zona del CHoCH"
-        }
-      ],
-      
-      "commonMistakes": [
-        "Confundir un retroceso normal con un CHoCH real",
-        "No esperar el pullback y entrar en el impulso",
-        "Entrar cuando H1 está fuertemente en contra",
-        "Ignorar la liquidez que debe ser barrida"
-      ],
-      
-      "proTips": [
-        "El CHoCH más fuerte viene después de barrer liquidez",
-        "Busca CHoCH en zonas de soporte/resistencia importantes",
-        "Un CHoCH con volumen alto es más confiable",
-        "Si el CHoCH es muy débil (velas pequeñas), espera confirmación adicional"
-      ]
+      "validOBZone": {
+        "BUY": "🔴 Vela ROJA + 🟢 Vela VERDE envolvente",
+        "SELL": "🟢 Vela VERDE + 🔴 Vela ROJA envolvente"
+      }
     },
     
-    "LIQUIDITY_SWEEP": {
-      "id": "liquidity_sweep",
-      "name": "Liquidity Sweep",
-      "shortName": "LiqSweep",
-      "emoji": "💧",
-      "baseScore": 82,
-      "maxScore": 90,
-      "category": "reversal",
-      "difficulty": "intermediate",
-      "winRate": 73,
-      "frequency": "medium-low",
-      "requiresMTF": false,
-      
-      "description": {
-        "short": "Barrido de liquidez (stops) seguido de reversión.",
-        "full": "El Liquidity Sweep ocurre cuando el Smart Money 'caza' los stop losses de traders retail antes de mover el precio en la dirección real. Los equal highs y equal lows son zonas donde se acumula liquidez. ELISA detecta cuando el precio barre estos niveles y luego revierte.",
-        "psychology": "Los traders retail colocan stops en lugares obvios (above equal highs, below equal lows). El Smart Money necesita esa liquidez para llenar sus órdenes grandes. Después del sweep, el precio va en la dirección real."
-      },
-      
-      "requirements": [
-        {
-          "id": "liquidity_identified",
-          "name": "Liquidez identificada",
-          "description": "Equal Highs o Equal Lows claramente visibles",
-          "weight": 0.3
-        },
-        {
-          "id": "sweep_occurred",
-          "name": "Barrido ejecutado",
-          "description": "El precio superó el nivel de liquidez en las últimas 3 velas",
-          "weight": 0.35
-        },
-        {
-          "id": "reversal_confirmation",
-          "name": "Reversión confirmada",
-          "description": "Cierre de vuelta dentro del rango (por debajo de EQH o encima de EQL)",
-          "weight": 0.2
-        },
-        {
-          "id": "mtf_alignment",
-          "name": "MTF Confluence",
-          "description": "La dirección post-sweep debe estar alineada con H1",
-          "weight": 0.15
-        }
-      ],
-      
-      "bonuses": [
-        {
-          "id": "strong_rejection",
-          "name": "Rechazo fuerte",
-          "points": 4,
-          "condition": "Vela de reversión con wick > cuerpo"
-        },
-        {
-          "id": "volume_spike",
-          "name": "Spike de volumen",
-          "points": 3,
-          "condition": "Volumen significativamente mayor en el sweep"
-        }
-      ],
-      
-      "entryRules": {
-        "trigger": "Cierre de vuelta después del sweep con rechazo visible",
-        "confirmation": "Siguiente vela confirma la dirección de reversión",
-        "invalidation": "Precio continúa más allá del sweep sin revertir"
-      },
-      
-      "riskManagement": {
-        "stopLoss": "Más allá del punto máximo del sweep + buffer",
-        "tp1": "1:1 Risk:Reward",
-        "tp2": "1:2 Risk:Reward",
-        "tp3": "Liquidez opuesta del rango",
-        "trailingStop": "Mover SL a breakeven después de TP1"
-      },
-      
-      "examples": [
-        {
-          "asset": "V75",
-          "direction": "SHORT",
-          "entry": 456890.50,
-          "stopLoss": 457450.00,
-          "tp1": 456331.00,
-          "tp2": 455771.50,
-          "tp3": 455212.00,
-          "score": 85,
-          "result": "WIN",
-          "notes": "Equal highs barridos, reversión inmediata con rechazo fuerte"
-        }
-      ],
-      
-      "commonMistakes": [
-        "Entrar antes de que se complete el sweep",
-        "No esperar la confirmación de reversión",
-        "Confundir un breakout real con un sweep",
-        "Ignorar la dirección de H1"
-      ],
-      
-      "proTips": [
-        "Los mejores sweeps son rápidos y agresivos (1-2 velas)",
-        "Si el sweep es lento y gradual, probablemente es breakout real",
-        "Busca sweeps en sesiones de alta volatilidad (Londres, NY)",
-        "Triple o cuádruple equal highs/lows = más liquidez = mejor sweep"
-      ]
-    },
-    
-    "BOS_CONTINUATION": {
-      "id": "bos_continuation",
-      "name": "BOS Continuation",
-      "shortName": "BOS",
-      "emoji": "📈",
+    "INDUCEMENT": {
+      "id": 4,
+      "name": "INDUCEMENT",
+      "tier": "A",
       "baseScore": 80,
-      "maxScore": 88,
-      "category": "continuation",
-      "difficulty": "beginner",
-      "winRate": 72,
-      "frequency": "medium",
-      "requiresMTF": false,
-      
-      "description": {
-        "short": "Ruptura de estructura que confirma continuación de tendencia.",
-        "full": "Break of Structure (BOS) confirma la continuación de una tendencia existente. A diferencia del CHoCH (que indica cambio), el BOS valida que la tendencia sigue vigente. Cuando el precio hace un nuevo HH (uptrend) o LL (downtrend) y luego retrocede, tenemos oportunidad de entrada a favor de tendencia.",
-        "psychology": "El BOS muestra que el Smart Money sigue comprometido con la dirección actual. Cada BOS es una señal de que las instituciones continúan acumulando/distribuyendo en esa dirección."
+      "maxScore": 92,
+      "description": "Barrido de Liquidez + Reversión con OB válido",
+      "requirements": {
+        "mandatory": [
+          "✅ ZONA VÁLIDA OB: Vela roja + verde (BUY) o verde + roja (SELL)",
+          "✅ Barrido de máximos/mínimos recientes",
+          "✅ Reversión inmediata (cierre dentro del rango)",
+          "✅ Mecha > 50% del cuerpo"
+        ],
+        "bonus": [
+          "+5 pts: H1 alineado con la reversión",
+          "+5 pts: Premium/Discount correcto",
+          "+2 pts: Zona OB con fuerza >= 70%"
+        ]
       },
-      
-      "requirements": [
-        {
-          "id": "bos_confirmed",
-          "name": "BOS confirmado",
-          "description": "Ruptura clara del swing point anterior en la dirección de la tendencia",
-          "weight": 0.35
-        },
-        {
-          "id": "pullback_after_bos",
-          "name": "Pullback después del BOS",
-          "description": "El precio debe retroceder después de la ruptura",
-          "weight": 0.3
-        },
-        {
-          "id": "direction_aligned",
-          "name": "Dirección alineada",
-          "description": "El pullback debe ir a favor de continuar la tendencia",
-          "weight": 0.2
-        },
-        {
-          "id": "mtf_confluence",
-          "name": "MTF Confluence",
-          "description": "H1 debe estar en la misma dirección",
-          "weight": 0.15
-        }
-      ],
-      
-      "bonuses": [
-        {
-          "id": "fvg_at_bos",
-          "name": "FVG en el BOS",
-          "points": 4,
-          "condition": "La ruptura creó un Fair Value Gap"
-        },
-        {
-          "id": "ob_at_bos",
-          "name": "Order Block en el BOS",
-          "points": 3,
-          "condition": "Hay un OB claro en la zona de ruptura"
-        }
-      ],
-      
-      "entryRules": {
-        "trigger": "Pullback a la zona del BOS o al 50% del impulso",
-        "confirmation": "Vela de continuación en la dirección de la tendencia",
-        "invalidation": "Precio rompe el HL/LH creado por el pullback"
+      "entry": {
+        "BUY": "Barrido de mínimos + reversión alcista + OB válido (roja+verde)",
+        "SELL": "Barrido de máximos + reversión bajista + OB válido (verde+roja)"
       },
-      
-      "riskManagement": {
-        "stopLoss": "Debajo del HL (uptrend) o encima del LH (downtrend)",
-        "tp1": "1:1 Risk:Reward",
-        "tp2": "1:2 Risk:Reward",
-        "tp3": "Proyección del impulso anterior",
-        "trailingStop": "Mover SL a breakeven después de TP1"
-      },
-      
-      "examples": [
-        {
-          "asset": "GBPUSD",
-          "direction": "LONG",
-          "entry": 1.26450,
-          "stopLoss": 1.26200,
-          "tp1": 1.26700,
-          "tp2": 1.26950,
-          "tp3": 1.27200,
-          "score": 82,
-          "result": "WIN",
-          "notes": "BOS alcista confirmado, pullback a zona + FVG"
-        }
-      ],
-      
-      "commonMistakes": [
-        "Confundir BOS con CHoCH",
-        "Entrar en el impulso en lugar de esperar pullback",
-        "No verificar que H1 esté alineado",
-        "Entrar en BOS de muy baja calidad (rompimientos débiles)"
-      ],
-      
-      "proTips": [
-        "El mejor pullback llega al 50-79% del impulso",
-        "Un BOS con FVG es más fuerte que sin FVG",
-        "Evita BOS en zonas de supply/demand importantes",
-        "BOS + liquidez barrida = setup de alta probabilidad"
-      ]
-    },
-    
-    "ZONE_TOUCH": {
-      "id": "zone_touch",
-      "name": "Zone Touch",
-      "shortName": "ZoneTouch",
-      "emoji": "🎯",
-      "baseScore": 78,
-      "maxScore": 86,
-      "category": "bounce",
-      "difficulty": "intermediate",
-      "winRate": 70,
-      "frequency": "medium-high",
-      "requiresMTF": false,
-      
-      "description": {
-        "short": "Toque de Order Block o zona institucional con rechazo fuerte.",
-        "full": "Zone Touch detecta cuando el precio toca una zona institucional (Order Block) y muestra un rechazo fuerte. Las zonas de demanda y supply son áreas donde el Smart Money dejó órdenes pendientes. Este modelo es muy selectivo: requiere toque de zona + rechazo visible + Premium/Discount correcto.",
-        "psychology": "Los Order Blocks son zonas donde las instituciones colocaron órdenes grandes que no se llenaron completamente. Cuando el precio regresa, esas órdenes pendientes se activan, causando el rechazo."
-      },
-      
-      "requirements": [
-        {
-          "id": "zone_touch",
-          "name": "Toque de zona",
-          "description": "El precio debe tocar o entrar en la zona de demanda/supply",
-          "weight": 0.3
-        },
-        {
-          "id": "strong_rejection",
-          "name": "Rechazo fuerte",
-          "description": "Vela con wick significativo (> 50% del cuerpo de la vela)",
-          "weight": 0.3
-        },
-        {
-          "id": "h1_aligned",
-          "name": "H1 alineado",
-          "description": "La dirección del rebote debe estar alineada con H1",
-          "weight": 0.2
-        },
-        {
-          "id": "premium_discount_correct",
-          "name": "Premium/Discount correcto",
-          "description": "LONG en Discount, SHORT en Premium",
-          "weight": 0.2
-        }
-      ],
-      
-      "bonuses": [
-        {
-          "id": "fresh_zone",
-          "name": "Zona fresca",
-          "points": 4,
-          "condition": "Primera vez que el precio toca esta zona"
-        },
-        {
-          "id": "mtf_zone",
-          "name": "Zona de H1",
-          "points": 3,
-          "condition": "La zona también es visible en H1"
-        }
-      ],
-      
-      "entryRules": {
-        "trigger": "Vela de rechazo completa en la zona",
-        "confirmation": "Cierre fuera de la zona en la dirección esperada",
-        "invalidation": "Precio cierra dentro o más allá de la zona"
-      },
-      
-      "riskManagement": {
-        "stopLoss": "Más allá de la zona completa + buffer",
-        "tp1": "1:1.5 Risk:Reward",
-        "tp2": "1:2.5 Risk:Reward",
-        "tp3": "Zona opuesta o nueva estructura",
-        "trailingStop": "Mover SL a breakeven después de TP1"
-      },
-      
-      "examples": [
-        {
-          "asset": "BTCUSD",
-          "direction": "LONG",
-          "entry": 67450.00,
-          "stopLoss": 66850.00,
-          "tp1": 68050.00,
-          "tp2": 68650.00,
-          "tp3": 69250.00,
-          "score": 80,
-          "result": "WIN",
-          "notes": "Toque de demand zone + rechazo fuerte + Discount"
-        }
-      ],
-      
-      "commonMistakes": [
-        "Entrar antes de ver el rechazo",
-        "Usar zonas que ya fueron tocadas múltiples veces",
-        "Ignorar el Premium/Discount",
-        "No verificar la alineación con H1"
-      ],
-      
-      "proTips": [
-        "Las zonas frescas (primera vez tocadas) son las más fuertes",
-        "Después de 2-3 toques, la zona se debilita",
-        "Combina con FVG dentro de la zona para mayor probabilidad",
-        "Evita zonas en medio de consolidación"
-      ]
-    },
-    
-    "FVG_ENTRY": {
-      "id": "fvg_entry",
-      "name": "FVG Entry",
-      "shortName": "FVG",
-      "emoji": "⚡",
-      "baseScore": 77,
-      "maxScore": 85,
-      "category": "imbalance",
-      "difficulty": "beginner",
-      "winRate": 68,
-      "frequency": "high",
-      "requiresMTF": false,
-      
-      "description": {
-        "short": "Entrada cuando el precio llena un Fair Value Gap.",
-        "full": "Fair Value Gap (FVG) es un desequilibrio de precio que ocurre cuando hay un movimiento tan rápido que deja un 'gap' entre velas. El mercado tiende a 'llenar' estos gaps. ELISA identifica FVGs significativos y espera que el precio regrese a la zona del gap para entrar en la dirección original.",
-        "psychology": "Los FVGs representan ineficiencias del mercado. El Smart Money no tuvo tiempo de llenar todas sus órdenes durante el movimiento rápido. Cuando el precio regresa, esas órdenes se completan y el precio continúa."
-      },
-      
-      "requirements": [
-        {
-          "id": "fvg_identified",
-          "name": "FVG identificado",
-          "description": "Gap entre el high de vela 1 y low de vela 3 (bullish) o viceversa",
-          "weight": 0.3
-        },
-        {
-          "id": "price_in_fvg",
-          "name": "Precio en el FVG",
-          "description": "El precio actual debe estar dentro de la zona del FVG",
-          "weight": 0.3
-        },
-        {
-          "id": "pullback_aligned",
-          "name": "Pullback alineado",
-          "description": "La dirección del rebote debe ir con la dirección original del FVG",
-          "weight": 0.2
-        },
-        {
-          "id": "mtf_confluence",
-          "name": "MTF Confluence",
-          "description": "H1 debe estar en la misma dirección del FVG",
-          "weight": 0.2
-        }
-      ],
-      
-      "bonuses": [
-        {
-          "id": "untouched_fvg",
-          "name": "FVG intacto",
-          "points": 4,
-          "condition": "Primera vez que el precio regresa al FVG"
-        },
-        {
-          "id": "h1_fvg",
-          "name": "FVG visible en H1",
-          "points": 3,
-          "condition": "El mismo FVG es visible en timeframe superior"
-        }
-      ],
-      
-      "entryRules": {
-        "trigger": "Precio entra en el FVG y muestra reacción",
-        "confirmation": "Vela de continuación en la dirección original",
-        "invalidation": "Precio cierra completamente más allá del FVG"
-      },
-      
-      "riskManagement": {
-        "stopLoss": "Más allá del FVG completo",
-        "tp1": "1:1 Risk:Reward",
-        "tp2": "1:2 Risk:Reward",
-        "tp3": "High/Low del impulso que creó el FVG",
-        "trailingStop": "Mover SL a breakeven después de TP1"
-      },
-      
-      "examples": [
-        {
-          "asset": "XAUUSD",
-          "direction": "LONG",
-          "entry": 2648.50,
-          "stopLoss": 2642.00,
-          "tp1": 2655.00,
-          "tp2": 2661.50,
-          "tp3": 2668.00,
-          "score": 79,
-          "result": "WIN",
-          "notes": "FVG bullish, precio llenó el gap y continuó"
-        }
-      ],
-      
-      "commonMistakes": [
-        "Entrar en cualquier FVG sin verificar MTF",
-        "Usar FVGs muy pequeños (ruido del mercado)",
-        "No esperar que el precio entre en el FVG",
-        "Ignorar FVGs que ya fueron tocados"
-      ],
-      
-      "proTips": [
-        "Los FVGs más grandes son más significativos",
-        "FVG + Order Block = zona de muy alta probabilidad",
-        "Los FVGs de H1 son más fuertes que los de M5",
-        "En tendencias fuertes, los FVGs suelen llenarse parcialmente"
-      ]
-    },
-    
-    "OB_ENTRY": {
-      "id": "ob_entry",
-      "name": "Order Block Entry",
-      "shortName": "OB",
-      "emoji": "🧱",
-      "baseScore": 72,
-      "maxScore": 85,
-      "category": "zone",
-      "difficulty": "beginner",
-      "winRate": 70,
-      "frequency": "high",
-      "requiresMTF": false,
-      
-      "description": {
-        "short": "Entrada directa cuando el precio toca un Order Block válido.",
-        "full": "Este modelo simplificado busca entradas cuando el precio retrocede a un Order Block identificado. No requiere MTF obligatorio, lo que permite más oportunidades de entrada. El score aumenta con confirmaciones adicionales como Premium/Discount correcto y MTF.",
-        "psychology": "Los Order Blocks son zonas donde el Smart Money dejó órdenes pendientes. Cuando el precio regresa, estas órdenes se activan."
-      },
-      
-      "requirements": [
-        {
-          "id": "ob_identified",
-          "name": "Order Block identificado",
-          "description": "Última vela contraria antes de impulso visible",
-          "weight": 0.4
-        },
-        {
-          "id": "price_at_ob",
-          "name": "Precio en la zona",
-          "description": "El precio actual debe estar tocando el Order Block",
-          "weight": 0.4
-        },
-        {
-          "id": "direction_clear",
-          "name": "Dirección clara",
-          "description": "M5 muestra estructura definida",
-          "weight": 0.2
-        }
-      ],
-      
-      "bonuses": [
-        {
-          "id": "pd_correct",
-          "name": "Premium/Discount correcto",
-          "points": 5,
-          "condition": "Compras en Discount, ventas en Premium"
-        },
-        {
-          "id": "mtf_bonus",
-          "name": "MTF Confluence",
-          "points": 5,
-          "condition": "H1 alineado con la dirección"
-        }
-      ],
-      
-      "entryRules": {
-        "trigger": "Precio toca el Order Block",
-        "confirmation": "Muestra señal de rechazo",
-        "invalidation": "Cierre más allá del Order Block"
-      },
-      
-      "riskManagement": {
-        "stopLoss": "Más allá del Order Block completo",
-        "tp1": "1:1.5 Risk:Reward",
-        "tp2": "1:2.5 Risk:Reward",
-        "tp3": "1:4 Risk:Reward",
-        "trailingStop": "Mover SL a breakeven después de TP1"
-      }
-    },
-    
-    "STRUCTURE_BREAK": {
-      "id": "structure_break",
-      "name": "Structure Break",
-      "shortName": "SB",
-      "emoji": "💥",
-      "baseScore": 70,
-      "maxScore": 80,
-      "category": "momentum",
-      "difficulty": "beginner",
-      "winRate": 68,
-      "frequency": "high",
-      "requiresMTF": false,
-      
-      "description": {
-        "short": "Entrada en la ruptura de estructura sin esperar pullback.",
-        "full": "Para traders más agresivos, este modelo permite entrar directamente cuando hay una ruptura de estructura (BOS) sin necesidad de esperar un pullback completo. Útil en mercados con momentum fuerte donde el pullback puede no llegar.",
-        "psychology": "A veces el mercado se mueve tan rápido que esperar el pullback significa perderse el movimiento. Este modelo captura esas oportunidades."
-      },
-      
-      "requirements": [
-        {
-          "id": "bos_detected",
-          "name": "BOS detectado",
-          "description": "Ruptura clara de swing high o swing low",
-          "weight": 0.5
-        },
-        {
-          "id": "momentum_strong",
-          "name": "Momentum fuerte",
-          "description": "Velas de impulso con cuerpos grandes",
-          "weight": 0.3
-        },
-        {
-          "id": "no_pullback_yet",
-          "name": "Sin pullback aún",
-          "description": "El precio no ha retrocedido significativamente",
-          "weight": 0.2
-        }
-      ],
-      
-      "bonuses": [
-        {
-          "id": "mtf_support",
-          "name": "MTF Support",
-          "points": 5,
-          "condition": "H1 en la misma dirección"
-        }
-      ],
-      
-      "riskManagement": {
-        "stopLoss": "Debajo/encima del punto de ruptura",
-        "tp1": "1:1.5 Risk:Reward",
-        "tp2": "1:2.5 Risk:Reward",
-        "tp3": "1:4 Risk:Reward",
-        "trailingStop": "Agresivo - proteger ganancias rápido"
-      }
-    },
-    
-    "REVERSAL_PATTERN": {
-      "id": "reversal_pattern",
-      "name": "Reversal Pattern",
-      "shortName": "REV",
-      "emoji": "🔄",
-      "baseScore": 71,
-      "maxScore": 82,
-      "category": "reversal",
-      "difficulty": "intermediate",
-      "winRate": 69,
-      "frequency": "medium",
-      "requiresMTF": false,
-      
-      "description": {
-        "short": "CHoCH con retroceso menor, sin necesidad de llegar a zona.",
-        "full": "Similar a CHOCH_PULLBACK pero más flexible. Detecta cambios de carácter y permite entrada cuando hay un retroceso menor, sin necesidad de que el precio llegue a una zona de demanda/supply específica.",
-        "psychology": "A veces el cambio de tendencia es tan fuerte que el pullback es mínimo. Este modelo captura esas reversiones tempranas."
-      },
-      
-      "requirements": [
-        {
-          "id": "choch_confirmed",
-          "name": "CHoCH confirmado",
-          "description": "Cambio de carácter visible en la estructura",
-          "weight": 0.4
-        },
-        {
-          "id": "minor_retracement",
-          "name": "Retroceso menor",
-          "description": "Pequeño pullback después del CHoCH",
-          "weight": 0.35
-        },
-        {
-          "id": "structure_strength",
-          "name": "Estructura M5 fuerte",
-          "description": "Fuerza de estructura >= 60%",
-          "weight": 0.25
-        }
-      ],
-      
-      "bonuses": [
-        {
-          "id": "h1_support",
-          "name": "H1 soporta dirección",
-          "points": 5,
-          "condition": "H1 neutral o en la nueva dirección"
-        }
-      ],
-      
-      "riskManagement": {
-        "stopLoss": "Más allá del origen del CHoCH",
-        "tp1": "1:1.5 Risk:Reward",
-        "tp2": "1:2.5 Risk:Reward",
-        "tp3": "1:4 Risk:Reward",
-        "trailingStop": "Mover SL según estructura"
-      }
-    },
-    
-    "PREMIUM_DISCOUNT": {
-      "id": "premium_discount",
-      "name": "Premium Discount Entry",
-      "shortName": "P/D",
-      "emoji": "💰",
-      "baseScore": 70,
-      "maxScore": 82,
-      "category": "value",
-      "difficulty": "beginner",
-      "winRate": 67,
-      "frequency": "high",
-      "requiresMTF": false,
-      
-      "description": {
-        "short": "Entrada basada en zonas de valor (Premium/Discount) con tendencia.",
-        "full": "Este modelo busca compras cuando el precio está en Discount durante una tendencia alcista, y ventas cuando está en Premium durante tendencia bajista. Es un modelo de alta frecuencia que no requiere pullback a zona específica.",
-        "psychology": "Comprar barato (Discount) y vender caro (Premium) es la base del trading institucional. Este modelo simplifica ese concepto."
-      },
-      
-      "requirements": [
-        {
-          "id": "trend_defined",
-          "name": "Tendencia definida",
-          "description": "M5 muestra estructura BULLISH o BEARISH clara",
-          "weight": 0.4
-        },
-        {
-          "id": "pd_correct",
-          "name": "P/D correcto para dirección",
-          "description": "Discount para compras, Premium para ventas",
-          "weight": 0.4
-        },
-        {
-          "id": "no_opposing_zone",
-          "name": "Sin zona opuesta cercana",
-          "description": "No hay supply cerca en compras, ni demand cerca en ventas",
-          "weight": 0.2
-        }
-      ],
-      
-      "bonuses": [
-        {
-          "id": "mtf_confluence",
-          "name": "MTF Confluence",
-          "points": 6,
-          "condition": "H1 en la misma dirección que M5"
-        }
-      ],
-      
-      "riskManagement": {
-        "stopLoss": "Más allá del extremo del rango P/D",
-        "tp1": "1:1.5 Risk:Reward",
-        "tp2": "1:2.5 Risk:Reward",
-        "tp3": "Extremo opuesto del rango",
-        "trailingStop": "Por estructura de M5"
+      "validOBZone": {
+        "BUY": "🔴 Vela ROJA + 🟢 Vela VERDE envolvente",
+        "SELL": "🟢 Vela VERDE + 🔴 Vela ROJA envolvente"
       }
     },
     
     "BOOM_SPIKE": {
-      "id": "boom_spike",
-      "name": "Boom Spike Setup",
-      "shortName": "BOOM",
-      "emoji": "🚀",
+      "id": 5,
+      "name": "BOOM_SPIKE",
+      "tier": "A",
       "baseScore": 80,
       "maxScore": 92,
-      "category": "synthetic",
-      "difficulty": "advanced",
-      "winRate": 72,
-      "frequency": "medium",
-      "requiresMTF": false,
-      
-      "description": {
-        "short": "Setup específico para índices Boom - SOLO COMPRAS en zonas de demanda.",
-        "full": "Los índices Boom tienen una tendencia bajista natural con spikes alcistas periódicos. Este modelo busca compras en zonas de demanda durante la fase de caída, anticipando el próximo spike alcista. NUNCA vende en Boom.",
-        "psychology": "Los spikes en Boom son predecibles en términos de que SIEMPRE ocurren. La clave es estar posicionado en una zona de demanda cuando llegue."
+      "description": "Spike en índices Boom (SOLO LONG)",
+      "requirements": {
+        "mandatory": [
+          "✅ ZONA VÁLIDA OB: Vela roja + verde (BUY)",
+          "✅ Activo: Boom 500 o Boom 1000",
+          "✅ Spike alcista detectado (cuerpo > 3x promedio)",
+          "✅ SOLO operaciones LONG"
+        ],
+        "bonus": [
+          "+5 pts: Múltiples spikes previos",
+          "+5 pts: Volatilidad estable"
+        ]
       },
-      
-      "requirements": [
-        {
-          "id": "demand_zone",
-          "name": "En zona de demanda",
-          "description": "Precio debe estar tocando o cerca de una zona de demanda",
-          "weight": 0.4
-        },
-        {
-          "id": "discount_zone",
-          "name": "En Discount",
-          "description": "Precio en la mitad inferior del rango",
-          "weight": 0.3
-        },
-        {
-          "id": "rejection_sign",
-          "name": "Señal de rechazo",
-          "description": "Vela con wick inferior significativo",
-          "weight": 0.3
-        }
-      ],
-      
-      "entryRules": {
-        "trigger": "Toque de zona de demanda + señal de rechazo",
-        "confirmation": "Vela alcista o wick inferior fuerte",
-        "invalidation": "Cierre por debajo de la zona de demanda"
+      "entry": {
+        "BUY": "Spike alcista detectado + OB válido (roja+verde)",
+        "SELL": "❌ NO PERMITIDO en Boom"
+      },
+      "validOBZone": {
+        "BUY": "🔴 Vela ROJA + 🟢 Vela VERDE envolvente",
+        "SELL": "❌ No aplica"
       }
     },
     
     "CRASH_SPIKE": {
-      "id": "crash_spike",
-      "name": "Crash Spike Setup",
-      "shortName": "CRASH",
-      "emoji": "💣",
+      "id": 6,
+      "name": "CRASH_SPIKE",
+      "tier": "A",
       "baseScore": 80,
       "maxScore": 92,
-      "category": "synthetic",
-      "difficulty": "advanced",
-      "winRate": 72,
-      "frequency": "medium",
-      "requiresMTF": false,
-      
-      "description": {
-        "short": "Setup específico para índices Crash - SOLO VENTAS en zonas de supply.",
-        "full": "Los índices Crash tienen una tendencia alcista natural con spikes bajistas periódicos. Este modelo busca ventas en zonas de supply durante la fase de subida, anticipando el próximo spike bajista. NUNCA compra en Crash.",
-        "psychology": "Los spikes en Crash son predecibles en términos de que SIEMPRE ocurren. La clave es estar posicionado en una zona de supply cuando llegue."
+      "description": "Spike en índices Crash (SOLO SHORT)",
+      "requirements": {
+        "mandatory": [
+          "✅ ZONA VÁLIDA OB: Vela verde + roja (SELL)",
+          "✅ Activo: Crash 500 o Crash 1000",
+          "✅ Spike bajista detectado (cuerpo > 3x promedio)",
+          "✅ SOLO operaciones SHORT"
+        ],
+        "bonus": [
+          "+5 pts: Múltiples spikes previos",
+          "+5 pts: Volatilidad estable"
+        ]
       },
-      
-      "requirements": [
-        {
-          "id": "supply_zone",
-          "name": "En zona de supply",
-          "description": "Precio debe estar tocando o cerca de una zona de supply",
-          "weight": 0.4
-        },
-        {
-          "id": "premium_zone",
-          "name": "En Premium",
-          "description": "Precio en la mitad superior del rango",
-          "weight": 0.3
-        },
-        {
-          "id": "rejection_sign",
-          "name": "Señal de rechazo",
-          "description": "Vela con wick superior significativo",
-          "weight": 0.3
-        }
-      ],
-      
-      "entryRules": {
-        "trigger": "Toque de zona de supply + señal de rechazo",
-        "confirmation": "Vela bajista o wick superior fuerte",
-        "invalidation": "Cierre por encima de la zona de supply"
+      "entry": {
+        "BUY": "❌ NO PERMITIDO en Crash",
+        "SELL": "Spike bajista detectado + OB válido (verde+roja)"
+      },
+      "validOBZone": {
+        "BUY": "❌ No aplica",
+        "SELL": "🟢 Vela VERDE + 🔴 Vela ROJA envolvente"
+      }
+    },
+    
+    "BREAKER_BLOCK": {
+      "id": 7,
+      "name": "BREAKER_BLOCK",
+      "tier": "B",
+      "baseScore": 78,
+      "maxScore": 90,
+      "description": "Order Block fallido = Zona opuesta con OB válido",
+      "requirements": {
+        "mandatory": [
+          "✅ ZONA VÁLIDA OB: Vela roja + verde (BUY) o verde + roja (SELL)",
+          "✅ BOS detectado",
+          "✅ CHoCH detectado",
+          "✅ OB previo fue roto y ahora actúa como zona opuesta"
+        ],
+        "bonus": [
+          "+7 pts: MTF Confluence activo",
+          "+5 pts: Premium/Discount correcto"
+        ]
+      },
+      "entry": {
+        "BUY": "Breaker alcista + retorno a zona + OB válido (roja+verde)",
+        "SELL": "Breaker bajista + retorno a zona + OB válido (verde+roja)"
+      },
+      "validOBZone": {
+        "BUY": "🔴 Vela ROJA + 🟢 Vela VERDE envolvente",
+        "SELL": "🟢 Vela VERDE + 🔴 Vela ROJA envolvente"
+      }
+    },
+    
+    "LIQUIDITY_GRAB": {
+      "id": 8,
+      "name": "LIQUIDITY_GRAB",
+      "tier": "B",
+      "baseScore": 78,
+      "maxScore": 90,
+      "description": "Patrón de 2-3 velas con reversión rápida + OB válido",
+      "requirements": {
+        "mandatory": [
+          "✅ ZONA VÁLIDA OB: Vela roja + verde (BUY) o verde + roja (SELL)",
+          "✅ Vela rompe máximo/mínimo previo",
+          "✅ Cierre dentro del rango anterior",
+          "✅ Siguiente vela confirma reversión"
+        ],
+        "bonus": [
+          "+5 pts: H1 alineado",
+          "+5 pts: Premium/Discount correcto",
+          "+2 pts: Zona OB en últimas 5 velas"
+        ]
+      },
+      "entry": {
+        "BUY": "Grab bajista fallido + confirmación + OB válido (roja+verde)",
+        "SELL": "Grab alcista fallido + confirmación + OB válido (verde+roja)"
+      },
+      "validOBZone": {
+        "BUY": "🔴 Vela ROJA + 🟢 Vela VERDE envolvente",
+        "SELL": "🟢 Vela VERDE + 🔴 Vela ROJA envolvente"
+      }
+    },
+    
+    "BOS_CONTINUATION": {
+      "id": 9,
+      "name": "BOS_CONTINUATION",
+      "tier": "B",
+      "baseScore": 75,
+      "maxScore": 88,
+      "description": "Break of Structure + Pullback con OB válido",
+      "requirements": {
+        "mandatory": [
+          "✅ ZONA VÁLIDA OB: Vela roja + verde (BUY) o verde + roja (SELL)",
+          "✅ BOS detectado",
+          "✅ Pullback en misma dirección del BOS",
+          "✅ No es CHoCH (continuación, no reversión)"
+        ],
+        "bonus": [
+          "+7 pts: MTF Confluence activo",
+          "+3 pts: Momentum >= 60%",
+          "+3 pts: Zona OB en últimas 5 velas"
+        ]
+      },
+      "entry": {
+        "BUY": "BOS alcista + pullback + OB válido (roja+verde)",
+        "SELL": "BOS bajista + pullback + OB válido (verde+roja)"
+      },
+      "validOBZone": {
+        "BUY": "🔴 Vela ROJA + 🟢 Vela VERDE envolvente",
+        "SELL": "🟢 Vela VERDE + 🔴 Vela ROJA envolvente"
+      }
+    },
+    
+    "SMART_MONEY_TRAP": {
+      "id": 10,
+      "name": "SMART_MONEY_TRAP",
+      "tier": "C",
+      "baseScore": 75,
+      "maxScore": 87,
+      "description": "Falso breakout con trampa de retail + OB válido",
+      "requirements": {
+        "mandatory": [
+          "✅ ZONA VÁLIDA OB: Vela roja + verde (BUY) o verde + roja (SELL)",
+          "✅ BOS aparente detectado",
+          "✅ Order Flow >= 60%",
+          "✅ Precio revierte después del BOS"
+        ],
+        "bonus": [
+          "+5 pts: Order Flow >= 70%",
+          "+5 pts: Premium/Discount correcto",
+          "+2 pts: Zona OB con fuerza >= 70%"
+        ]
+      },
+      "entry": {
+        "BUY": "Trampa bajista (falso BOS SELL) + OB válido (roja+verde)",
+        "SELL": "Trampa alcista (falso BOS BUY) + OB válido (verde+roja)"
+      },
+      "validOBZone": {
+        "BUY": "🔴 Vela ROJA + 🟢 Vela VERDE envolvente",
+        "SELL": "🟢 Vela VERDE + 🔴 Vela ROJA envolvente"
+      }
+    },
+    
+    "FVG_ENTRY": {
+      "id": 11,
+      "name": "FVG_ENTRY",
+      "tier": "C",
+      "baseScore": 72,
+      "maxScore": 85,
+      "description": "Entrada en Fair Value Gap con OB válido",
+      "requirements": {
+        "mandatory": [
+          "✅ ZONA VÁLIDA OB: Vela roja + verde (BUY) o verde + roja (SELL)",
+          "✅ FVG detectado (gap entre vela 1 y 3)",
+          "✅ Precio actual en zona del FVG",
+          "✅ Pullback alineado con dirección del FVG"
+        ],
+        "bonus": [
+          "+8 pts: MTF Confluence activo",
+          "+3 pts: Zona OB en últimas 5 velas",
+          "+2 pts: Zona OB con fuerza >= 70%"
+        ]
+      },
+      "entry": {
+        "BUY": "En FVG alcista + OB válido (roja+verde)",
+        "SELL": "En FVG bajista + OB válido (verde+roja)"
+      },
+      "validOBZone": {
+        "BUY": "🔴 Vela ROJA + 🟢 Vela VERDE envolvente",
+        "SELL": "🟢 Vela VERDE + 🔴 Vela ROJA envolvente"
+      }
+    },
+    
+    "OB_ENTRY": {
+      "id": 12,
+      "name": "OB_ENTRY",
+      "tier": "C",
+      "baseScore": 72,
+      "maxScore": 88,
+      "description": "Entrada directa en Order Block válido",
+      "requirements": {
+        "mandatory": [
+          "✅ ZONA VÁLIDA OB: Vela roja + verde (BUY) o verde + roja (SELL)",
+          "✅ Pullback detectado hacia zona de demanda/oferta",
+          "✅ Tipo de zona: DEMAND_ZONE o SUPPLY_ZONE"
+        ],
+        "bonus": [
+          "+5 pts: Premium/Discount correcto",
+          "+5 pts: MTF Confluence activo",
+          "+3 pts: Rechazo fuerte (mecha > 50% cuerpo)",
+          "+2 pts: Zona OB en últimas 5 velas",
+          "+1 pt: Zona OB con fuerza >= 70%"
+        ]
+      },
+      "entry": {
+        "BUY": "Pullback a demand zone + OB válido (roja+verde)",
+        "SELL": "Pullback a supply zone + OB válido (verde+roja)"
+      },
+      "validOBZone": {
+        "BUY": "🔴 Vela ROJA + 🟢 Vela VERDE envolvente",
+        "SELL": "🟢 Vela VERDE + 🔴 Vela ROJA envolvente"
       }
     }
   },
   
-  "concepts": {
-    "structure": {
-      "name": "Market Structure",
-      "description": "La estructura del mercado se define por la secuencia de Higher Highs (HH), Higher Lows (HL), Lower Highs (LH) y Lower Lows (LL).",
-      "types": {
-        "bullish": "HH + HL = Tendencia alcista",
-        "bearish": "LH + LL = Tendencia bajista",
-        "neutral": "Sin secuencia clara = Consolidación"
-      }
+  "changelog": {
+    "v16.0": {
+      "date": "2026-01-09",
+      "changes": [
+        "NUEVO: Requisito universal de Zona Válida OB en TODOS los modelos",
+        "BUY requiere: Vela ROJA + Vela VERDE envolvente",
+        "SELL requiere: Vela VERDE + Vela ROJA envolvente",
+        "Función detectValidOBZone() implementada",
+        "Bonuses adicionales por zona reciente y fuerte",
+        "Scores máximos ajustados por requisito adicional"
+      ]
     },
-    "orderBlocks": {
-      "name": "Order Blocks",
-      "description": "Zonas donde el Smart Money colocó órdenes grandes. Se identifican como la última vela contraria antes de un movimiento impulsivo.",
-      "types": {
-        "bullishOB": "Última vela bajista antes de un impulso alcista",
-        "bearishOB": "Última vela alcista antes de un impulso bajista"
-      }
-    },
-    "fairValueGap": {
-      "name": "Fair Value Gap (FVG)",
-      "description": "Desequilibrio de precio donde hay un gap entre el high de vela 1 y el low de vela 3.",
-      "types": {
-        "bullishFVG": "Gap alcista - el precio tiende a regresar para llenarlo antes de continuar subiendo",
-        "bearishFVG": "Gap bajista - el precio tiende a regresar para llenarlo antes de continuar bajando"
-      }
-    },
-    "liquidity": {
-      "name": "Liquidity",
-      "description": "Zonas donde se acumulan stop losses de traders retail. El Smart Money busca esta liquidez para llenar sus órdenes.",
-      "types": {
-        "buySideLiquidity": "Stops de vendedores (above equal highs)",
-        "sellSideLiquidity": "Stops de compradores (below equal lows)"
-      }
-    },
-    "premiumDiscount": {
-      "name": "Premium & Discount",
-      "description": "División del rango en zonas de valor. Discount (< 50%) es zona de compra, Premium (> 50%) es zona de venta.",
-      "calculation": "50% del rango entre swing high y swing low"
-    }
-  },
-  
-  "riskManagement": {
-    "defaultRiskPerTrade": 1,
-    "maxRiskPerTrade": 2,
-    "maxDailyDrawdown": 5,
-    "maxOpenPositions": 3,
-    "riskRewardRatios": {
-      "minimum": 1.5,
-      "recommended": 2,
-      "optimal": 3
-    },
-    "trailingStopRules": {
-      "activateAt": "TP1",
-      "moveToBreakeven": true,
-      "trailByStructure": true
-    }
-  },
-  
-  "tradingHours": {
-    "recommended": {
-      "londonOpen": { "start": "08:00", "end": "11:00", "timezone": "UTC" },
-      "newYorkOpen": { "start": "13:00", "end": "16:00", "timezone": "UTC" },
-      "londonNYOverlap": { "start": "13:00", "end": "16:00", "timezone": "UTC" }
-    },
-    "avoid": {
-      "asianSession": "Baja volatilidad para sintéticos",
-      "newsEvents": "Alta volatilidad impredecible",
-      "fridayClose": "Spreads amplios y movimientos erráticos"
-    }
-  },
-  
-  "learningSystem": {
-    "scoreAdjustments": {
-      "onWin": 2,
-      "onLoss": -3,
-      "maxBonus": 10,
-      "maxPenalty": -15
-    },
-    "patternRecognition": {
-      "trackWinRate": true,
-      "trackByAsset": true,
-      "trackBySession": true,
-      "trackByModel": true
-    },
-    "adaptiveThresholds": {
-      "enabled": true,
-      "adjustmentPeriod": "weekly",
-      "minSampleSize": 20
+    "v15.0": {
+      "date": "2026-01-08",
+      "changes": [
+        "Reducción de 17 a 12 modelos (eliminación de redundantes)"
+      ]
     }
   }
 }
