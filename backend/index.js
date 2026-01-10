@@ -3524,12 +3524,13 @@ function checkSignalHits() {
   }
 }
 
-function closeSignal(id, status, symbol) {
+function closeSignal(id, status, symbol, tpHit = null) {
   const signal = signalHistory.find(s => s.id === id);
   if (!signal || signal.status !== 'PENDING') return;
   
   signal.status = status;
   signal.closedAt = new Date().toISOString();
+  signal.tpHit = status === 'WIN' ? (tpHit || 1) : null;
   
   if (symbol && assetData[symbol]) {
     assetData[symbol].lockedSignal = null;
@@ -3543,6 +3544,13 @@ function closeSignal(id, status, symbol) {
     stats.wins++;
     stats.byModel[signal.model].wins++;
     stats.byAsset[signal.symbol].wins++;
+    
+    // Contabilizar TP alcanzado (para marcado manual)
+    if (tpHit) {
+      if (tpHit === 1) stats.tp1Hits++;
+      else if (tpHit === 2) stats.tp2Hits++;
+      else if (tpHit === 3) stats.tp3Hits++;
+    }
   } else if (status === 'LOSS') {
     stats.losses++;
     stats.byModel[signal.model].losses++;
@@ -4001,7 +4009,7 @@ app.put('/api/signals/:id', async (req, res) => {
   if (!signal) return res.status(404).json({ error: 'Not found' });
   
   const { status, userId, tpHit } = req.body;
-  closeSignal(id, status, signal.symbol);
+  closeSignal(id, status, signal.symbol, tpHit);
   
   // Guardar en módulo de reportes si está disponible
   if (reportsManager && userId) {

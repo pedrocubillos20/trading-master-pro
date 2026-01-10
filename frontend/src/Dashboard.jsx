@@ -1118,7 +1118,7 @@ export default function Dashboard({ user, onLogout }) {
           {activeSection === 'dashboard' && <DashboardSection />}
           {activeSection === 'signals' && <SignalsSection />}
           {activeSection === 'stats' && <StatsSection />}
-          {activeSection === 'reports' && <ReportsSection userId={user?.id} />}
+          {activeSection === 'reports' && <ReportsSection userId={user?.id} localStats={data?.stats} localSignals={data?.recentSignals} />}
           {activeSection === 'history' && <HistorySection />}
           {activeSection === 'download' && (
             <div className="space-y-4">

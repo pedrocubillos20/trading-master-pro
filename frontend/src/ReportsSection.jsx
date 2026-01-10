@@ -2,6 +2,13 @@ import React, { useState, useEffect, useMemo } from 'react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://trading-master-pro-production.up.railway.app';
 
+// Configuración de R:R por TP
+const TP_RR_RATIOS = {
+  1: 1.5,
+  2: 2.5,
+  3: 3.5
+};
+
 // Mini componente de gráfica de líneas
 const LineChart = ({ data, height = 200, color = '#10b981' }) => {
   if (!data || data.length === 0) {
@@ -101,16 +108,159 @@ const PERIODS = [
 // Días de la semana
 const DAYS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 
-export default function ReportsSection({ userId }) {
+export default function ReportsSection({ userId, localStats, localSignals }) {
   const [period, setPeriod] = useState('month');
   const [report, setReport] = useState(null);
   const [equityCurve, setEquityCurve] = useState([]);
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState(null);
+  const [useLocalData, setUseLocalData] = useState(false);
+
+  // Calcular datos locales desde las señales del backend
+  const localData = useMemo(() => {
+    if (!localStats || !localSignals) return null;
+    
+    const closedSignals = localSignals.filter(s => s.status === 'WIN' || s.status === 'LOSS');
+    const wins = closedSignals.filter(s => s.status === 'WIN');
+    const losses = closedSignals.filter(s => s.status === 'LOSS');
+    
+    // Calcular P&L simulado
+    let totalPnl = 0;
+    let capital = 1000;
+    const equityData = [];
+    
+    // Agrupar por día
+    const byDay = {};
+    closedSignals.forEach(s => {
+      const date = new Date(s.timestamp).toISOString().split('T')[0];
+      if (!byDay[date]) byDay[date] = { wins: 0, losses: 0, pnl: 0 };
+      
+      if (s.status === 'WIN') {
+        const tpHit = s.tpHit || 1;
+        const pnl = TP_RR_RATIOS[tpHit] || 1.5;
+        byDay[date].wins++;
+        byDay[date].pnl += pnl;
+        totalPnl += pnl;
+      } else {
+        byDay[date].losses++;
+        byDay[date].pnl -= 1;
+        totalPnl -= 1;
+      }
+    });
+    
+    // Generar equity curve
+    let cumulative = 0;
+    Object.keys(byDay).sort().forEach(date => {
+      cumulative += byDay[date].pnl;
+      capital = 1000 * (1 + cumulative / 100);
+      equityData.push({
+        snapshot_date: date,
+        daily_pnl_percent: byDay[date].pnl.toFixed(2),
+        cumulative_pnl_percent: cumulative.toFixed(2),
+        ending_capital: capital.toFixed(2),
+        trades_count: byDay[date].wins + byDay[date].losses,
+        wins_count: byDay[date].wins,
+        losses_count: byDay[date].losses
+      });
+    });
+    
+    const decidedTrades = wins.length + losses.length;
+    const winRate = decidedTrades > 0 ? ((wins.length / decidedTrades) * 100).toFixed(2) : 0;
+    
+    // Stats por modelo
+    const byModel = {};
+    closedSignals.forEach(s => {
+      if (!byModel[s.model]) byModel[s.model] = { trades: 0, wins: 0, losses: 0, pnl: 0 };
+      byModel[s.model].trades++;
+      if (s.status === 'WIN') {
+        byModel[s.model].wins++;
+        byModel[s.model].pnl += TP_RR_RATIOS[s.tpHit || 1] || 1.5;
+      } else {
+        byModel[s.model].losses++;
+        byModel[s.model].pnl -= 1;
+      }
+    });
+    
+    // Stats por activo
+    const byAsset = {};
+    closedSignals.forEach(s => {
+      if (!byAsset[s.symbol]) byAsset[s.symbol] = { trades: 0, wins: 0, losses: 0, pnl: 0, name: s.assetName || s.symbol };
+      byAsset[s.symbol].trades++;
+      if (s.status === 'WIN') {
+        byAsset[s.symbol].wins++;
+        byAsset[s.symbol].pnl += TP_RR_RATIOS[s.tpHit || 1] || 1.5;
+      } else {
+        byAsset[s.symbol].losses++;
+        byAsset[s.symbol].pnl -= 1;
+      }
+    });
+    
+    // Stats por día de semana
+    const byDayOfWeek = { 0: { trades: 0, pnl: 0 }, 1: { trades: 0, pnl: 0 }, 2: { trades: 0, pnl: 0 }, 3: { trades: 0, pnl: 0 }, 4: { trades: 0, pnl: 0 }, 5: { trades: 0, pnl: 0 }, 6: { trades: 0, pnl: 0 } };
+    closedSignals.forEach(s => {
+      const day = new Date(s.timestamp).getDay();
+      byDayOfWeek[day].trades++;
+      if (s.status === 'WIN') {
+        byDayOfWeek[day].pnl += TP_RR_RATIOS[s.tpHit || 1] || 1.5;
+      } else {
+        byDayOfWeek[day].pnl -= 1;
+      }
+    });
+    
+    return {
+      summary: {
+        totalTrades: decidedTrades,
+        wins: wins.length,
+        losses: losses.length,
+        winRate,
+        totalPnl: totalPnl.toFixed(2),
+        currentCapital: capital.toFixed(2),
+        initialCapital: 1000,
+        roi: totalPnl.toFixed(2),
+        bestStreak: localStats.bestStreak || 0,
+        worstStreak: localStats.worstStreak || 0,
+        currentStreak: 0,
+        tp1Hits: localStats.tp1Hits || 0,
+        tp2Hits: localStats.tp2Hits || 0,
+        tp3Hits: localStats.tp3Hits || 0
+      },
+      stats: {
+        totalTrades: decidedTrades,
+        wins: wins.length,
+        losses: losses.length,
+        breakeven: 0,
+        winRate,
+        totalPnl: totalPnl.toFixed(2),
+        avgPnl: decidedTrades > 0 ? (totalPnl / decidedTrades).toFixed(2) : 0,
+        bestTrade: Math.max(...closedSignals.map(s => s.status === 'WIN' ? (TP_RR_RATIOS[s.tpHit || 1] || 1.5) : -1), 0).toFixed(2),
+        worstTrade: '-1.00',
+        profitFactor: losses.length > 0 ? (wins.length * 1.5 / losses.length).toFixed(2) : wins.length > 0 ? '∞' : 0,
+        avgWin: wins.length > 0 ? '1.50' : '0',
+        avgLoss: '1.00',
+        byModel,
+        byAsset,
+        byDay: byDayOfWeek
+      },
+      equityCurve: equityData,
+      trades: closedSignals.map(s => ({
+        id: s.id,
+        symbol: s.symbol,
+        asset_name: s.assetName || s.symbol,
+        action: s.action,
+        model: s.model,
+        result: s.status,
+        pnl_percent: s.status === 'WIN' ? (TP_RR_RATIOS[s.tpHit || 1] || 1.5) : -1,
+        signal_time: s.timestamp
+      }))
+    };
+  }, [localStats, localSignals]);
 
   // Cargar datos
   useEffect(() => {
-    if (!userId) return;
+    if (!userId) {
+      setLoading(false);
+      return;
+    }
     
     const fetchData = async () => {
       setLoading(true);
@@ -118,31 +268,49 @@ export default function ReportsSection({ userId }) {
         // Obtener resumen
         const summaryRes = await fetch(`${API_URL}/api/reports/summary/${userId}`);
         const summaryData = await summaryRes.json();
-        if (summaryData.success) {
+        
+        // Si hay datos de Supabase, usarlos
+        if (summaryData.success && summaryData.summary && summaryData.summary.totalTrades > 0) {
           setSummary(summaryData.summary);
-        }
+          setUseLocalData(false);
 
-        // Obtener reporte del período
-        const reportRes = await fetch(`${API_URL}/api/reports/${userId}?period=${period}`);
-        const reportData = await reportRes.json();
-        if (reportData.success) {
-          setReport(reportData.report);
-        }
+          // Obtener reporte del período
+          const reportRes = await fetch(`${API_URL}/api/reports/${userId}?period=${period}`);
+          const reportData = await reportRes.json();
+          if (reportData.success) {
+            setReport(reportData.report);
+          }
 
-        // Obtener equity curve
-        const equityRes = await fetch(`${API_URL}/api/reports/equity/${userId}?period=${period}`);
-        const equityData = await equityRes.json();
-        if (equityData.success) {
-          setEquityCurve(equityData.equityCurve || []);
+          // Obtener equity curve
+          const equityRes = await fetch(`${API_URL}/api/reports/equity/${userId}?period=${period}`);
+          const equityData = await equityRes.json();
+          if (equityData.success) {
+            setEquityCurve(equityData.equityCurve || []);
+          }
+        } else {
+          // Usar datos locales como fallback
+          setUseLocalData(true);
+          if (localData) {
+            setSummary(localData.summary);
+            setReport({ stats: localData.stats, trades: localData.trades });
+            setEquityCurve(localData.equityCurve);
+          }
         }
       } catch (error) {
         console.error('Error fetching reports:', error);
+        // En caso de error, usar datos locales
+        setUseLocalData(true);
+        if (localData) {
+          setSummary(localData.summary);
+          setReport({ stats: localData.stats, trades: localData.trades });
+          setEquityCurve(localData.equityCurve);
+        }
       }
       setLoading(false);
     };
 
     fetchData();
-  }, [userId, period]);
+  }, [userId, period, localData]);
 
   if (loading) {
     return (
@@ -161,6 +329,17 @@ export default function ReportsSection({ userId }) {
 
   return (
     <div className="space-y-4">
+      {/* Indicador de fuente de datos */}
+      {useLocalData && (
+        <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 flex items-center gap-3">
+          <span className="text-lg">⚠️</span>
+          <div className="flex-1">
+            <p className="text-amber-400 text-sm font-medium">Datos de sesión actual</p>
+            <p className="text-white/40 text-xs">Para reportes persistentes, ejecuta el SQL en Supabase</p>
+          </div>
+        </div>
+      )}
+      
       {/* Header con capital simulado */}
       <div className="bg-gradient-to-r from-emerald-500/10 via-cyan-500/10 to-purple-500/10 rounded-xl border border-emerald-500/20 p-4">
         <div className="flex items-center justify-between mb-3">
