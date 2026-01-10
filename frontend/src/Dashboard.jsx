@@ -305,7 +305,6 @@ export default function Dashboard({ user, onLogout }) {
   const initialAssetSetRef = useRef(false);
   const marketsScrollRef = useRef(null);
   const scrollPositionRef = useRef(0);
-  const lastDataRef = useRef(null);
   
   // Función para verificar si estamos en horario de trading
   const checkTradingHours = useCallback((plan) => {
@@ -399,12 +398,7 @@ export default function Dashboard({ user, onLogout }) {
         const res = await fetch(`${API_URL}/api/dashboard`);
         const json = await res.json();
         if (!isCancelled && mountedRef.current) {
-          // Solo actualizar si los datos cambiaron significativamente
-          const newDataStr = JSON.stringify(json.assets?.map(a => ({ s: a.symbol, p: a.price?.toFixed(2) })));
-          if (lastDataRef.current !== newDataStr) {
-            lastDataRef.current = newDataStr;
-            setData(json);
-          }
+          setData(json);
           // Solo establecer el activo inicial UNA vez
           if (!initialAssetSetRef.current && json.assets?.length) {
             initialAssetSetRef.current = true;
@@ -414,12 +408,10 @@ export default function Dashboard({ user, onLogout }) {
       } catch (e) { console.error('Fetch error:', e); }
     };
     fetchData();
-    // Intervalo más largo en móvil para evitar parpadeo
-    const interval = setInterval(fetchData, isMobile ? 5000 : 3000);
+    // Intervalo más largo para evitar parpadeo (5s móvil, 4s PC)
+    const interval = setInterval(fetchData, isMobile ? 5000 : 4000);
     return () => { isCancelled = true; clearInterval(interval); };
-  }, [isMobile]); // Agregar isMobile como dependencia
-
-  const lastCandlesRef = useRef(null);
+  }, [isMobile]);
   
   useEffect(() => {
     if (!selectedAsset) return;
@@ -429,20 +421,16 @@ export default function Dashboard({ user, onLogout }) {
         const res = await fetch(`${API_URL}/api/analyze/${selectedAsset}`);
         const json = await res.json();
         if (!isCancelled && mountedRef.current) {
-          // Solo actualizar si las velas cambiaron
-          const newCandlesKey = json.candles?.slice(-1)[0]?.time;
-          if (lastCandlesRef.current !== newCandlesKey) {
-            lastCandlesRef.current = newCandlesKey;
-            if (json.candles?.length) setCandles(json.candles);
-            if (json.candlesH1?.length) setCandlesH1(json.candlesH1);
-          }
+          if (json.candles?.length) setCandles(json.candles);
+          if (json.candlesH1?.length) setCandlesH1(json.candlesH1);
         }
       } catch (e) { console.error('Candles error:', e); }
     };
     fetchCandles();
-    // Intervalo más largo en móvil
-    const interval = setInterval(fetchCandles, isMobile ? 6000 : 4000);
+    // Intervalo más largo para evitar parpadeo (6s móvil, 5s PC)
+    const interval = setInterval(fetchCandles, isMobile ? 6000 : 5000);
     return () => { isCancelled = true; clearInterval(interval); };
+  }, [selectedAsset, isMobile]);
   }, [selectedAsset, isMobile]);
 
   const markSignal = async (id, status) => {
