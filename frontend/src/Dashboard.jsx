@@ -390,7 +390,7 @@ export default function Dashboard({ user, onLogout }) {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Data fetching - Optimizado para evitar parpadeo
+  // Data fetching
   useEffect(() => {
     let isCancelled = false;
     const fetchData = async () => {
@@ -408,11 +408,10 @@ export default function Dashboard({ user, onLogout }) {
       } catch (e) { console.error('Fetch error:', e); }
     };
     fetchData();
-    // Intervalo más largo para evitar parpadeo (5s móvil, 4s PC)
-    const interval = setInterval(fetchData, isMobile ? 5000 : 4000);
+    const interval = setInterval(fetchData, 3000);
     return () => { isCancelled = true; clearInterval(interval); };
-  }, [isMobile]);
-  
+  }, []);
+
   useEffect(() => {
     if (!selectedAsset) return;
     let isCancelled = false;
@@ -427,10 +426,9 @@ export default function Dashboard({ user, onLogout }) {
       } catch (e) { console.error('Candles error:', e); }
     };
     fetchCandles();
-    // Intervalo más largo para evitar parpadeo (6s móvil, 5s PC)
-    const interval = setInterval(fetchCandles, isMobile ? 6000 : 5000);
+    const interval = setInterval(fetchCandles, 4000);
     return () => { isCancelled = true; clearInterval(interval); };
-  }, [selectedAsset, isMobile]);
+  }, [selectedAsset]);
   }, [selectedAsset, isMobile]);
 
   const markSignal = async (id, status) => {
