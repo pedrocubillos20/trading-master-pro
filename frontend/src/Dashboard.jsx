@@ -442,10 +442,11 @@ export default function Dashboard({ user, onLogout }) {
   const Sidebar = () => (
     <>
       {isMobile && sidebarOpen && <div className="fixed inset-0 bg-black/50 z-40" onClick={() => setSidebarOpen(false)} />}
-      <aside className={`fixed left-0 top-0 h-full bg-[#0a0a0f] border-r border-white/5 z-40 transition-all duration-300 ${
-        sidebarOpen ? (isMobile ? 'w-64' : 'w-48') : 'w-0 overflow-hidden'
+      <aside className={`fixed left-0 top-0 h-full bg-[#0a0a0f] border-r border-white/5 z-40 transition-all duration-300 flex flex-col ${
+        sidebarOpen ? (isMobile ? 'w-56' : 'w-44') : 'w-0 overflow-hidden'
       }`}>
-        <div className="h-12 flex items-center justify-between px-3 border-b border-white/5">
+        {/* Header del sidebar */}
+        <div className="h-12 flex items-center justify-between px-3 border-b border-white/5 flex-shrink-0">
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-emerald-400 to-cyan-400 flex items-center justify-center">
               <svg className="w-4 h-4 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -461,124 +462,102 @@ export default function Dashboard({ user, onLogout }) {
           </button>
         </div>
 
-        {/* Subscription Badge */}
-        <div className="p-2 border-b border-white/5">
-          <div className={`px-3 py-2 rounded-lg ${
-            subscription?.status === 'trial' ? 'bg-amber-500/20' : 
-            subscription?.status === 'expired' ? 'bg-red-500/20' : 'bg-emerald-500/20'
-          }`}>
-            <div className="flex items-center justify-between">
-              <span className={`text-xs font-bold px-2 py-0.5 rounded ${
-                subscription?.status === 'trial' ? 'bg-amber-500 text-black' : 
-                subscription?.status === 'expired' ? 'bg-red-500 text-white' : 'bg-emerald-500 text-black'
-              }`}>
-                {subscription?.status === 'trial' ? 'FREE' : 
-                 subscription?.status === 'expired' ? 'EXPIRADO' :
-                 subscription?.plan_name?.toUpperCase() || 'ACTIVE'}
+        {/* Plan Badge compacto */}
+        <div className="px-3 py-2 border-b border-white/5 flex-shrink-0">
+          <div className="flex items-center justify-between">
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+              subscription?.status === 'trial' ? 'bg-amber-500 text-black' : 
+              subscription?.status === 'expired' ? 'bg-red-500 text-white' : 'bg-emerald-500 text-black'
+            }`}>
+              {subscription?.status === 'trial' ? 'FREE' : 
+               subscription?.status === 'expired' ? 'EXPIRADO' :
+               subscription?.plan_name?.toUpperCase() || 'ACTIVE'}
+            </span>
+            {subscription?.days_left !== undefined && subscription?.status !== 'expired' && (
+              <span className={`text-[10px] ${subscription?.days_left <= 5 ? 'text-red-400' : 'text-emerald-400'}`}>
+                {subscription.days_left}d
               </span>
-              {subscription?.days_left !== undefined && subscription?.days_left !== null && subscription?.status !== 'expired' && (
-                <span className={`text-xs font-medium ${
-                  subscription?.days_left <= 5 ? 'text-red-400' : 
-                  subscription?.days_left <= 10 ? 'text-amber-400' : 'text-emerald-400'
-                }`}>
-                  {subscription.days_left} días
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <nav className="p-2 space-y-1">
-          {[
-            { id: 'dashboard', icon: '📊', label: 'Dashboard' },
-            { id: 'signals', icon: isNightBlocked ? '🔒' : '🔔', label: 'Señales IA', badge: isNightBlocked ? 0 : pendingSignals.length, locked: isNightBlocked },
-            { id: 'chat', icon: '🤖', label: 'Chat ELISA' },
-            { id: 'stats', icon: '📈', label: 'Estadísticas' },
-            { id: 'history', icon: '📜', label: 'Historial' },
-            { id: 'download', icon: '📱', label: 'Descargar App' },
-          ].map(item => (
-            <button key={item.id}
-              onClick={() => { setActiveSection(item.id); if (isMobile) setSidebarOpen(false); }}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
-                activeSection === item.id ? 'bg-emerald-500/15 text-emerald-400' : 'text-white/60 hover:bg-white/5'
-              } ${item.locked ? 'opacity-70' : ''}`}>
-              <span>{item.icon}</span>
-              <span className="text-sm">{item.label}</span>
-              {item.locked && <span className="ml-auto px-1.5 py-0.5 text-[10px] font-medium bg-amber-500/20 text-amber-400 rounded">Cerrado</span>}
-              {item.badge > 0 && !item.locked && (
-                <span className="ml-auto px-1.5 py-0.5 text-[10px] font-bold bg-emerald-500 text-black rounded-full">{item.badge}</span>
-              )}
-            </button>
-          ))}
-        </nav>
-
-        <div className="p-2 border-t border-white/5">
-          <p className="text-[10px] uppercase text-white/30 mb-2 px-3">Mercados</p>
-          <div 
-            ref={marketsScrollRef}
-            className="space-y-1 max-h-[250px] overflow-y-auto" 
-            style={{ scrollBehavior: 'auto', overscrollBehavior: 'contain' }}
-            onScroll={(e) => {
-              e.stopPropagation();
-              scrollPositionRef.current = e.target.scrollTop;
-            }}>
-            {filteredAssets.map(asset => (
-              <button key={asset.symbol}
-                onClick={(e) => { 
-                  e.stopPropagation();
-                  setSelectedAsset(asset.symbol); 
-                  if (isMobile) setSidebarOpen(false); 
-                }}
-                className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-                  selectedAsset === asset.symbol ? 'bg-white/10 text-white' : 'text-white/50 hover:bg-white/5'
-                }`}>
-                <span>{asset.emoji}</span>
-                <div className="flex-1 text-left">
-                  <div className="flex items-center gap-1">
-                    <span className="text-xs font-medium">{asset.shortName}</span>
-                    {asset.h1Loaded && <span className="text-[8px] px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-400">H1</span>}
-                  </div>
-                  <span className="text-[10px] text-white/40 font-mono">{asset.price?.toFixed(2) || '---'}</span>
-                </div>
-                {asset.lockedSignal && (
-                  <span className={`px-1.5 py-0.5 text-[9px] font-bold rounded ${
-                    asset.lockedSignal.action === 'LONG' ? 'bg-emerald-500 text-black' : 'bg-red-500 text-white'
-                  }`}>{asset.lockedSignal.action}</span>
-                )}
-              </button>
-            ))}
-            
-            {/* Activos bloqueados */}
-            {lockedAssets.length > 0 && (
-              <>
-                <p className="text-[9px] uppercase text-white/20 mt-3 mb-1 px-3">🔒 Requiere upgrade</p>
-                {lockedAssets.slice(0, 3).map(asset => (
-                  <button key={asset.symbol}
-                    onClick={() => setShowPricing(true)}
-                    className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-white/30 hover:bg-white/5 opacity-50">
-                    <span>{asset.emoji}</span>
-                    <span className="text-xs">{asset.shortName}</span>
-                    <span className="ml-auto text-[9px]">🔒</span>
-                  </button>
-                ))}
-              </>
             )}
           </div>
         </div>
 
-        {subscription?.status !== 'elite' && (
-          <div className="absolute bottom-14 left-0 right-0 p-3">
+        {/* Contenido scrolleable */}
+        <div className="flex-1 overflow-y-auto">
+          {/* Navegación compacta */}
+          <nav className="p-2 space-y-0.5">
+            {[
+              { id: 'dashboard', icon: '📊', label: 'Dashboard' },
+              { id: 'signals', icon: isNightBlocked ? '🔒' : '🔔', label: 'Señales', badge: isNightBlocked ? 0 : pendingSignals.length, locked: isNightBlocked },
+              { id: 'chat', icon: '🤖', label: 'ELISA' },
+              { id: 'stats', icon: '📈', label: 'Stats' },
+              { id: 'history', icon: '📜', label: 'Historial' },
+            ].map(item => (
+              <button key={item.id}
+                onClick={() => { setActiveSection(item.id); if (isMobile) setSidebarOpen(false); }}
+                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg transition-colors text-xs ${
+                  activeSection === item.id ? 'bg-emerald-500/15 text-emerald-400' : 'text-white/60 hover:bg-white/5'
+                } ${item.locked ? 'opacity-60' : ''}`}>
+                <span className="text-sm">{item.icon}</span>
+                <span>{item.label}</span>
+                {item.badge > 0 && !item.locked && (
+                  <span className="ml-auto px-1.5 py-0.5 text-[9px] font-bold bg-emerald-500 text-black rounded-full">{item.badge}</span>
+                )}
+              </button>
+            ))}
+          </nav>
+
+          {/* Mercados */}
+          <div className="px-2 pb-2">
+            <p className="text-[9px] uppercase text-white/30 mb-1 px-2">Mercados</p>
+            <div 
+              ref={marketsScrollRef}
+              className="space-y-0.5 max-h-[180px] overflow-y-auto" 
+              style={{ scrollBehavior: 'auto', overscrollBehavior: 'contain' }}
+              onScroll={(e) => {
+                e.stopPropagation();
+                scrollPositionRef.current = e.target.scrollTop;
+              }}>
+              {filteredAssets.map(asset => (
+                <button key={asset.symbol}
+                  onClick={(e) => { 
+                    e.stopPropagation();
+                    setSelectedAsset(asset.symbol); 
+                    if (isMobile) setSidebarOpen(false); 
+                  }}
+                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg transition-colors ${
+                    selectedAsset === asset.symbol ? 'bg-white/10 text-white' : 'text-white/50 hover:bg-white/5'
+                  }`}>
+                  <span className="text-sm">{asset.emoji}</span>
+                  <span className="text-[11px] flex-1 text-left">{asset.shortName}</span>
+                  {asset.lockedSignal && (
+                    <span className={`px-1 py-0.5 text-[8px] font-bold rounded ${
+                      asset.lockedSignal.action === 'LONG' ? 'bg-emerald-500 text-black' : 'bg-red-500 text-white'
+                    }`}>{asset.lockedSignal.action}</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Footer fijo */}
+        <div className="flex-shrink-0 border-t border-white/5">
+          {subscription?.plan !== 'elite' && (
             <button onClick={() => setShowPricing(true)}
-              className="w-full py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white text-sm font-bold rounded-lg hover:opacity-90">
+              className="w-full py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white text-xs font-bold hover:opacity-90">
               ⚡ Upgrade
             </button>
-          </div>
-        )}
-
-        <div className="absolute bottom-0 left-0 right-0 p-3 border-t border-white/5">
-          <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${data?.connected ? 'bg-emerald-400' : 'bg-red-400'}`} />
-            <span className="text-xs text-white/40">{data?.connected ? 'Conectado' : 'Offline'}</span>
+          )}
+          <div className="flex items-center justify-between px-3 py-2">
+            <div className="flex items-center gap-1.5">
+              <div className={`w-1.5 h-1.5 rounded-full ${data?.connected ? 'bg-emerald-400' : 'bg-red-400'}`} />
+              <span className="text-[10px] text-white/40">{data?.connected ? 'Online' : 'Offline'}</span>
+            </div>
+            <button 
+              onClick={() => { setActiveSection('download'); if (isMobile) setSidebarOpen(false); }}
+              className="text-[10px] text-white/40 hover:text-white/60">
+              📱 App
+            </button>
           </div>
         </div>
       </aside>
