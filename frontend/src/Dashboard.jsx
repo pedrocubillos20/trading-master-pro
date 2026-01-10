@@ -299,33 +299,11 @@ export default function Dashboard({ user, onLogout }) {
   const [showPricing, setShowPricing] = useState(false);
   const [subscription, setSubscription] = useState(null);
   const [loadingSub, setLoadingSub] = useState(true);
-  const [isNightBlocked, setIsNightBlocked] = useState(false);
   
   const mountedRef = useRef(true);
   const initialAssetSetRef = useRef(false);
   const marketsScrollRef = useRef(null);
   const scrollPositionRef = useRef(0);
-  
-  // Función para verificar si estamos en horario de trading
-  const checkTradingHours = useCallback((plan) => {
-    const now = new Date();
-    const utcHour = now.getUTCHours() + now.getUTCMinutes() / 60;
-    
-    // Horario base: 11:00 - 19:00 UTC (6AM - 2PM Colombia)
-    const inBaseHours = utcHour >= 11 && utcHour < 19;
-    
-    // Horario nocturno: 01:30 - 06:00 UTC (8:30PM - 1AM Colombia)
-    const inNightHours = utcHour >= 1.5 && utcHour < 6;
-    
-    // Premium y Elite tienen acceso nocturno
-    const hasNightAccess = plan === 'premium' || plan === 'elite';
-    
-    if (inBaseHours) return { open: true, blocked: false };
-    if (inNightHours && hasNightAccess) return { open: true, blocked: false };
-    if (inNightHours && !hasNightAccess) return { open: false, blocked: true, reason: 'nocturno' };
-    
-    return { open: false, blocked: true, reason: 'cerrado' };
-  }, []);
   
   useEffect(() => { return () => { mountedRef.current = false; }; }, []);
 
@@ -342,42 +320,28 @@ export default function Dashboard({ user, onLogout }) {
         if (mountedRef.current) {
           setSubscription(json.subscription);
           setLoadingSub(false);
-          
-          // Verificar horario
-          const hours = checkTradingHours(json.subscription?.plan);
-          setIsNightBlocked(hours.blocked && hours.reason === 'nocturno');
         }
       } catch (e) { 
         console.error('Subscription error:', e);
-        // Default trial con activos limitados
+        // Default trial con TODOS los activos
         setSubscription({
           status: 'trial',
           plan: 'free',
           plan_name: 'Free Trial',
           days_left: 5,
-          assets: ['stpRNG', 'frxXAUUSD']
+          assets: ['stpRNG', '1HZ75V', 'frxXAUUSD', 'frxGBPUSD', 'cryBTCUSD', 'BOOM1000', 'BOOM500', 'CRASH1000', 'CRASH500']
         });
         setLoadingSub(false);
       }
     };
     
     fetchSubscription();
-    
-    // Verificar horario cada minuto
-    const hourCheck = setInterval(() => {
-      if (subscription?.plan) {
-        const hours = checkTradingHours(subscription.plan);
-        setIsNightBlocked(hours.blocked && hours.reason === 'nocturno');
-      }
-    }, 60000);
-    
-    return () => clearInterval(hourCheck);
-  }, [user?.id, user?.email, checkTradingHours]);
+  }, [user?.id, user?.email]);
 
   // Verificar acceso - usar useMemo para evitar recrear el array
   const isExpired = subscription?.status === 'expired';
   const allowedAssets = useMemo(() => {
-    return subscription?.assets || ['stpRNG', 'frxXAUUSD'];
+    return subscription?.assets || ['stpRNG', '1HZ75V', 'frxXAUUSD', 'frxGBPUSD', 'cryBTCUSD', 'BOOM1000', 'BOOM500', 'CRASH1000', 'CRASH500'];
   }, [subscription?.assets]);
   
   useEffect(() => {
@@ -390,7 +354,7 @@ export default function Dashboard({ user, onLogout }) {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Data fetching
+  // Data fetching - SIN allowedAssets en dependencias
   useEffect(() => {
     let isCancelled = false;
     const fetchData = async () => {
@@ -410,7 +374,7 @@ export default function Dashboard({ user, onLogout }) {
     fetchData();
     const interval = setInterval(fetchData, 3000);
     return () => { isCancelled = true; clearInterval(interval); };
-  }, []);
+  }, []); // Sin dependencias - se ejecuta solo una vez y luego el interval
 
   useEffect(() => {
     if (!selectedAsset) return;
@@ -429,7 +393,6 @@ export default function Dashboard({ user, onLogout }) {
     const interval = setInterval(fetchCandles, 4000);
     return () => { isCancelled = true; clearInterval(interval); };
   }, [selectedAsset]);
-  }, [selectedAsset, isMobile]);
 
   const markSignal = async (id, status) => {
     try {
@@ -518,7 +481,7 @@ export default function Dashboard({ user, onLogout }) {
         <nav className="p-2 space-y-1">
           {[
             { id: 'dashboard', icon: '📊', label: 'Dashboard' },
-            { id: 'signals', icon: isNightBlocked ? '🔒' : '🔔', label: 'Señales IA', badge: isNightBlocked ? null : pendingSignals.length, locked: isNightBlocked },
+            { id: 'signals', icon: '🔔', label: 'Señales IA', badge: pendingSignals.length },
             { id: 'chat', icon: '🤖', label: 'Chat ELISA' },
             { id: 'stats', icon: '📈', label: 'Estadísticas' },
             { id: 'history', icon: '📜', label: 'Historial' },
@@ -528,13 +491,10 @@ export default function Dashboard({ user, onLogout }) {
               onClick={() => { setActiveSection(item.id); if (isMobile) setSidebarOpen(false); }}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
                 activeSection === item.id ? 'bg-emerald-500/15 text-emerald-400' : 'text-white/60 hover:bg-white/5'
-              } ${item.locked ? 'opacity-70' : ''}`}>
+              }`}>
               <span>{item.icon}</span>
               <span className="text-sm">{item.label}</span>
-              {item.locked && (
-                <span className="ml-auto px-1.5 py-0.5 text-[10px] font-medium bg-amber-500/20 text-amber-400 rounded">Cerrado</span>
-              )}
-              {item.badge > 0 && !item.locked && (
+              {item.badge > 0 && (
                 <span className="ml-auto px-1.5 py-0.5 text-[10px] font-bold bg-emerald-500 text-black rounded-full">{item.badge}</span>
               )}
             </button>
@@ -626,7 +586,7 @@ export default function Dashboard({ user, onLogout }) {
           </button>
         )}
         <h2 className="text-sm font-medium text-white capitalize">{activeSection}</h2>
-        <span className="text-[10px] px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded hidden sm:inline">12 Modelos SMC</span>
+        <span className="text-[10px] px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded hidden sm:inline">6 Modelos SMC</span>
       </div>
       
       <div className="flex items-center gap-2 sm:gap-3">
@@ -786,26 +746,8 @@ export default function Dashboard({ user, onLogout }) {
           </div>
         )}
 
-        {/* Señales activas o bloqueo nocturno */}
-        {isNightBlocked ? (
-          <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 rounded-xl border border-amber-500/20 p-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-amber-500/20 rounded-full flex items-center justify-center">
-                <span className="text-xl">🔒</span>
-              </div>
-              <div className="flex-1">
-                <p className="text-white font-medium text-sm">Horario Nocturno</p>
-                <p className="text-white/50 text-xs">Disponible para Premium y Elite</p>
-              </div>
-              <button 
-                onClick={() => setShowPricing(true)}
-                className="px-3 py-1.5 bg-gradient-to-r from-purple-500 to-pink-500 text-white text-xs font-semibold rounded-lg"
-              >
-                Upgrade
-              </button>
-            </div>
-          </div>
-        ) : pendingSignals.length > 0 && (
+        {/* Señales activas */}
+        {pendingSignals.length > 0 && (
           <div className="bg-[#0d0d12] rounded-xl border border-white/5 p-4">
             <h3 className="text-white font-medium mb-3 flex items-center gap-2">
               <span>🔔</span> Señales Activas
@@ -832,69 +774,43 @@ export default function Dashboard({ user, onLogout }) {
   };
 
   // Signals Section
-  // Componente de bloqueo nocturno
-  const NightBlockedOverlay = () => (
-    <div className="bg-gradient-to-br from-slate-900/95 to-slate-800/95 rounded-xl border border-amber-500/30 p-8 text-center">
-      <div className="w-20 h-20 mx-auto mb-4 bg-amber-500/20 rounded-full flex items-center justify-center">
-        <span className="text-4xl">🔒</span>
-      </div>
-      <h3 className="text-xl font-bold text-white mb-2">Horario Nocturno</h3>
-      <p className="text-white/60 mb-4">
-        El acceso nocturno (8:30 PM - 1:00 AM) está disponible solo para planes <span className="text-purple-400 font-semibold">Premium</span> y <span className="text-pink-400 font-semibold">Elite</span>.
-      </p>
-      <div className="text-amber-400/80 text-sm mb-4">
-        ⏰ Horario diurno: 6:00 AM - 2:00 PM (Colombia)
-      </div>
-      <button 
-        onClick={() => setShowPricing(true)}
-        className="px-6 py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white font-semibold rounded-lg hover:opacity-90 transition-opacity"
-      >
-        Actualizar Plan
-      </button>
-    </div>
-  );
-
   const SignalsSection = () => (
     <div className="space-y-4">
-      {isNightBlocked ? (
-        <NightBlockedOverlay />
-      ) : (
-        <div className="bg-[#0d0d12] rounded-xl border border-white/5 p-4">
-          <h3 className="text-white font-medium mb-3">📊 Señales Pendientes</h3>
-          <div className="space-y-2 max-h-[60vh] overflow-y-auto">
-            {pendingSignals.length === 0 ? (
-              <div className="text-center py-8 text-white/40">
-                <span className="text-4xl mb-2 block">⏳</span>
-                <p>No hay señales pendientes</p>
-                <p className="text-xs mt-1">Las señales aparecerán aquí cuando se generen</p>
-              </div>
-            ) : (
-              pendingSignals.map(s => (
-                <div key={s.id} className="p-3 rounded-lg border bg-cyan-500/10 border-cyan-500/30">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <span>{s.emoji}</span>
-                      <span className="text-white font-medium">{s.assetName}</span>
-                      <span className={`px-2 py-0.5 text-xs font-bold rounded ${
-                        s.action === 'LONG' ? 'bg-emerald-500 text-black' : 'bg-red-500 text-white'
-                      }`}>{s.action}</span>
-                    </div>
-                    <span className="px-2 py-0.5 text-xs font-medium rounded bg-cyan-500/20 text-cyan-400">PENDING</span>
+      <div className="bg-[#0d0d12] rounded-xl border border-white/5 p-4">
+        <h3 className="text-white font-medium mb-3">📊 Señales Pendientes</h3>
+        <div className="space-y-2 max-h-[60vh] overflow-y-auto">
+          {pendingSignals.length === 0 ? (
+            <div className="text-center py-8 text-white/40">
+              <span className="text-4xl mb-2 block">⏳</span>
+              <p>No hay señales pendientes</p>
+              <p className="text-xs mt-1">Las señales aparecerán aquí cuando se generen</p>
+            </div>
+          ) : (
+            pendingSignals.map(s => (
+              <div key={s.id} className="p-3 rounded-lg border bg-cyan-500/10 border-cyan-500/30">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <span>{s.emoji}</span>
+                    <span className="text-white font-medium">{s.assetName}</span>
+                    <span className={`px-2 py-0.5 text-xs font-bold rounded ${
+                      s.action === 'LONG' ? 'bg-emerald-500 text-black' : 'bg-red-500 text-white'
+                    }`}>{s.action}</span>
                   </div>
-                  <div className="flex items-center justify-between text-xs text-white/50">
-                    <span>{s.model} · {s.score}%</span>
-                    <span>{new Date(s.timestamp).toLocaleString()}</span>
-                  </div>
-                  <div className="flex gap-2 mt-2">
-                    <button onClick={() => markSignal(s.id, 'WIN')} className="flex-1 py-1.5 bg-emerald-500/20 text-emerald-400 rounded text-xs hover:bg-emerald-500/30 transition-colors">✓ Win</button>
-                    <button onClick={() => markSignal(s.id, 'LOSS')} className="flex-1 py-1.5 bg-red-500/20 text-red-400 rounded text-xs hover:bg-red-500/30 transition-colors">✗ Loss</button>
-                  </div>
+                  <span className="px-2 py-0.5 text-xs font-medium rounded bg-cyan-500/20 text-cyan-400">PENDING</span>
                 </div>
-              ))
-            )}
-          </div>
+                <div className="flex items-center justify-between text-xs text-white/50">
+                  <span>{s.model} · {s.score}%</span>
+                  <span>{new Date(s.timestamp).toLocaleString()}</span>
+                </div>
+                <div className="flex gap-2 mt-2">
+                  <button onClick={() => markSignal(s.id, 'WIN')} className="flex-1 py-1.5 bg-emerald-500/20 text-emerald-400 rounded text-xs hover:bg-emerald-500/30 transition-colors">✓ Win</button>
+                  <button onClick={() => markSignal(s.id, 'LOSS')} className="flex-1 py-1.5 bg-red-500/20 text-red-400 rounded text-xs hover:bg-red-500/30 transition-colors">✗ Loss</button>
+                </div>
+              </div>
+            ))
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 

@@ -122,41 +122,37 @@ export const PLAN_LIMITS = {
     elisa_chat: false,
     backtesting: false,
     mentor: false,
-    replay: false,
-    night_access: false
+    replay: false
   },
   basic: {
     signals_per_day: 10,
-    models: ['MTF_CONFLUENCE', 'CHOCH_PULLBACK', 'BOS_CONTINUATION', 'OB_ENTRY'],
+    models: ['MTF_CONFLUENCE', 'CHOCH_PULLBACK', 'BOS_CONTINUATION'],
     timeframes: ['M5', 'H1'],
     telegram: false,
     elisa_chat: 'basic',
     backtesting: false,
     mentor: false,
-    replay: false,
-    night_access: false
+    replay: false
   },
   premium: {
     signals_per_day: 25,
-    models: ['MTF_CONFLUENCE', 'CHOCH_PULLBACK', 'BOS_CONTINUATION', 'LIQUIDITY_GRAB', 'OB_ENTRY', 'FVG_ENTRY', 'BREAKER_BLOCK', 'MITIGATION_BLOCK'],
+    models: ['MTF_CONFLUENCE', 'CHOCH_PULLBACK', 'BOS_CONTINUATION', 'LIQUIDITY_SWEEP', 'FVG_ENTRY'],
     timeframes: ['M5', 'H1', 'H4'],
     telegram: true,
     elisa_chat: true,
     backtesting: true,
     mentor: false,
-    replay: false,
-    night_access: true
+    replay: false
   },
   elite: {
     signals_per_day: 999,
-    models: ['MTF_CONFLUENCE', 'CHOCH_PULLBACK', 'BOS_CONTINUATION', 'LIQUIDITY_GRAB', 'OB_ENTRY', 'FVG_ENTRY', 'BREAKER_BLOCK', 'MITIGATION_BLOCK', 'EQH_EQL', 'SWING_FAILURE', 'BOOM_SPIKE', 'CRASH_SPIKE'],
+    models: ['MTF_CONFLUENCE', 'CHOCH_PULLBACK', 'BOS_CONTINUATION', 'LIQUIDITY_SWEEP', 'FVG_ENTRY', 'ORDER_FLOW'],
     timeframes: ['M5', 'H1', 'H4', 'D1'],
     telegram: true,
     elisa_chat: 'advanced',
     backtesting: true,
     mentor: true,
-    replay: true,
-    night_access: true
+    replay: true
   }
 };
 
