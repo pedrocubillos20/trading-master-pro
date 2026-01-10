@@ -122,37 +122,41 @@ export const PLAN_LIMITS = {
     elisa_chat: false,
     backtesting: false,
     mentor: false,
-    replay: false
+    replay: false,
+    night_access: false
   },
   basic: {
     signals_per_day: 10,
-    models: ['MTF_CONFLUENCE', 'CHOCH_PULLBACK', 'BOS_CONTINUATION'],
+    models: ['MTF_CONFLUENCE', 'CHOCH_PULLBACK', 'BOS_CONTINUATION', 'OB_ENTRY'],
     timeframes: ['M5', 'H1'],
     telegram: false,
     elisa_chat: 'basic',
     backtesting: false,
     mentor: false,
-    replay: false
+    replay: false,
+    night_access: false
   },
   premium: {
     signals_per_day: 25,
-    models: ['MTF_CONFLUENCE', 'CHOCH_PULLBACK', 'BOS_CONTINUATION', 'LIQUIDITY_SWEEP', 'FVG_ENTRY'],
+    models: ['MTF_CONFLUENCE', 'CHOCH_PULLBACK', 'BOS_CONTINUATION', 'LIQUIDITY_GRAB', 'OB_ENTRY', 'FVG_ENTRY', 'BREAKER_BLOCK', 'MITIGATION_BLOCK'],
     timeframes: ['M5', 'H1', 'H4'],
     telegram: true,
     elisa_chat: true,
     backtesting: true,
     mentor: false,
-    replay: false
+    replay: false,
+    night_access: true
   },
   elite: {
     signals_per_day: 999,
-    models: ['MTF_CONFLUENCE', 'CHOCH_PULLBACK', 'BOS_CONTINUATION', 'LIQUIDITY_SWEEP', 'FVG_ENTRY', 'ORDER_FLOW'],
+    models: ['MTF_CONFLUENCE', 'CHOCH_PULLBACK', 'BOS_CONTINUATION', 'LIQUIDITY_GRAB', 'OB_ENTRY', 'FVG_ENTRY', 'BREAKER_BLOCK', 'MITIGATION_BLOCK', 'EQH_EQL', 'SWING_FAILURE', 'BOOM_SPIKE', 'CRASH_SPIKE'],
     timeframes: ['M5', 'H1', 'H4', 'D1'],
     telegram: true,
     elisa_chat: 'advanced',
     backtesting: true,
     mentor: true,
-    replay: true
+    replay: true,
+    night_access: true
   }
 };
 

@@ -12,6 +12,40 @@ body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   background: #000;
   color: #fff;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Optimización para evitar parpadeo en móviles */
+@media (max-width: 768px) {
+  * {
+    -webkit-transform: translateZ(0);
+    transform: translateZ(0);
+    -webkit-backface-visibility: hidden;
+    backface-visibility: hidden;
+  }
+  
+  .transition-all {
+    transition: none !important;
+  }
+}
+
+/* Contenedores principales con GPU acceleration */
+main, aside, .dashboard-content {
+  will-change: contents;
+  contain: layout style;
+}
+
+/* Estabilizar el canvas del gráfico */
+canvas {
+  image-rendering: -webkit-optimize-contrast;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Evitar reflow en updates */
+.price-display, .stats-number {
+  min-width: 80px;
+  display: inline-block;
 }
 
 ::-webkit-scrollbar {
@@ -39,4 +73,17 @@ body {
 
 .animate-pulse {
   animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Responsive helpers */
+@media (max-width: 640px) {
+  .hide-mobile {
+    display: none !important;
+  }
+}
+
+@media (min-width: 641px) {
+  .show-mobile-only {
+    display: none !important;
+  }
 }

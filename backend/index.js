@@ -2985,7 +2985,7 @@ const Elisa = {
       r += `🧠 **"Psicotrading"** - Control emocional y mentalidad ganadora\n`;
       r += `📋 **"Plan de trading"** - Cómo crear tu estrategia personal\n`;
       r += `🎮 **"Simulador"** - Practica sin arriesgar dinero real\n`;
-      r += `📊 **"Patrones SMC"** - Los 6 modelos que uso para operar\n`;
+      r += `📊 **"Patrones SMC"** - Los 12 modelos que uso para operar\n`;
       r += `📝 **"Control operaciones"** - Gestión de riesgo diario\n\n`;
       r += `💡 *Recuerda: Máximo 10 operaciones diarias para no sobreoperar.*\n\n`;
       r += `¿Qué tema te gustaría aprender hoy? 🎯`;
@@ -3215,13 +3215,29 @@ EXPERTISE - SOLO SMC PURO (NO usas RSI, MACD, EMA ni indicadores):
 - BOS (Break of Structure)
 - CHoCH (Change of Character)
 
-TUS 6 MODELOS SMC:
-1. MTF Confluence (95pts) - H1+M5 alineados + pullback a zona
-2. CHoCH Pullback (85-90pts) - Cambio de carácter + pullback
-3. Liquidity Sweep (82pts) - Barrido de stops + reversión
-4. BOS Continuation (80pts) - Ruptura de estructura + pullback
-5. Zone Touch (78pts) - Toque de Order Block con rechazo
-6. FVG Entry (77pts) - Precio llena Fair Value Gap
+TUS 12 MODELOS SMC (Organizados por Tier):
+
+🏆 TIER S (Score 92-100) - Máxima Probabilidad:
+1. MTF_CONFLUENCE - H1+M5 alineados + Pullback a OB (95pts)
+
+⭐ TIER A (Score 85-92) - Alta Probabilidad:
+2. CHOCH_PULLBACK - Cambio de carácter + Pullback a zona (90pts)
+3. LIQUIDITY_GRAB - Barrido de liquidez + Reversión rápida (88pts)
+4. OB_ENTRY - Entrada en Order Block con confirmación (87pts)
+5. FVG_ENTRY - Entrada en Fair Value Gap (86pts)
+
+✅ TIER B (Score 78-85) - Buena Probabilidad:
+6. BOS_CONTINUATION - Ruptura de estructura + Pullback (82pts)
+7. BREAKER_BLOCK - Bloque roto que actúa como soporte/resistencia (80pts)
+8. MITIGATION_BLOCK - Zona de mitigación institucional (79pts)
+
+📊 TIER C (Score 70-78) - Probabilidad Moderada:
+9. EQH_EQL - Equal Highs/Lows (zonas de liquidez) (76pts)
+10. SWING_FAILURE - Fallo de swing (trampa de mercado) (75pts)
+
+🚀 MODELOS ESPECIALES Boom/Crash:
+11. BOOM_SPIKE - Compras en zonas de demanda para Boom (72-95pts)
+12. CRASH_SPIKE - Ventas en zonas de supply para Crash (72-95pts)
 
 MÓDULO MENTOR (si preguntan sobre aprender):
 - Di "mentor" para ver el menú de la academia
