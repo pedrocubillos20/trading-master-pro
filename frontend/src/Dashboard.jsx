@@ -341,7 +341,7 @@ export default function Dashboard({ user, onLogout }) {
   // Verificar acceso - usar useMemo para evitar recrear el array
   const isExpired = subscription?.status === 'expired';
   const allowedAssets = useMemo(() => {
-    return subscription?.assets || ['stpRNG', '1HZ75V', 'frxXAUUSD', 'frxGBPUSD', 'cryBTCUSD', 'BOOM1000', 'BOOM500', 'CRASH1000', 'CRASH500'];
+    return subscription?.assets || ['stpRNG', 'frxEURUSD', 'frxXAUUSD'];
   }, [subscription?.assets]);
   
   // Verificar bloqueo nocturno (Premium/Elite tienen acceso 24/7)
@@ -506,36 +506,55 @@ export default function Dashboard({ user, onLogout }) {
             ))}
           </nav>
 
-          {/* Mercados */}
+          {/* Mercados por categoría */}
           <div className="px-2 pb-2">
-            <p className="text-[9px] uppercase text-white/30 mb-1 px-2">Mercados</p>
             <div 
               ref={marketsScrollRef}
-              className="space-y-0.5 max-h-[180px] overflow-y-auto" 
+              className="space-y-2 max-h-[280px] overflow-y-auto pr-1" 
               style={{ scrollBehavior: 'auto', overscrollBehavior: 'contain' }}
               onScroll={(e) => {
                 e.stopPropagation();
                 scrollPositionRef.current = e.target.scrollTop;
               }}>
-              {filteredAssets.map(asset => (
-                <button key={asset.symbol}
-                  onClick={(e) => { 
-                    e.stopPropagation();
-                    setSelectedAsset(asset.symbol); 
-                    if (isMobile) setSidebarOpen(false); 
-                  }}
-                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg transition-colors ${
-                    selectedAsset === asset.symbol ? 'bg-white/10 text-white' : 'text-white/50 hover:bg-white/5'
-                  }`}>
-                  <span className="text-sm">{asset.emoji}</span>
-                  <span className="text-[11px] flex-1 text-left">{asset.shortName}</span>
-                  {asset.lockedSignal && (
-                    <span className={`px-1 py-0.5 text-[8px] font-bold rounded ${
-                      asset.lockedSignal.action === 'LONG' ? 'bg-emerald-500 text-black' : 'bg-red-500 text-white'
-                    }`}>{asset.lockedSignal.action}</span>
-                  )}
-                </button>
-              ))}
+              {/* Agrupar por categoría */}
+              {['sinteticos', 'boom', 'crash', 'forex', 'commodities', 'crypto'].map(cat => {
+                const categoryAssets = filteredAssets.filter(a => a.category === cat);
+                if (categoryAssets.length === 0) return null;
+                const catLabels = {
+                  sinteticos: '🎰 Sintéticos',
+                  boom: '🚀 Boom',
+                  crash: '📉 Crash', 
+                  forex: '💱 Forex',
+                  commodities: '🏆 Metales',
+                  crypto: '₿ Crypto'
+                };
+                return (
+                  <div key={cat}>
+                    <p className="text-[9px] uppercase text-white/40 mb-1 px-1 sticky top-0 bg-[#0a0a0f]">{catLabels[cat]}</p>
+                    <div className="space-y-0.5">
+                      {categoryAssets.map(asset => (
+                        <button key={asset.symbol}
+                          onClick={(e) => { 
+                            e.stopPropagation();
+                            setSelectedAsset(asset.symbol); 
+                            if (isMobile) setSidebarOpen(false); 
+                          }}
+                          className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg transition-colors ${
+                            selectedAsset === asset.symbol ? 'bg-white/10 text-white' : 'text-white/50 hover:bg-white/5'
+                          }`}>
+                          <span className="text-sm">{asset.emoji}</span>
+                          <span className="text-[11px] flex-1 text-left">{asset.shortName}</span>
+                          {asset.lockedSignal && (
+                            <span className={`px-1 py-0.5 text-[8px] font-bold rounded ${
+                              asset.lockedSignal.action === 'LONG' ? 'bg-emerald-500 text-black' : 'bg-red-500 text-white'
+                            }`}>{asset.lockedSignal.action}</span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>

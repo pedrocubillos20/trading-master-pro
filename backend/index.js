@@ -788,40 +788,72 @@ async function deleteSubscription(userId) {
 const PLANS = {
   free: {
     name: 'Free Trial',
-    // FREE: Solo Step Index y Oro durante 5 días
-    assets: ['stpRNG', 'frxXAUUSD'],
+    // FREE: Activos básicos gratuitos (5 días)
+    assets: ['stpRNG', 'frxEURUSD', 'frxXAUUSD'],
     duration: 5, // días
     price: 0
   },
   basico: {
     name: 'Básico',
-    assets: ['stpRNG', 'R_75', 'frxXAUUSD', 'cryBTCUSD'],
+    // BÁSICO: + Volatility, pares adicionales, metales
+    assets: ['stpRNG', 'R_75', 'frxEURUSD', 'frxUSDJPY', 'frxXAUUSD', 'frxXAGUSD'],
     price: 29900
   },
   premium: {
     name: 'Premium',
-    assets: ['stpRNG', 'R_75', 'frxXAUUSD', 'frxGBPUSD', 'cryBTCUSD'],
+    // PREMIUM: + V100, Jump, GBP, Cryptos
+    assets: ['stpRNG', 'R_75', '1HZ100V', 'JD75', 'frxEURUSD', 'frxGBPUSD', 'frxUSDJPY', 'frxXAUUSD', 'frxXAGUSD', 'cryBTCUSD', 'cryETHUSD'],
     price: 59900
   },
   elite: {
     name: 'Elite',
-    assets: ['stpRNG', 'R_75', 'frxXAUUSD', 'frxGBPUSD', 'cryBTCUSD', 'BOOM1000', 'BOOM500', 'CRASH1000', 'CRASH500'],
+    // ELITE: Todo incluido - Boom/Crash completos
+    assets: ['stpRNG', 'R_75', '1HZ100V', 'JD75', 'frxEURUSD', 'frxGBPUSD', 'frxUSDJPY', 'frxXAUUSD', 'frxXAGUSD', 'cryBTCUSD', 'cryETHUSD', 'BOOM1000', 'BOOM500', 'BOOM300', 'CRASH1000', 'CRASH500', 'CRASH300'],
     price: 99900
   }
 };
 
 const ASSETS = {
-  'stpRNG': { name: 'Step Index', shortName: 'Step', emoji: '📊', decimals: 2, pip: 0.01, plan: 'free', type: 'standard' },
-  'R_75': { name: 'Volatility 75', shortName: 'V75', emoji: '📈', decimals: 2, pip: 0.01, plan: 'basico', type: 'standard' },
-  'frxXAUUSD': { name: 'Oro (XAU/USD)', shortName: 'XAU', emoji: '🥇', decimals: 2, pip: 0.01, plan: 'free', type: 'standard' },
-  'frxGBPUSD': { name: 'GBP/USD', shortName: 'GBP', emoji: '💷', decimals: 5, pip: 0.0001, plan: 'premium', type: 'standard' },
-  'cryBTCUSD': { name: 'Bitcoin', shortName: 'BTC', emoji: '₿', decimals: 2, pip: 1, plan: 'premium', type: 'standard' },
-  // BOOM: Tendencia bajista natural + spikes alcistas = SOLO COMPRAS
-  'BOOM1000': { name: 'Boom 1000', shortName: 'Boom1K', emoji: '🚀', decimals: 2, pip: 0.01, plan: 'elite', type: 'boom', onlyDirection: 'BUY', spikeFreq: 1000 },
-  'BOOM500': { name: 'Boom 500', shortName: 'Boom500', emoji: '💥', decimals: 2, pip: 0.01, plan: 'elite', type: 'boom', onlyDirection: 'BUY', spikeFreq: 500 },
-  // CRASH: Tendencia alcista natural + spikes bajistas = SOLO VENTAS
-  'CRASH1000': { name: 'Crash 1000', shortName: 'Crash1K', emoji: '📉', decimals: 2, pip: 0.01, plan: 'elite', type: 'crash', onlyDirection: 'SELL', spikeFreq: 1000 },
-  'CRASH500': { name: 'Crash 500', shortName: 'Crash500', emoji: '💣', decimals: 2, pip: 0.01, plan: 'elite', type: 'crash', onlyDirection: 'SELL', spikeFreq: 500 }
+  // ═══════════════════════════════════════════════
+  // 🎰 SINTÉTICOS - VOLATILITY
+  // ═══════════════════════════════════════════════
+  'stpRNG': { name: 'Step Index', shortName: 'Step', emoji: '📊', decimals: 2, pip: 0.01, plan: 'free', type: 'standard', category: 'sinteticos' },
+  'R_75': { name: 'Volatility 75', shortName: 'V75', emoji: '📈', decimals: 2, pip: 0.01, plan: 'basico', type: 'standard', category: 'sinteticos' },
+  '1HZ100V': { name: 'Volatility 100', shortName: 'V100', emoji: '🔥', decimals: 2, pip: 0.01, plan: 'premium', type: 'standard', category: 'sinteticos' },
+  'JD75': { name: 'Jump 75', shortName: 'Jump75', emoji: '⚡', decimals: 2, pip: 0.01, plan: 'premium', type: 'standard', category: 'sinteticos' },
+  
+  // ═══════════════════════════════════════════════
+  // 🚀 SINTÉTICOS - BOOM (Solo COMPRAS)
+  // ═══════════════════════════════════════════════
+  'BOOM1000': { name: 'Boom 1000', shortName: 'Boom1K', emoji: '🚀', decimals: 2, pip: 0.01, plan: 'elite', type: 'boom', onlyDirection: 'BUY', spikeFreq: 1000, category: 'boom' },
+  'BOOM500': { name: 'Boom 500', shortName: 'Boom500', emoji: '💥', decimals: 2, pip: 0.01, plan: 'elite', type: 'boom', onlyDirection: 'BUY', spikeFreq: 500, category: 'boom' },
+  'BOOM300': { name: 'Boom 300', shortName: 'Boom300', emoji: '⚡', decimals: 2, pip: 0.01, plan: 'elite', type: 'boom', onlyDirection: 'BUY', spikeFreq: 300, category: 'boom' },
+  
+  // ═══════════════════════════════════════════════
+  // 📉 SINTÉTICOS - CRASH (Solo VENTAS)
+  // ═══════════════════════════════════════════════
+  'CRASH1000': { name: 'Crash 1000', shortName: 'Crash1K', emoji: '📉', decimals: 2, pip: 0.01, plan: 'elite', type: 'crash', onlyDirection: 'SELL', spikeFreq: 1000, category: 'crash' },
+  'CRASH500': { name: 'Crash 500', shortName: 'Crash500', emoji: '💣', decimals: 2, pip: 0.01, plan: 'elite', type: 'crash', onlyDirection: 'SELL', spikeFreq: 500, category: 'crash' },
+  'CRASH300': { name: 'Crash 300', shortName: 'Crash300', emoji: '🔻', decimals: 2, pip: 0.01, plan: 'elite', type: 'crash', onlyDirection: 'SELL', spikeFreq: 300, category: 'crash' },
+  
+  // ═══════════════════════════════════════════════
+  // 💱 FOREX - Pares de Divisas
+  // ═══════════════════════════════════════════════
+  'frxEURUSD': { name: 'EUR/USD', shortName: 'EUR/USD', emoji: '💶', decimals: 5, pip: 0.0001, plan: 'free', type: 'standard', category: 'forex' },
+  'frxGBPUSD': { name: 'GBP/USD', shortName: 'GBP/USD', emoji: '💷', decimals: 5, pip: 0.0001, plan: 'premium', type: 'standard', category: 'forex' },
+  'frxUSDJPY': { name: 'USD/JPY', shortName: 'USD/JPY', emoji: '💴', decimals: 3, pip: 0.01, plan: 'basico', type: 'standard', category: 'forex' },
+  
+  // ═══════════════════════════════════════════════
+  // 🏆 COMMODITIES - Metales
+  // ═══════════════════════════════════════════════
+  'frxXAUUSD': { name: 'Oro (XAU/USD)', shortName: 'Oro', emoji: '🥇', decimals: 2, pip: 0.01, plan: 'free', type: 'standard', category: 'commodities' },
+  'frxXAGUSD': { name: 'Plata (XAG/USD)', shortName: 'Plata', emoji: '🥈', decimals: 4, pip: 0.001, plan: 'basico', type: 'standard', category: 'commodities' },
+  
+  // ═══════════════════════════════════════════════
+  // ₿ CRYPTO - Criptomonedas
+  // ═══════════════════════════════════════════════
+  'cryBTCUSD': { name: 'Bitcoin', shortName: 'BTC', emoji: '₿', decimals: 2, pip: 1, plan: 'premium', type: 'standard', category: 'crypto' },
+  'cryETHUSD': { name: 'Ethereum', shortName: 'ETH', emoji: '⟠', decimals: 2, pip: 0.1, plan: 'premium', type: 'standard', category: 'crypto' }
 };
 
 // =============================================
