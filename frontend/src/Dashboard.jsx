@@ -542,21 +542,21 @@ export default function Dashboard({ user, onLogout }) {
 
         {/* Footer fijo */}
         <div className="flex-shrink-0 border-t border-white/5">
-          {subscription?.plan !== 'elite' && (
+          {subscription?.plan_name !== 'elite' && subscription?.status !== 'elite' && (
             <button onClick={() => setShowPricing(true)}
-              className="w-full py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white text-xs font-bold hover:opacity-90">
+              className="w-full py-2.5 bg-gradient-to-r from-purple-500 to-pink-500 text-white text-sm font-bold hover:opacity-90">
               ⚡ Upgrade
             </button>
           )}
           <div className="flex items-center justify-between px-3 py-2">
             <div className="flex items-center gap-1.5">
-              <div className={`w-1.5 h-1.5 rounded-full ${data?.connected ? 'bg-emerald-400' : 'bg-red-400'}`} />
-              <span className="text-[10px] text-white/40">{data?.connected ? 'Online' : 'Offline'}</span>
+              <div className={`w-2 h-2 rounded-full ${data?.connected ? 'bg-emerald-400' : 'bg-red-400'}`} />
+              <span className="text-xs text-white/50">{data?.connected ? 'Online' : 'Offline'}</span>
             </div>
             <button 
               onClick={() => { setActiveSection('download'); if (isMobile) setSidebarOpen(false); }}
-              className="text-[10px] text-white/40 hover:text-white/60">
-              📱 App
+              className="flex items-center gap-1 px-2 py-1 bg-white/5 hover:bg-white/10 rounded text-xs text-white/60 hover:text-white/80 transition-colors">
+              <span>📱</span> Download
             </button>
           </div>
         </div>
