@@ -1169,172 +1169,131 @@ const SMC = {
     }
     
     // ═══════════════════════════════════════════
-    // BOOM: SOLO COMPRAS con confirmación H1
+    // BOOM: SOLO COMPRAS - Lógica SMC Institucional
+    // ═══════════════════════════════════════════
+    // 1. H1 debe ser BULLISH o NEUTRAL
+    // 2. Precio toca Order Block H1 (vela roja + verde envolvente = acumulación)
+    // 3. M5 formando estructura alcista
+    // 4. Entrada en pullback a zona del OB
     // ═══════════════════════════════════════════
     if (assetType === 'boom') {
-      // REGLA 1: H1 debe ser BULLISH o NEUTRAL (NUNCA operar contra H1)
+      // REGLA 1: H1 NO puede ser BEARISH
       if (structureH1.trend === 'BEARISH') {
-        // console.log(`⛔ [${config.shortName}] BOOM bloqueado: H1 BEARISH`);
+        if (Date.now() % 30000 < 1000) {
+          console.log(`⛔ [${config.shortName}] BOOM bloqueado: H1 BEARISH - Esperando cambio de estructura`);
+        }
         return null;
       }
       
-      // REGLA 2: Buscar pullback a zona de demanda (M5 o H1)
-      let validZone = null;
-      let touchingDemand = false;
-      let zoneSource = '';
-      
-      // Primero buscar en zonas M5
-      for (const zone of demandZones) {
-        // La vela debe estar tocando o cerca de la zona de demanda
-        const inZone = lastCandle.low <= zone.high * 1.002 && lastCandle.low >= zone.low * 0.995;
-        if (inZone) {
-          touchingDemand = true;
-          validZone = zone;
-          zoneSource = 'M5';
-          break;
+      // REGLA 2: Debe existir un Order Block válido en H1 (zona de demanda/acumulación)
+      // OB de demanda = vela ROJA seguida de vela VERDE envolvente (acumulación institucional)
+      if (!obValidH1 || !obValidH1.valid) {
+        if (Date.now() % 30000 < 1000) {
+          console.log(`⏳ [${config.shortName}] BOOM esperando: No hay Order Block H1 válido`);
         }
-      }
-      
-      // Si no hay zona M5, buscar en OB válido de H1
-      if (!touchingDemand && obValidH1 && obValidH1.valid) {
-        const obZone = obValidH1.zone;
-        const inOBZone = lastCandle.low <= obZone.high * 1.002 && lastCandle.low >= obZone.low * 0.995;
-        if (inOBZone) {
-          touchingDemand = true;
-          validZone = obZone;
-          zoneSource = 'H1_OB';
-        }
-      }
-      
-      if (!touchingDemand || !validZone) {
         return null;
       }
       
-      // REGLA 3: Confirmar con vela de rechazo, engulfing, o vela verde después de tocar zona
+      const obZone = obValidH1.zone;
+      
+      // REGLA 3: El precio debe estar tocando o dentro de la zona del OB H1
+      const tolerance = avgRange * 0.5; // Tolerancia de medio ATR
+      const priceInOBZone = lastCandle.low <= (obZone.high + tolerance) && 
+                            lastCandle.low >= (obZone.low - tolerance);
+      
+      if (!priceInOBZone) {
+        if (Date.now() % 30000 < 1000) {
+          console.log(`⏳ [${config.shortName}] BOOM esperando: Precio no toca OB H1 (OB: ${obZone.low.toFixed(2)}-${obZone.high.toFixed(2)}, Low: ${lastCandle.low.toFixed(2)})`);
+        }
+        return null;
+      }
+      
+      // REGLA 4: M5 debe estar formando estructura ALCISTA o NEUTRAL (pullback en tendencia)
+      if (structure.trend === 'BEARISH') {
+        // Si M5 es bajista pero hay señal de reversión, podemos continuar
+        const hasReversalSignal = state.choch?.type === 'BULLISH_CHOCH' || 
+                                  (lastCandle.close > lastCandle.open && prevCandle.close < prevCandle.open);
+        if (!hasReversalSignal) {
+          if (Date.now() % 30000 < 1000) {
+            console.log(`⏳ [${config.shortName}] BOOM esperando: M5 BEARISH sin señal de reversión`);
+          }
+          return null;
+        }
+      }
+      
+      // REGLA 5: Confirmación de entrada (pullback completado)
       const body = Math.abs(lastCandle.close - lastCandle.open);
       const lowerWick = Math.min(lastCandle.open, lastCandle.close) - lastCandle.low;
+      const totalRange = lastCandle.high - lastCandle.low;
       
-      // Rechazo: mecha inferior > 40% del cuerpo Y cierre alcista
-      const hasRejection = lowerWick > body * 0.4 && lastCandle.close > lastCandle.open;
+      // Confirmaciones válidas para entrada:
+      // a) Rechazo en zona (mecha inferior significativa + cierre verde)
+      const hasRejection = lowerWick > body * 0.3 && lastCandle.close > lastCandle.open;
       
-      // Engulfing alcista
+      // b) Engulfing alcista (vela verde envuelve la roja anterior)
       const hasEngulfing = prevCandle.close < prevCandle.open && 
                            lastCandle.close > lastCandle.open &&
-                           lastCandle.close > prevCandle.open;
+                           lastCandle.close > prevCandle.open &&
+                           lastCandle.open <= prevCandle.close;
       
-      // Vela verde simple si H1 es BULLISH y hay OB válido
-      const hasSimpleConfirm = lastCandle.close > lastCandle.open && 
-                               structureH1.trend === 'BULLISH' && 
-                               obValidH1?.valid;
+      // c) Vela verde fuerte en zona con H1 alcista
+      const hasStrongGreen = lastCandle.close > lastCandle.open && 
+                             body > totalRange * 0.5 &&
+                             structureH1.trend === 'BULLISH';
       
-      if (!hasRejection && !hasEngulfing && !hasSimpleConfirm) {
+      // d) CHoCH alcista en M5 dentro de la zona
+      const hasChochConfirm = state.choch?.type === 'BULLISH_CHOCH';
+      
+      if (!hasRejection && !hasEngulfing && !hasStrongGreen && !hasChochConfirm) {
+        if (Date.now() % 30000 < 1000) {
+          console.log(`⏳ [${config.shortName}] BOOM esperando: En zona OB pero sin confirmación de entrada`);
+        }
         return null;
       }
       
-      // REGLA 4: No comprar en premium extremo
+      // REGLA 6: No comprar en zona PREMIUM extrema
       if (state.premiumDiscount === 'PREMIUM') {
+        console.log(`⛔ [${config.shortName}] BOOM bloqueado: Zona PREMIUM - Esperar pullback más profundo`);
         return null;
       }
       
       // ═══════════════════════════════════════════════════════════════════════════
-      // ✅ SETUP VÁLIDO PARA BOOM - CÁLCULO ROBUSTO DE NIVELES
+      // ✅ SETUP VÁLIDO PARA BOOM - Calcular niveles
       // ═══════════════════════════════════════════════════════════════════════════
+      console.log(`✅ [${config.shortName}] BOOM SETUP DETECTADO en OB H1!`);
+      
       const entry = lastCandle.close;
-      const currentPrice = entry;
       
-      // Calcular el rango real de la zona
-      const zoneHigh = Math.max(validZone.high, validZone.low);
-      const zoneLow = Math.min(validZone.high, validZone.low);
-      const zoneHeight = zoneHigh - zoneLow;
+      // SL: Debajo de la zona del OB H1
+      const slBuffer = avgRange * 0.3;
+      const stop = Math.min(obZone.low, lastCandle.low) - slBuffer;
       
-      // SL: SIEMPRE DEBAJO del entry para LONG
-      // Usar el mínimo entre: el low de la zona, el low reciente, o un % del precio
-      const recentLow = Math.min(...candlesM5.slice(-10).map(c => c.low));
-      const percentageSL = currentPrice * 0.003; // 0.3% del precio como mínimo
-      const slDistance = Math.max(
-        Math.max(zoneHeight * 0.8, avgRange * 1.5), // El mayor entre 80% de la zona o 1.5x ATR
-        percentageSL // Mínimo 0.3% del precio
-      );
-      
-      // SL siempre debajo del entry Y debajo de la zona
-      const stop = Math.min(zoneLow, recentLow) - slDistance * 0.2;
-      
-      // Validar que SL esté DEBAJO del entry (obligatorio para LONG)
+      // Validar SL coherente
       if (stop >= entry) {
-        console.log(`⛔ [${config.shortName}] BOOM bloqueado: SL (${stop}) >= Entry (${entry})`);
+        console.log(`⛔ [${config.shortName}] BOOM bloqueado: SL (${stop.toFixed(2)}) >= Entry (${entry.toFixed(2)})`);
         return null;
       }
       
-      const risk = entry - stop; // Siempre positivo para LONG
+      const risk = entry - stop;
       
-      // Buscar objetivos alcistas
+      // TPs basados en estructura
       const recentHighs = swings.filter(s => s.type === 'high').slice(-5);
-      const targetHigh = recentHighs.length > 0 
-        ? Math.max(...recentHighs.map(h => h.price)) 
-        : entry + risk * 4;
+      const targetHigh = recentHighs.length > 0 ? Math.max(...recentHighs.map(h => h.price)) : entry + risk * 4;
       
-      // TPs: SIEMPRE ARRIBA del entry para LONG
       const tp1 = entry + risk * 1.5;
       const tp2 = entry + risk * 2.5;
       const tp3 = Math.max(targetHigh, entry + risk * 4);
       
-      // Validar coherencia final
-      if (tp1 <= entry || tp2 <= entry || tp3 <= entry) {
-        console.log(`⛔ [${config.shortName}] BOOM bloqueado: TPs inválidos`);
-        return null;
-      }
+      // Score
+      let score = 75; // Base más alto porque ya pasó todas las validaciones
+      let reasons = ['BOOM OB H1'];
       
-      // Score base para Boom
-      let score = 72;
-      let reasons = [];
-      
-      // ═══ BONIFICACIONES ═══
-      
-      // +12 si H1 es BULLISH (alineación perfecta)
-      if (structureH1.trend === 'BULLISH') {
-        score += 12;
-        reasons.push('H1 BULLISH ✓');
-      }
-      
-      // +10 si la zona es del OB H1
-      if (zoneSource === 'H1_OB') {
-        score += 10;
-        reasons.push('OB H1 ✓');
-      } else if (obValidH1?.valid) {
-        score += 5;
-        reasons.push('OB H1 existe');
-      }
-      
-      // +5 por estructura M5 alcista
-      if (structure.trend === 'BULLISH') {
-        score += 5;
-        reasons.push('M5 Alcista');
-      }
-      
-      // +5 por CHoCH
-      if (state.choch?.type === 'BULLISH_CHOCH') {
-        score += 5;
-        reasons.push('CHoCH Alcista');
-      }
-      
-      // +4 por rechazo fuerte
-      if (hasRejection) {
-        score += 4;
-        reasons.push('Rechazo');
-      }
-      // +4 por engulfing
-      if (hasEngulfing) {
-        score += 4;
-        reasons.push('Engulfing');
-      }
-      
-      // +3 por discount
-      if (state.premiumDiscount === 'DISCOUNT') {
-        score += 3;
-        reasons.push('Discount');
-      }
-      
-      reasons.unshift('BOOM Pullback Demanda');
+      if (structureH1.trend === 'BULLISH') { score += 10; reasons.push('H1 Alcista'); }
+      if (structure.trend === 'BULLISH') { score += 5; reasons.push('M5 Alcista'); }
+      if (hasRejection) { score += 5; reasons.push('Rechazo'); }
+      if (hasEngulfing) { score += 5; reasons.push('Engulfing'); }
+      if (hasChochConfirm) { score += 5; reasons.push('CHoCH'); }
+      if (state.premiumDiscount === 'DISCOUNT') { score += 3; reasons.push('Discount'); }
       
       return {
         action: 'LONG',
@@ -1350,180 +1309,140 @@ const SMC = {
           type: 'boom',
           structureM5: structure.trend,
           structureH1: structureH1.trend,
-          obH1Valid: obValidH1?.valid || false,
-          zoneSource: zoneSource,
-          zone: 'demand',
-          confirmation: hasRejection ? 'rejection' : (hasEngulfing ? 'engulfing' : 'simple'),
+          obH1Valid: true,
+          obZone: `${obZone.low.toFixed(2)}-${obZone.high.toFixed(2)}`,
+          confirmation: hasRejection ? 'rejection' : hasEngulfing ? 'engulfing' : hasChochConfirm ? 'choch' : 'strong_candle',
           risk: +risk.toFixed(config.decimals)
         }
       };
     }
     
     // ═══════════════════════════════════════════
-    // CRASH: SOLO VENTAS con confirmación H1
+    // CRASH: SOLO VENTAS - Lógica SMC Institucional
+    // ═══════════════════════════════════════════
+    // 1. H1 debe ser BEARISH o NEUTRAL
+    // 2. Precio toca Order Block H1 (vela verde + roja envolvente = distribución)
+    // 3. M5 formando estructura bajista
+    // 4. Entrada en pullback a zona del OB
     // ═══════════════════════════════════════════
     if (assetType === 'crash') {
-      // REGLA 1: H1 debe ser BEARISH o NEUTRAL (NUNCA operar contra H1)
+      // REGLA 1: H1 NO puede ser BULLISH
       if (structureH1.trend === 'BULLISH') {
-        // console.log(`⛔ [${config.shortName}] CRASH bloqueado: H1 BULLISH`);
+        if (Date.now() % 30000 < 1000) {
+          console.log(`⛔ [${config.shortName}] CRASH bloqueado: H1 BULLISH - Esperando cambio de estructura`);
+        }
         return null;
       }
       
-      // REGLA 2: Buscar pullback a zona de supply (M5 o H1)
-      let validZone = null;
-      let touchingSupply = false;
-      let zoneSource = '';
-      
-      // Primero buscar en zonas M5
-      for (const zone of supplyZones) {
-        const inZone = lastCandle.high >= zone.low * 0.998 && lastCandle.high <= zone.high * 1.005;
-        if (inZone) {
-          touchingSupply = true;
-          validZone = zone;
-          zoneSource = 'M5';
-          break;
+      // REGLA 2: Debe existir un Order Block válido en H1 (zona de supply/distribución)
+      // OB de supply = vela VERDE seguida de vela ROJA envolvente (distribución institucional)
+      if (!obValidH1 || !obValidH1.valid) {
+        if (Date.now() % 30000 < 1000) {
+          console.log(`⏳ [${config.shortName}] CRASH esperando: No hay Order Block H1 válido`);
         }
-      }
-      
-      // Si no hay zona M5, buscar en OB válido de H1
-      if (!touchingSupply && obValidH1 && obValidH1.valid) {
-        const obZone = obValidH1.zone;
-        const inOBZone = lastCandle.high >= obZone.low * 0.998 && lastCandle.high <= obZone.high * 1.005;
-        if (inOBZone) {
-          touchingSupply = true;
-          validZone = obZone;
-          zoneSource = 'H1_OB';
-        }
-      }
-      
-      if (!touchingSupply || !validZone) {
         return null;
       }
       
-      // REGLA 3: Confirmar con vela de rechazo, engulfing, o vela roja después de tocar zona
+      const obZone = obValidH1.zone;
+      
+      // REGLA 3: El precio debe estar tocando o dentro de la zona del OB H1
+      const tolerance = avgRange * 0.5; // Tolerancia de medio ATR
+      const priceInOBZone = lastCandle.high >= (obZone.low - tolerance) && 
+                            lastCandle.high <= (obZone.high + tolerance);
+      
+      if (!priceInOBZone) {
+        if (Date.now() % 30000 < 1000) {
+          console.log(`⏳ [${config.shortName}] CRASH esperando: Precio no toca OB H1 (OB: ${obZone.low.toFixed(2)}-${obZone.high.toFixed(2)}, High: ${lastCandle.high.toFixed(2)})`);
+        }
+        return null;
+      }
+      
+      // REGLA 4: M5 debe estar formando estructura BAJISTA o NEUTRAL (pullback en tendencia)
+      if (structure.trend === 'BULLISH') {
+        // Si M5 es alcista pero hay señal de reversión, podemos continuar
+        const hasReversalSignal = state.choch?.type === 'BEARISH_CHOCH' || 
+                                  (lastCandle.close < lastCandle.open && prevCandle.close > prevCandle.open);
+        if (!hasReversalSignal) {
+          if (Date.now() % 30000 < 1000) {
+            console.log(`⏳ [${config.shortName}] CRASH esperando: M5 BULLISH sin señal de reversión`);
+          }
+          return null;
+        }
+      }
+      
+      // REGLA 5: Confirmación de entrada (pullback completado)
       const body = Math.abs(lastCandle.close - lastCandle.open);
       const upperWick = lastCandle.high - Math.max(lastCandle.open, lastCandle.close);
+      const totalRange = lastCandle.high - lastCandle.low;
       
-      // Rechazo: mecha superior > 40% del cuerpo Y cierre bajista
-      const hasRejection = upperWick > body * 0.4 && lastCandle.close < lastCandle.open;
+      // Confirmaciones válidas para entrada:
+      // a) Rechazo en zona (mecha superior significativa + cierre roja)
+      const hasRejection = upperWick > body * 0.3 && lastCandle.close < lastCandle.open;
       
-      // Engulfing bajista
+      // b) Engulfing bajista (vela roja envuelve la verde anterior)
       const hasEngulfing = prevCandle.close > prevCandle.open && 
                            lastCandle.close < lastCandle.open &&
-                           lastCandle.close < prevCandle.open;
+                           lastCandle.close < prevCandle.open &&
+                           lastCandle.open >= prevCandle.close;
       
-      // Vela roja simple si H1 es BEARISH y hay OB válido
-      const hasSimpleConfirm = lastCandle.close < lastCandle.open && 
-                               structureH1.trend === 'BEARISH' && 
-                               obValidH1?.valid;
+      // c) Vela roja fuerte en zona con H1 bajista
+      const hasStrongRed = lastCandle.close < lastCandle.open && 
+                           body > totalRange * 0.5 &&
+                           structureH1.trend === 'BEARISH';
       
-      if (!hasRejection && !hasEngulfing && !hasSimpleConfirm) {
+      // d) CHoCH bajista en M5 dentro de la zona
+      const hasChochConfirm = state.choch?.type === 'BEARISH_CHOCH';
+      
+      if (!hasRejection && !hasEngulfing && !hasStrongRed && !hasChochConfirm) {
+        if (Date.now() % 30000 < 1000) {
+          console.log(`⏳ [${config.shortName}] CRASH esperando: En zona OB pero sin confirmación de entrada`);
+        }
         return null;
       }
       
-      // REGLA 4: No vender en discount extremo
+      // REGLA 6: No vender en zona DISCOUNT extrema
       if (state.premiumDiscount === 'DISCOUNT') {
+        console.log(`⛔ [${config.shortName}] CRASH bloqueado: Zona DISCOUNT - Esperar pullback más alto`);
         return null;
       }
       
       // ═══════════════════════════════════════════════════════════════════════════
-      // ✅ SETUP VÁLIDO PARA CRASH - CÁLCULO ROBUSTO DE NIVELES
+      // ✅ SETUP VÁLIDO PARA CRASH - Calcular niveles
       // ═══════════════════════════════════════════════════════════════════════════
+      console.log(`✅ [${config.shortName}] CRASH SETUP DETECTADO en OB H1!`);
+      
       const entry = lastCandle.close;
-      const currentPrice = entry;
       
-      // Calcular el rango real de la zona
-      const zoneHigh = Math.max(validZone.high, validZone.low);
-      const zoneLow = Math.min(validZone.high, validZone.low);
-      const zoneHeight = zoneHigh - zoneLow;
+      // SL: Arriba de la zona del OB H1
+      const slBuffer = avgRange * 0.3;
+      const stop = Math.max(obZone.high, lastCandle.high) + slBuffer;
       
-      // SL: SIEMPRE ARRIBA del entry para SHORT
-      const recentHigh = Math.max(...candlesM5.slice(-10).map(c => c.high));
-      const percentageSL = currentPrice * 0.003; // 0.3% del precio como mínimo
-      const slDistance = Math.max(
-        Math.max(zoneHeight * 0.8, avgRange * 1.5), // El mayor entre 80% de la zona o 1.5x ATR
-        percentageSL // Mínimo 0.3% del precio
-      );
-      
-      // SL siempre arriba del entry Y arriba de la zona
-      const stop = Math.max(zoneHigh, recentHigh) + slDistance * 0.2;
-      
-      // Validar que SL esté ARRIBA del entry (obligatorio para SHORT)
+      // Validar SL coherente
       if (stop <= entry) {
-        console.log(`⛔ [${config.shortName}] CRASH bloqueado: SL (${stop}) <= Entry (${entry})`);
+        console.log(`⛔ [${config.shortName}] CRASH bloqueado: SL (${stop.toFixed(2)}) <= Entry (${entry.toFixed(2)})`);
         return null;
       }
       
-      const risk = stop - entry; // Siempre positivo para SHORT
+      const risk = stop - entry;
       
-      // Buscar objetivos bajistas
+      // TPs basados en estructura
       const recentLows = swings.filter(s => s.type === 'low').slice(-5);
-      const targetLow = recentLows.length > 0 
-        ? Math.min(...recentLows.map(l => l.price)) 
-        : entry - risk * 4;
+      const targetLow = recentLows.length > 0 ? Math.min(...recentLows.map(l => l.price)) : entry - risk * 4;
       
-      // TPs: SIEMPRE DEBAJO del entry para SHORT
       const tp1 = entry - risk * 1.5;
       const tp2 = entry - risk * 2.5;
       const tp3 = Math.min(targetLow, entry - risk * 4);
       
-      // Validar coherencia final
-      if (tp1 >= entry || tp2 >= entry || tp3 >= entry) {
-        console.log(`⛔ [${config.shortName}] CRASH bloqueado: TPs inválidos`);
-        return null;
-      }
+      // Score
+      let score = 75; // Base más alto porque ya pasó todas las validaciones
+      let reasons = ['CRASH OB H1'];
       
-      // Score base para Crash
-      let score = 72;
-      let reasons = [];
-      
-      // ═══ BONIFICACIONES ═══
-      
-      // +12 si H1 es BEARISH (alineación perfecta)
-      if (structureH1.trend === 'BEARISH') {
-        score += 12;
-        reasons.push('H1 BEARISH ✓');
-      }
-      
-      // +10 si la zona es del OB H1
-      if (zoneSource === 'H1_OB') {
-        score += 10;
-        reasons.push('OB H1 ✓');
-      } else if (obValidH1?.valid) {
-        score += 5;
-        reasons.push('OB H1 existe');
-      }
-      
-      // +5 por estructura M5 bajista
-      if (structure.trend === 'BEARISH') {
-        score += 5;
-        reasons.push('M5 Bajista');
-      }
-      
-      // +5 por CHoCH
-      if (state.choch?.type === 'BEARISH_CHOCH') {
-        score += 5;
-        reasons.push('CHoCH Bajista');
-      }
-      
-      // +4 por rechazo fuerte
-      if (hasRejection) {
-        score += 4;
-        reasons.push('Rechazo');
-      }
-      // +4 por engulfing
-      if (hasEngulfing) {
-        score += 4;
-        reasons.push('Engulfing');
-      }
-      
-      // +3 por premium
-      if (state.premiumDiscount === 'PREMIUM') {
-        score += 3;
-        reasons.push('Premium');
-      }
-      
-      reasons.unshift('CRASH Pullback Supply');
+      if (structureH1.trend === 'BEARISH') { score += 10; reasons.push('H1 Bajista'); }
+      if (structure.trend === 'BEARISH') { score += 5; reasons.push('M5 Bajista'); }
+      if (hasRejection) { score += 5; reasons.push('Rechazo'); }
+      if (hasEngulfing) { score += 5; reasons.push('Engulfing'); }
+      if (hasChochConfirm) { score += 5; reasons.push('CHoCH'); }
+      if (state.premiumDiscount === 'PREMIUM') { score += 3; reasons.push('Premium'); }
       
       return {
         action: 'SHORT',
@@ -1539,10 +1458,9 @@ const SMC = {
           type: 'crash',
           structureM5: structure.trend,
           structureH1: structureH1.trend,
-          obH1Valid: obValidH1?.valid || false,
-          zoneSource: zoneSource,
-          zone: 'supply',
-          confirmation: hasRejection ? 'rejection' : (hasEngulfing ? 'engulfing' : 'simple'),
+          obH1Valid: true,
+          obZone: `${obZone.low.toFixed(2)}-${obZone.high.toFixed(2)}`,
+          confirmation: hasRejection ? 'rejection' : hasEngulfing ? 'engulfing' : hasChochConfirm ? 'choch' : 'strong_candle',
           risk: +risk.toFixed(config.decimals)
         }
       };
