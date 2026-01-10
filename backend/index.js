@@ -1177,6 +1177,7 @@ const SMC = {
       
       // Primero buscar en zonas M5
       for (const zone of demandZones) {
+        // La vela debe estar tocando o cerca de la zona de demanda
         const inZone = lastCandle.low <= zone.high * 1.002 && lastCandle.low >= zone.low * 0.995;
         if (inZone) {
           touchingDemand = true;
@@ -1227,16 +1228,53 @@ const SMC = {
         return null;
       }
       
-      // ✅ SETUP VÁLIDO PARA BOOM
+      // ═══════════════════════════════════════════════════════════════════════════
+      // ✅ SETUP VÁLIDO PARA BOOM - CÁLCULO ROBUSTO DE NIVELES
+      // ═══════════════════════════════════════════════════════════════════════════
       const entry = lastCandle.close;
-      // SL DEBAJO del Order Block con margen amplio para aguantar retrocesos
-      const zoneHeight = validZone.high - validZone.low;
-      const slMargin = Math.max(avgRange * 1.2, zoneHeight * 0.5); // El mayor entre 1.2x ATR o 50% de la zona
-      const stop = validZone.low - slMargin;
-      const risk = entry - stop;
+      const currentPrice = entry;
       
-      const recentHighs = swings.filter(s => s.type === 'high').slice(-3);
-      const targetHigh = recentHighs.length > 0 ? Math.max(...recentHighs.map(h => h.price)) : entry + risk * 3;
+      // Calcular el rango real de la zona
+      const zoneHigh = Math.max(validZone.high, validZone.low);
+      const zoneLow = Math.min(validZone.high, validZone.low);
+      const zoneHeight = zoneHigh - zoneLow;
+      
+      // SL: SIEMPRE DEBAJO del entry para LONG
+      // Usar el mínimo entre: el low de la zona, el low reciente, o un % del precio
+      const recentLow = Math.min(...candlesM5.slice(-10).map(c => c.low));
+      const percentageSL = currentPrice * 0.003; // 0.3% del precio como mínimo
+      const slDistance = Math.max(
+        Math.max(zoneHeight * 0.8, avgRange * 1.5), // El mayor entre 80% de la zona o 1.5x ATR
+        percentageSL // Mínimo 0.3% del precio
+      );
+      
+      // SL siempre debajo del entry Y debajo de la zona
+      const stop = Math.min(zoneLow, recentLow) - slDistance * 0.2;
+      
+      // Validar que SL esté DEBAJO del entry (obligatorio para LONG)
+      if (stop >= entry) {
+        console.log(`⛔ [${config.shortName}] BOOM bloqueado: SL (${stop}) >= Entry (${entry})`);
+        return null;
+      }
+      
+      const risk = entry - stop; // Siempre positivo para LONG
+      
+      // Buscar objetivos alcistas
+      const recentHighs = swings.filter(s => s.type === 'high').slice(-5);
+      const targetHigh = recentHighs.length > 0 
+        ? Math.max(...recentHighs.map(h => h.price)) 
+        : entry + risk * 4;
+      
+      // TPs: SIEMPRE ARRIBA del entry para LONG
+      const tp1 = entry + risk * 1.5;
+      const tp2 = entry + risk * 2.5;
+      const tp3 = Math.max(targetHigh, entry + risk * 4);
+      
+      // Validar coherencia final
+      if (tp1 <= entry || tp2 <= entry || tp3 <= entry) {
+        console.log(`⛔ [${config.shortName}] BOOM bloqueado: TPs inválidos`);
+        return null;
+      }
       
       // Score base para Boom
       let score = 72;
@@ -1253,13 +1291,13 @@ const SMC = {
       // +10 si la zona es del OB H1
       if (zoneSource === 'H1_OB') {
         score += 10;
-        reasons.push('Zona OB H1 ✓');
+        reasons.push('OB H1 ✓');
       } else if (obValidH1?.valid) {
         score += 5;
         reasons.push('OB H1 existe');
       }
       
-      // +5 por estructura M5 alcista (bonus, no requerido)
+      // +5 por estructura M5 alcista
       if (structure.trend === 'BULLISH') {
         score += 5;
         reasons.push('M5 Alcista');
@@ -1296,9 +1334,9 @@ const SMC = {
         score: Math.min(100, score),
         entry: +entry.toFixed(config.decimals),
         stop: +stop.toFixed(config.decimals),
-        tp1: +(entry + risk * 1.5).toFixed(config.decimals),
-        tp2: +(entry + risk * 2.5).toFixed(config.decimals),
-        tp3: +Math.max(targetHigh, entry + risk * 3.5).toFixed(config.decimals),
+        tp1: +tp1.toFixed(config.decimals),
+        tp2: +tp2.toFixed(config.decimals),
+        tp3: +tp3.toFixed(config.decimals),
         reason: reasons.join(' + '),
         analysis: {
           type: 'boom',
@@ -1307,7 +1345,8 @@ const SMC = {
           obH1Valid: obValidH1?.valid || false,
           zoneSource: zoneSource,
           zone: 'demand',
-          confirmation: hasRejection ? 'rejection' : (hasEngulfing ? 'engulfing' : 'simple')
+          confirmation: hasRejection ? 'rejection' : (hasEngulfing ? 'engulfing' : 'simple'),
+          risk: +risk.toFixed(config.decimals)
         }
       };
     }
@@ -1357,7 +1396,7 @@ const SMC = {
       const body = Math.abs(lastCandle.close - lastCandle.open);
       const upperWick = lastCandle.high - Math.max(lastCandle.open, lastCandle.close);
       
-      // Rechazo: mecha superior > 50% del cuerpo Y cierre bajista
+      // Rechazo: mecha superior > 40% del cuerpo Y cierre bajista
       const hasRejection = upperWick > body * 0.4 && lastCandle.close < lastCandle.open;
       
       // Engulfing bajista
@@ -1365,7 +1404,7 @@ const SMC = {
                            lastCandle.close < lastCandle.open &&
                            lastCandle.close < prevCandle.open;
       
-      // Vela roja simple (cierre < apertura) si H1 es BEARISH y hay OB válido
+      // Vela roja simple si H1 es BEARISH y hay OB válido
       const hasSimpleConfirm = lastCandle.close < lastCandle.open && 
                                structureH1.trend === 'BEARISH' && 
                                obValidH1?.valid;
@@ -1379,16 +1418,52 @@ const SMC = {
         return null;
       }
       
-      // ✅ SETUP VÁLIDO PARA CRASH
+      // ═══════════════════════════════════════════════════════════════════════════
+      // ✅ SETUP VÁLIDO PARA CRASH - CÁLCULO ROBUSTO DE NIVELES
+      // ═══════════════════════════════════════════════════════════════════════════
       const entry = lastCandle.close;
-      // SL ENCIMA del Order Block con margen amplio para aguantar retrocesos
-      const zoneHeight = validZone.high - validZone.low;
-      const slMargin = Math.max(avgRange * 1.2, zoneHeight * 0.5); // El mayor entre 1.2x ATR o 50% de la zona
-      const stop = validZone.high + slMargin;
-      const risk = stop - entry;
+      const currentPrice = entry;
       
-      const recentLows = swings.filter(s => s.type === 'low').slice(-3);
-      const targetLow = recentLows.length > 0 ? Math.min(...recentLows.map(l => l.price)) : entry - risk * 3;
+      // Calcular el rango real de la zona
+      const zoneHigh = Math.max(validZone.high, validZone.low);
+      const zoneLow = Math.min(validZone.high, validZone.low);
+      const zoneHeight = zoneHigh - zoneLow;
+      
+      // SL: SIEMPRE ARRIBA del entry para SHORT
+      const recentHigh = Math.max(...candlesM5.slice(-10).map(c => c.high));
+      const percentageSL = currentPrice * 0.003; // 0.3% del precio como mínimo
+      const slDistance = Math.max(
+        Math.max(zoneHeight * 0.8, avgRange * 1.5), // El mayor entre 80% de la zona o 1.5x ATR
+        percentageSL // Mínimo 0.3% del precio
+      );
+      
+      // SL siempre arriba del entry Y arriba de la zona
+      const stop = Math.max(zoneHigh, recentHigh) + slDistance * 0.2;
+      
+      // Validar que SL esté ARRIBA del entry (obligatorio para SHORT)
+      if (stop <= entry) {
+        console.log(`⛔ [${config.shortName}] CRASH bloqueado: SL (${stop}) <= Entry (${entry})`);
+        return null;
+      }
+      
+      const risk = stop - entry; // Siempre positivo para SHORT
+      
+      // Buscar objetivos bajistas
+      const recentLows = swings.filter(s => s.type === 'low').slice(-5);
+      const targetLow = recentLows.length > 0 
+        ? Math.min(...recentLows.map(l => l.price)) 
+        : entry - risk * 4;
+      
+      // TPs: SIEMPRE DEBAJO del entry para SHORT
+      const tp1 = entry - risk * 1.5;
+      const tp2 = entry - risk * 2.5;
+      const tp3 = Math.min(targetLow, entry - risk * 4);
+      
+      // Validar coherencia final
+      if (tp1 >= entry || tp2 >= entry || tp3 >= entry) {
+        console.log(`⛔ [${config.shortName}] CRASH bloqueado: TPs inválidos`);
+        return null;
+      }
       
       // Score base para Crash
       let score = 72;
@@ -1405,13 +1480,13 @@ const SMC = {
       // +10 si la zona es del OB H1
       if (zoneSource === 'H1_OB') {
         score += 10;
-        reasons.push('Zona OB H1 ✓');
+        reasons.push('OB H1 ✓');
       } else if (obValidH1?.valid) {
         score += 5;
         reasons.push('OB H1 existe');
       }
       
-      // +5 por estructura M5 bajista (bonus, no requerido)
+      // +5 por estructura M5 bajista
       if (structure.trend === 'BEARISH') {
         score += 5;
         reasons.push('M5 Bajista');
@@ -1448,9 +1523,9 @@ const SMC = {
         score: Math.min(100, score),
         entry: +entry.toFixed(config.decimals),
         stop: +stop.toFixed(config.decimals),
-        tp1: +(entry - risk * 1.5).toFixed(config.decimals),
-        tp2: +(entry - risk * 2.5).toFixed(config.decimals),
-        tp3: +Math.min(targetLow, entry - risk * 3.5).toFixed(config.decimals),
+        tp1: +tp1.toFixed(config.decimals),
+        tp2: +tp2.toFixed(config.decimals),
+        tp3: +tp3.toFixed(config.decimals),
         reason: reasons.join(' + '),
         analysis: {
           type: 'crash',
@@ -1459,7 +1534,8 @@ const SMC = {
           obH1Valid: obValidH1?.valid || false,
           zoneSource: zoneSource,
           zone: 'supply',
-          confirmation: hasRejection ? 'rejection' : (hasEngulfing ? 'engulfing' : 'simple')
+          confirmation: hasRejection ? 'rejection' : (hasEngulfing ? 'engulfing' : 'simple'),
+          risk: +risk.toFixed(config.decimals)
         }
       };
     }
