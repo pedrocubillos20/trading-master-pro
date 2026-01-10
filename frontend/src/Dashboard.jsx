@@ -414,11 +414,29 @@ export default function Dashboard({ user, onLogout }) {
     } catch (e) { console.error('Signal error:', e); }
   };
 
-  const pendingSignals = useMemo(() => data?.recentSignals?.filter(s => s.status === 'PENDING') || [], [data?.recentSignals]);
+  // Todas las señales pendientes
+  const allPendingSignals = useMemo(() => data?.recentSignals?.filter(s => s.status === 'PENDING') || [], [data?.recentSignals]);
+  
+  // Señales del plan del usuario (las que puede ver)
+  const pendingSignals = useMemo(() => {
+    return allPendingSignals.filter(s => allowedAssets.includes(s.symbol));
+  }, [allPendingSignals, allowedAssets]);
+  
+  // Señales de otros planes (bloqueadas)
+  const lockedSignals = useMemo(() => {
+    return allPendingSignals.filter(s => !allowedAssets.includes(s.symbol));
+  }, [allPendingSignals, allowedAssets]);
+  
   const closedSignals = useMemo(() => data?.recentSignals?.filter(s => s.status !== 'PENDING') || [], [data?.recentSignals]);
   const currentAsset = useMemo(() => data?.assets?.find(a => a.symbol === selectedAsset), [data?.assets, selectedAsset]);
   const lockedSignal = currentAsset?.lockedSignal;
   const currentCandles = timeframe === 'H1' ? candlesH1 : candles;
+  
+  // Función para ir a una señal
+  const goToSignal = (signal) => {
+    setSelectedAsset(signal.symbol);
+    setActiveSection('dashboard');
+  };
 
   // Filtrar activos según plan
   const filteredAssets = useMemo(() => {
@@ -779,7 +797,10 @@ export default function Dashboard({ user, onLogout }) {
             </h3>
             <div className="space-y-2">
               {pendingSignals.slice(0, 5).map(s => (
-                <div key={s.id} className="flex items-center justify-between p-2 bg-white/5 rounded-lg">
+                <button 
+                  key={s.id} 
+                  onClick={() => goToSignal(s)}
+                  className="w-full flex items-center justify-between p-2 bg-white/5 hover:bg-white/10 rounded-lg transition-colors cursor-pointer">
                   <div className="flex items-center gap-2">
                     <span>{s.emoji}</span>
                     <span className="text-white text-sm">{s.assetName}</span>
@@ -787,8 +808,11 @@ export default function Dashboard({ user, onLogout }) {
                       s.action === 'LONG' ? 'bg-emerald-500 text-black' : 'bg-red-500 text-white'
                     }`}>{s.action}</span>
                   </div>
-                  <span className="text-white/60 text-xs">{s.score}%</span>
-                </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-white/60 text-xs">{s.score}%</span>
+                    <span className="text-white/30 text-xs">→</span>
+                  </div>
+                </button>
               ))}
             </div>
           </div>
@@ -817,41 +841,86 @@ export default function Dashboard({ user, onLogout }) {
           </button>
         </div>
       ) : (
-        <div className="bg-[#0d0d12] rounded-xl border border-white/5 p-4">
-          <h3 className="text-white font-medium mb-3">📊 Señales Pendientes</h3>
-          <div className="space-y-2 max-h-[60vh] overflow-y-auto">
-            {pendingSignals.length === 0 ? (
-              <div className="text-center py-8 text-white/40">
-                <span className="text-4xl mb-2 block">⏳</span>
-                <p>No hay señales pendientes</p>
-                <p className="text-xs mt-1">Las señales aparecerán aquí cuando se generen</p>
-              </div>
-            ) : (
-              pendingSignals.map(s => (
-                <div key={s.id} className="p-3 rounded-lg border bg-cyan-500/10 border-cyan-500/30">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <span>{s.emoji}</span>
-                      <span className="text-white font-medium">{s.assetName}</span>
-                      <span className={`px-2 py-0.5 text-xs font-bold rounded ${
-                        s.action === 'LONG' ? 'bg-emerald-500 text-black' : 'bg-red-500 text-white'
-                      }`}>{s.action}</span>
-                    </div>
-                    <span className="px-2 py-0.5 text-xs font-medium rounded bg-cyan-500/20 text-cyan-400">PENDING</span>
-                  </div>
-                  <div className="flex items-center justify-between text-xs text-white/50">
-                    <span>{s.model} · {s.score}%</span>
-                    <span>{new Date(s.timestamp).toLocaleString()}</span>
-                  </div>
-                  <div className="flex gap-2 mt-2">
-                    <button onClick={() => markSignal(s.id, 'WIN')} className="flex-1 py-1.5 bg-emerald-500/20 text-emerald-400 rounded text-xs hover:bg-emerald-500/30 transition-colors">✓ Win</button>
-                    <button onClick={() => markSignal(s.id, 'LOSS')} className="flex-1 py-1.5 bg-red-500/20 text-red-400 rounded text-xs hover:bg-red-500/30 transition-colors">✗ Loss</button>
-                  </div>
+        <>
+          {/* Señales de tu plan */}
+          <div className="bg-[#0d0d12] rounded-xl border border-white/5 p-4">
+            <h3 className="text-white font-medium mb-3 flex items-center gap-2">
+              📊 Tus Señales
+              <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-400 text-xs rounded-full">{pendingSignals.length}</span>
+            </h3>
+            <div className="space-y-2 max-h-[40vh] overflow-y-auto">
+              {pendingSignals.length === 0 ? (
+                <div className="text-center py-6 text-white/40">
+                  <span className="text-3xl mb-2 block">⏳</span>
+                  <p className="text-sm">No hay señales en tus activos</p>
                 </div>
-              ))
-            )}
+              ) : (
+                pendingSignals.map(s => (
+                  <div key={s.id} className="p-3 rounded-lg border bg-cyan-500/10 border-cyan-500/30 hover:bg-cyan-500/15 transition-colors">
+                    {/* Header clickeable para ir al dashboard */}
+                    <button 
+                      onClick={() => goToSignal(s)}
+                      className="w-full flex items-center justify-between mb-2 cursor-pointer">
+                      <div className="flex items-center gap-2">
+                        <span>{s.emoji}</span>
+                        <span className="text-white font-medium">{s.assetName}</span>
+                        <span className={`px-2 py-0.5 text-xs font-bold rounded ${
+                          s.action === 'LONG' ? 'bg-emerald-500 text-black' : 'bg-red-500 text-white'
+                        }`}>{s.action}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 text-xs font-medium rounded bg-cyan-500/20 text-cyan-400">PENDING</span>
+                        <span className="text-white/40">→</span>
+                      </div>
+                    </button>
+                    <div className="flex items-center justify-between text-xs text-white/50 mb-2">
+                      <span>{s.model} · {s.score}%</span>
+                      <span>{new Date(s.timestamp).toLocaleString()}</span>
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={() => markSignal(s.id, 'WIN')} className="flex-1 py-1.5 bg-emerald-500/20 text-emerald-400 rounded text-xs hover:bg-emerald-500/30 transition-colors">✓ Win</button>
+                      <button onClick={() => markSignal(s.id, 'LOSS')} className="flex-1 py-1.5 bg-red-500/20 text-red-400 rounded text-xs hover:bg-red-500/30 transition-colors">✗ Loss</button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
-        </div>
+
+          {/* Señales de otros planes (bloqueadas) */}
+          {lockedSignals.length > 0 && (
+            <div className="bg-[#0d0d12] rounded-xl border border-amber-500/20 p-4">
+              <h3 className="text-white/70 font-medium mb-3 flex items-center gap-2">
+                🔒 Señales Premium
+                <span className="px-2 py-0.5 bg-amber-500/20 text-amber-400 text-xs rounded-full">{lockedSignals.length}</span>
+              </h3>
+              <div className="space-y-2 max-h-[30vh] overflow-y-auto">
+                {lockedSignals.map(s => (
+                  <div key={s.id} className="p-3 rounded-lg border bg-white/5 border-white/10 opacity-60">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <span>{s.emoji}</span>
+                        <span className="text-white font-medium">{s.assetName}</span>
+                        <span className={`px-2 py-0.5 text-xs font-bold rounded ${
+                          s.action === 'LONG' ? 'bg-emerald-500/50 text-black' : 'bg-red-500/50 text-white'
+                        }`}>{s.action}</span>
+                      </div>
+                      <span className="px-2 py-0.5 text-xs font-medium rounded bg-amber-500/20 text-amber-400">🔒</span>
+                    </div>
+                    <div className="text-xs text-white/40">
+                      <span>{s.model} · {s.score}%</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <button 
+                onClick={() => setShowPricing(true)}
+                className="w-full mt-3 py-2.5 bg-gradient-to-r from-purple-500 to-pink-500 text-white font-semibold rounded-lg hover:opacity-90 transition-opacity flex items-center justify-center gap-2">
+                <span>⚡</span> Desbloquear con Upgrade
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

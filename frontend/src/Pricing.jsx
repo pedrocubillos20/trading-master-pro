@@ -17,13 +17,14 @@ const PLANS = [
     description: 'Ideal para comenzar en el trading',
     color: 'from-slate-500 to-slate-600',
     features: [
-      '4 activos (Step, V75, XAU, BTC)',
-      '5 señales por día',
-      '3 modelos SMC',
+      '6 activos (Step, V75, EUR, JPY, Oro, Plata)',
+      '10 señales por día',
+      '6 modelos SMC',
       'Gráfico M5',
+      'Horario: 6AM-2PM COL',
       'Soporte por email'
     ],
-    notIncluded: ['Alertas Telegram', 'ELISA IA Chat', 'Trailing Stop'],
+    notIncluded: ['Alertas Telegram', 'ELISA IA Chat', 'Acceso 24/7'],
     prices: {
       monthly: { cop: 29900, usd: 9 },
       semiannual: { cop: 152000, usd: 46, discount: 15 },
@@ -37,15 +38,16 @@ const PLANS = [
     popular: true,
     color: 'from-emerald-500 to-cyan-500',
     features: [
-      '5 activos (+GBP/USD)',
-      '15 señales por día',
-      '5 modelos SMC',
+      '11 activos (+V100, Jump75, GBP, BTC, ETH)',
+      '25 señales por día',
+      '9 modelos SMC',
       'Gráficos M5 y H1',
+      'Acceso 24/7 🌙',
       'Alertas Telegram',
       'Trailing Stop automático',
       'Soporte por chat'
     ],
-    notIncluded: ['ELISA IA Chat completo'],
+    notIncluded: ['Boom/Crash', 'ELISA IA avanzado'],
     prices: {
       monthly: { cop: 59900, usd: 19 },
       semiannual: { cop: 305000, usd: 97, discount: 15 },
@@ -58,10 +60,11 @@ const PLANS = [
     description: 'Acceso total sin límites',
     color: 'from-purple-500 to-pink-500',
     features: [
-      '9 activos (todos + Boom/Crash)',
+      '17 activos (todos + Boom/Crash)',
       'Señales ilimitadas',
-      '7 modelos SMC',
+      '12 modelos SMC completos',
       'Todos los timeframes',
+      'Acceso 24/7 🌙',
       'Alertas Telegram + Canal privado',
       'ELISA IA Chat avanzado',
       'Sistema de aprendizaje IA',
