@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import Pricing from './Pricing';
+import ReportsSection from './ReportsSection';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://trading-master-pro-production.up.railway.app';
 
@@ -404,14 +405,46 @@ export default function Dashboard({ user, onLogout }) {
     return () => { isCancelled = true; clearInterval(interval); };
   }, [selectedAsset]);
 
-  const markSignal = async (id, status) => {
+  // Estado para el diálogo de TP
+  const [tpDialog, setTpDialog] = useState({ open: false, signalId: null });
+  
+  const markSignal = async (id, status, tpHit = 1) => {
     try {
+      // Si es WIN, mostrar diálogo para seleccionar TP
+      if (status === 'WIN') {
+        setTpDialog({ open: true, signalId: id });
+        return;
+      }
+      
+      // LOSS va directo sin diálogo
       await fetch(`${API_URL}/api/signals/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status })
+        body: JSON.stringify({ 
+          status,
+          userId: user?.id,
+          tpHit: null
+        })
       });
     } catch (e) { console.error('Signal error:', e); }
+  };
+  
+  // Confirmar WIN con TP específico
+  const confirmWin = async (tpHit) => {
+    if (tpDialog.signalId) {
+      try {
+        await fetch(`${API_URL}/api/signals/${tpDialog.signalId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            status: 'WIN',
+            userId: user?.id,
+            tpHit
+          })
+        });
+      } catch (e) { console.error('Signal error:', e); }
+      setTpDialog({ open: false, signalId: null });
+    }
   };
 
   // Todas las señales pendientes
@@ -508,6 +541,7 @@ export default function Dashboard({ user, onLogout }) {
               { id: 'signals', icon: isNightBlocked ? '🔒' : '🔔', label: 'Señales', badge: isNightBlocked ? 0 : pendingSignals.length, locked: isNightBlocked },
               { id: 'chat', icon: '🤖', label: 'ELISA' },
               { id: 'stats', icon: '📈', label: 'Stats' },
+              { id: 'reports', icon: '🏆', label: 'Reportes' },
               { id: 'history', icon: '📜', label: 'Historial' },
             ].map(item => (
               <button key={item.id}
@@ -1084,6 +1118,7 @@ export default function Dashboard({ user, onLogout }) {
           {activeSection === 'dashboard' && <DashboardSection />}
           {activeSection === 'signals' && <SignalsSection />}
           {activeSection === 'stats' && <StatsSection />}
+          {activeSection === 'reports' && <ReportsSection userId={user?.id} />}
           {activeSection === 'history' && <HistorySection />}
           {activeSection === 'download' && (
             <div className="space-y-4">
@@ -1202,6 +1237,41 @@ export default function Dashboard({ user, onLogout }) {
         </div>
       </main>
       <ElisaChat selectedAsset={selectedAsset} isMobile={isMobile} />
+      
+      {/* Diálogo de selección de TP */}
+      {tpDialog.open && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-[#0d0d12] rounded-2xl border border-white/10 p-6 max-w-sm w-full">
+            <h3 className="text-white font-bold text-lg mb-4 text-center">🎯 ¿Qué TP alcanzaste?</h3>
+            <div className="space-y-3">
+              <button
+                onClick={() => confirmWin(1)}
+                className="w-full py-3 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 rounded-xl font-medium transition-colors"
+              >
+                TP1 (+1.5R)
+              </button>
+              <button
+                onClick={() => confirmWin(2)}
+                className="w-full py-3 bg-emerald-500/30 hover:bg-emerald-500/40 text-emerald-400 rounded-xl font-medium transition-colors"
+              >
+                TP2 (+2.5R)
+              </button>
+              <button
+                onClick={() => confirmWin(3)}
+                className="w-full py-3 bg-emerald-500/40 hover:bg-emerald-500/50 text-emerald-300 rounded-xl font-bold transition-colors"
+              >
+                TP3 (+3.5R) 🏆
+              </button>
+            </div>
+            <button
+              onClick={() => setTpDialog({ open: false, signalId: null })}
+              className="w-full mt-4 py-2 text-white/40 hover:text-white/60 text-sm transition-colors"
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
       
       {showPricing && (
         <Pricing user={user} subscription={subscription} onClose={() => setShowPricing(false)} />

@@ -32,6 +32,7 @@ import OpenAI from 'openai';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import ReportsManager from './reports-manager.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -502,6 +503,13 @@ if (SUPABASE_URL && SUPABASE_SERVICE_KEY) {
   console.log('⚠️ Supabase no configurado - usando memoria local');
   console.log('   SUPABASE_URL:', SUPABASE_URL ? 'OK' : 'MISSING');
   console.log('   SUPABASE_SERVICE_ROLE_KEY:', SUPABASE_SERVICE_KEY ? 'OK' : 'MISSING');
+}
+
+// Inicializar módulo de reportes
+let reportsManager = null;
+if (supabase) {
+  reportsManager = new ReportsManager(supabase);
+  console.log('✅ Módulo de Reportes activado');
 }
 
 // Almacenamiento en memoria (fallback cuando no hay Supabase)
@@ -3987,12 +3995,114 @@ app.get('/api/analyze/:symbol', (req, res) => {
 
 app.get('/api/signals', (req, res) => res.json({ signals: signalHistory, stats }));
 
-app.put('/api/signals/:id', (req, res) => {
+app.put('/api/signals/:id', async (req, res) => {
   const id = parseInt(req.params.id);
   const signal = signalHistory.find(s => s.id === id);
   if (!signal) return res.status(404).json({ error: 'Not found' });
-  closeSignal(id, req.body.status, signal.symbol);
+  
+  const { status, userId, tpHit } = req.body;
+  closeSignal(id, status, signal.symbol);
+  
+  // Guardar en módulo de reportes si está disponible
+  if (reportsManager && userId) {
+    try {
+      // Obtener datos del usuario para el plan
+      const subscription = await getUserSubscription(userId);
+      
+      await reportsManager.recordTrade(userId, {
+        signalId: signal.id.toString(),
+        symbol: signal.symbol,
+        assetName: signal.assetName || signal.symbol,
+        action: signal.action,
+        model: signal.model,
+        score: signal.score,
+        entryPrice: signal.entry,
+        stopLoss: signal.stop,
+        tp1: signal.tp1,
+        tp2: signal.tp2,
+        tp3: signal.tp3,
+        result: status, // 'WIN' or 'LOSS'
+        closePrice: status === 'WIN' ? (tpHit === 3 ? signal.tp3 : tpHit === 2 ? signal.tp2 : signal.tp1) : signal.stop,
+        tpHit: status === 'WIN' ? (tpHit || 1) : null,
+        reason: signal.reason,
+        timeframe: 'M5',
+        userPlan: subscription?.plan_name || 'free',
+        signalTime: signal.timestamp
+      });
+      
+      console.log(`📊 Trade guardado en reportes: ${signal.symbol} - ${status}`);
+    } catch (error) {
+      console.error('Error guardando trade en reportes:', error);
+    }
+  }
+  
   res.json({ success: true, signal, stats });
+});
+
+// =============================================
+// API ENDPOINTS - SISTEMA DE REPORTES
+// =============================================
+
+// Obtener resumen del usuario
+app.get('/api/reports/summary/:userId', async (req, res) => {
+  try {
+    if (!reportsManager) {
+      return res.status(503).json({ error: 'Reportes no disponibles' });
+    }
+    
+    const summary = await reportsManager.getUserSummary(req.params.userId);
+    res.json({ success: true, summary });
+  } catch (error) {
+    console.error('Error getting summary:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Obtener reporte por período
+app.get('/api/reports/:userId', async (req, res) => {
+  try {
+    if (!reportsManager) {
+      return res.status(503).json({ error: 'Reportes no disponibles' });
+    }
+    
+    const period = req.query.period || 'all';
+    const report = await reportsManager.getReport(req.params.userId, period);
+    res.json({ success: true, report });
+  } catch (error) {
+    console.error('Error getting report:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Obtener equity curve para gráficas
+app.get('/api/reports/equity/:userId', async (req, res) => {
+  try {
+    if (!reportsManager) {
+      return res.status(503).json({ error: 'Reportes no disponibles' });
+    }
+    
+    const period = req.query.period || 'month';
+    const equityCurve = await reportsManager.getEquityCurve(req.params.userId, period);
+    res.json({ success: true, equityCurve });
+  } catch (error) {
+    console.error('Error getting equity curve:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Registrar trade manualmente (para sincronización)
+app.post('/api/reports/trade', async (req, res) => {
+  try {
+    if (!reportsManager) {
+      return res.status(503).json({ error: 'Reportes no disponibles' });
+    }
+    
+    const trade = await reportsManager.recordTrade(req.body.userId, req.body);
+    res.json({ success: true, trade });
+  } catch (error) {
+    console.error('Error recording trade:', error);
+    res.status(500).json({ error: error.message });
+  }
 });
 
 app.post('/api/ai/chat', async (req, res) => {
