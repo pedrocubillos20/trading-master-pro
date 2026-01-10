@@ -344,6 +344,16 @@ export default function Dashboard({ user, onLogout }) {
     return subscription?.assets || ['stpRNG', '1HZ75V', 'frxXAUUSD', 'frxGBPUSD', 'cryBTCUSD', 'BOOM1000', 'BOOM500', 'CRASH1000', 'CRASH500'];
   }, [subscription?.assets]);
   
+  // Verificar bloqueo nocturno (Premium/Elite tienen acceso 24/7)
+  const isNightBlocked = useMemo(() => {
+    const plan = subscription?.plan;
+    if (plan === 'premium' || plan === 'elite') return false;
+    const now = new Date();
+    const utcHour = now.getUTCHours() + now.getUTCMinutes() / 60;
+    // Horario diurno: 11:00 - 19:00 UTC (6AM - 2PM Colombia)
+    return !(utcHour >= 11 && utcHour < 19);
+  }, [subscription?.plan]);
+  
   useEffect(() => {
     const handleResize = () => {
       const mobile = window.innerWidth < 768;
@@ -481,7 +491,7 @@ export default function Dashboard({ user, onLogout }) {
         <nav className="p-2 space-y-1">
           {[
             { id: 'dashboard', icon: '📊', label: 'Dashboard' },
-            { id: 'signals', icon: '🔔', label: 'Señales IA', badge: pendingSignals.length },
+            { id: 'signals', icon: isNightBlocked ? '🔒' : '🔔', label: 'Señales IA', badge: isNightBlocked ? 0 : pendingSignals.length, locked: isNightBlocked },
             { id: 'chat', icon: '🤖', label: 'Chat ELISA' },
             { id: 'stats', icon: '📈', label: 'Estadísticas' },
             { id: 'history', icon: '📜', label: 'Historial' },
@@ -491,10 +501,11 @@ export default function Dashboard({ user, onLogout }) {
               onClick={() => { setActiveSection(item.id); if (isMobile) setSidebarOpen(false); }}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
                 activeSection === item.id ? 'bg-emerald-500/15 text-emerald-400' : 'text-white/60 hover:bg-white/5'
-              }`}>
+              } ${item.locked ? 'opacity-70' : ''}`}>
               <span>{item.icon}</span>
               <span className="text-sm">{item.label}</span>
-              {item.badge > 0 && (
+              {item.locked && <span className="ml-auto px-1.5 py-0.5 text-[10px] font-medium bg-amber-500/20 text-amber-400 rounded">Cerrado</span>}
+              {item.badge > 0 && !item.locked && (
                 <span className="ml-auto px-1.5 py-0.5 text-[10px] font-bold bg-emerald-500 text-black rounded-full">{item.badge}</span>
               )}
             </button>
@@ -586,7 +597,7 @@ export default function Dashboard({ user, onLogout }) {
           </button>
         )}
         <h2 className="text-sm font-medium text-white capitalize">{activeSection}</h2>
-        <span className="text-[10px] px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded hidden sm:inline">6 Modelos SMC</span>
+        <span className="text-[10px] px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded hidden sm:inline">12 Modelos SMC</span>
       </div>
       
       <div className="flex items-center gap-2 sm:gap-3">
@@ -746,8 +757,23 @@ export default function Dashboard({ user, onLogout }) {
           </div>
         )}
 
-        {/* Señales activas */}
-        {pendingSignals.length > 0 && (
+        {/* Bloqueo nocturno o Señales activas */}
+        {isNightBlocked ? (
+          <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 rounded-xl border border-amber-500/20 p-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-amber-500/20 rounded-full flex items-center justify-center">
+                <span className="text-xl">🔒</span>
+              </div>
+              <div className="flex-1">
+                <p className="text-white font-medium text-sm">Horario Cerrado</p>
+                <p className="text-white/50 text-xs">Disponible 6AM-2PM COL · Premium/Elite: 24/7</p>
+              </div>
+              <button onClick={() => setShowPricing(true)} className="px-3 py-1.5 bg-gradient-to-r from-purple-500 to-pink-500 text-white text-xs font-semibold rounded-lg">
+                Upgrade
+              </button>
+            </div>
+          </div>
+        ) : pendingSignals.length > 0 && (
           <div className="bg-[#0d0d12] rounded-xl border border-white/5 p-4">
             <h3 className="text-white font-medium mb-3 flex items-center gap-2">
               <span>🔔</span> Señales Activas
@@ -776,41 +802,59 @@ export default function Dashboard({ user, onLogout }) {
   // Signals Section
   const SignalsSection = () => (
     <div className="space-y-4">
-      <div className="bg-[#0d0d12] rounded-xl border border-white/5 p-4">
-        <h3 className="text-white font-medium mb-3">📊 Señales Pendientes</h3>
-        <div className="space-y-2 max-h-[60vh] overflow-y-auto">
-          {pendingSignals.length === 0 ? (
-            <div className="text-center py-8 text-white/40">
-              <span className="text-4xl mb-2 block">⏳</span>
-              <p>No hay señales pendientes</p>
-              <p className="text-xs mt-1">Las señales aparecerán aquí cuando se generen</p>
-            </div>
-          ) : (
-            pendingSignals.map(s => (
-              <div key={s.id} className="p-3 rounded-lg border bg-cyan-500/10 border-cyan-500/30">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <span>{s.emoji}</span>
-                    <span className="text-white font-medium">{s.assetName}</span>
-                    <span className={`px-2 py-0.5 text-xs font-bold rounded ${
-                      s.action === 'LONG' ? 'bg-emerald-500 text-black' : 'bg-red-500 text-white'
-                    }`}>{s.action}</span>
-                  </div>
-                  <span className="px-2 py-0.5 text-xs font-medium rounded bg-cyan-500/20 text-cyan-400">PENDING</span>
-                </div>
-                <div className="flex items-center justify-between text-xs text-white/50">
-                  <span>{s.model} · {s.score}%</span>
-                  <span>{new Date(s.timestamp).toLocaleString()}</span>
-                </div>
-                <div className="flex gap-2 mt-2">
-                  <button onClick={() => markSignal(s.id, 'WIN')} className="flex-1 py-1.5 bg-emerald-500/20 text-emerald-400 rounded text-xs hover:bg-emerald-500/30 transition-colors">✓ Win</button>
-                  <button onClick={() => markSignal(s.id, 'LOSS')} className="flex-1 py-1.5 bg-red-500/20 text-red-400 rounded text-xs hover:bg-red-500/30 transition-colors">✗ Loss</button>
-                </div>
-              </div>
-            ))
-          )}
+      {isNightBlocked ? (
+        <div className="bg-gradient-to-br from-slate-900/95 to-slate-800/95 rounded-xl border border-amber-500/30 p-8 text-center">
+          <div className="w-16 h-16 mx-auto mb-4 bg-amber-500/20 rounded-full flex items-center justify-center">
+            <span className="text-3xl">🔒</span>
+          </div>
+          <h3 className="text-xl font-bold text-white mb-2">Horario Cerrado</h3>
+          <p className="text-white/60 mb-4">
+            Señales disponibles: <span className="text-emerald-400">6:00 AM - 2:00 PM</span> (Colombia)
+          </p>
+          <p className="text-white/40 text-sm mb-4">
+            Planes <span className="text-purple-400 font-semibold">Premium</span> y <span className="text-pink-400 font-semibold">Elite</span> tienen acceso 24/7
+          </p>
+          <button onClick={() => setShowPricing(true)} className="px-6 py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white font-semibold rounded-lg hover:opacity-90 transition-opacity">
+            Actualizar Plan
+          </button>
         </div>
-      </div>
+      ) : (
+        <div className="bg-[#0d0d12] rounded-xl border border-white/5 p-4">
+          <h3 className="text-white font-medium mb-3">📊 Señales Pendientes</h3>
+          <div className="space-y-2 max-h-[60vh] overflow-y-auto">
+            {pendingSignals.length === 0 ? (
+              <div className="text-center py-8 text-white/40">
+                <span className="text-4xl mb-2 block">⏳</span>
+                <p>No hay señales pendientes</p>
+                <p className="text-xs mt-1">Las señales aparecerán aquí cuando se generen</p>
+              </div>
+            ) : (
+              pendingSignals.map(s => (
+                <div key={s.id} className="p-3 rounded-lg border bg-cyan-500/10 border-cyan-500/30">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <span>{s.emoji}</span>
+                      <span className="text-white font-medium">{s.assetName}</span>
+                      <span className={`px-2 py-0.5 text-xs font-bold rounded ${
+                        s.action === 'LONG' ? 'bg-emerald-500 text-black' : 'bg-red-500 text-white'
+                      }`}>{s.action}</span>
+                    </div>
+                    <span className="px-2 py-0.5 text-xs font-medium rounded bg-cyan-500/20 text-cyan-400">PENDING</span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-white/50">
+                    <span>{s.model} · {s.score}%</span>
+                    <span>{new Date(s.timestamp).toLocaleString()}</span>
+                  </div>
+                  <div className="flex gap-2 mt-2">
+                    <button onClick={() => markSignal(s.id, 'WIN')} className="flex-1 py-1.5 bg-emerald-500/20 text-emerald-400 rounded text-xs hover:bg-emerald-500/30 transition-colors">✓ Win</button>
+                    <button onClick={() => markSignal(s.id, 'LOSS')} className="flex-1 py-1.5 bg-red-500/20 text-red-400 rounded text-xs hover:bg-red-500/30 transition-colors">✗ Loss</button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 

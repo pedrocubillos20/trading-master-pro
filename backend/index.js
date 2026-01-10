@@ -2985,7 +2985,7 @@ const Elisa = {
       r += `🧠 **"Psicotrading"** - Control emocional y mentalidad ganadora\n`;
       r += `📋 **"Plan de trading"** - Cómo crear tu estrategia personal\n`;
       r += `🎮 **"Simulador"** - Practica sin arriesgar dinero real\n`;
-      r += `📊 **"Patrones SMC"** - Los 6 modelos que uso para operar\n`;
+      r += `📊 **"Patrones SMC"** - Los 12 modelos que uso para operar\n`;
       r += `📝 **"Control operaciones"** - Gestión de riesgo diario\n\n`;
       r += `💡 *Recuerda: Máximo 10 operaciones diarias para no sobreoperar.*\n\n`;
       r += `¿Qué tema te gustaría aprender hoy? 🎯`;
@@ -3215,13 +3215,12 @@ EXPERTISE - SOLO SMC PURO (NO usas RSI, MACD, EMA ni indicadores):
 - BOS (Break of Structure)
 - CHoCH (Change of Character)
 
-TUS 6 MODELOS SMC:
-1. MTF Confluence (95pts) - H1+M5 alineados + pullback a zona
-2. CHoCH Pullback (85-90pts) - Cambio de carácter + pullback
-3. Liquidity Sweep (82pts) - Barrido de stops + reversión
-4. BOS Continuation (80pts) - Ruptura de estructura + pullback
-5. Zone Touch (78pts) - Toque de Order Block con rechazo
-6. FVG Entry (77pts) - Precio llena Fair Value Gap
+TUS 12 MODELOS SMC:
+🏆 TIER S (95pts): 1. MTF_CONFLUENCE - H1+M5 alineados + OB
+⭐ TIER A (85-92pts): 2. CHOCH_PULLBACK, 3. LIQUIDITY_GRAB, 4. OB_ENTRY, 5. FVG_ENTRY
+✅ TIER B (78-85pts): 6. BOS_CONTINUATION, 7. BREAKER_BLOCK, 8. MITIGATION_BLOCK
+📊 TIER C (72-78pts): 9. EQH_EQL, 10. SWING_FAILURE
+🚀 ESPECIALES: 11. BOOM_SPIKE, 12. CRASH_SPIKE
 
 MÓDULO MENTOR (si preguntan sobre aprender):
 - Di "mentor" para ver el menú de la academia
