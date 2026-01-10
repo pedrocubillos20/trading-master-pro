@@ -113,6 +113,7 @@
             padding: 4px;
             margin: 0 auto 30px;
             position: relative;
+            box-shadow: 0 0 60px rgba(16, 185, 129, 0.4);
         }
         
         .elisa-avatar img {
@@ -121,6 +122,17 @@
             border-radius: 50%;
             object-fit: cover;
             background: var(--dark);
+        }
+        
+        .elisa-avatar-fallback {
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--emerald), var(--cyan));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 3rem;
         }
         
         .elisa-avatar::after {
@@ -551,8 +563,15 @@
     <section class="hero">
         <div class="container">
             <div class="elisa-avatar">
-                <img src="/elisa.png" alt="ELISA - IA Trading Expert">
+                <img src="../elisa.png" alt="ELISA - IA Trading Expert" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                <div class="elisa-avatar-fallback" style="display: none;">🤖</div>
             </div>
+            
+            <!-- Free Trial Badge -->
+            <div style="display: inline-block; background: linear-gradient(135deg, var(--emerald), var(--cyan)); color: black; padding: 10px 25px; border-radius: 100px; font-weight: 700; margin-bottom: 25px; animation: pulse 2s infinite;">
+                🎁 5 DÍAS GRATIS - Prueba sin compromiso
+            </div>
+            
             <h1>ELISA - Tu Asistente de Trading IA</h1>
             <p>Sistema inteligente con 12 modelos SMC que analiza el mercado 24/7 y te envía señales de alta probabilidad en tiempo real.</p>
             
@@ -563,7 +582,7 @@
                 <div class="badge"><span>🤖</span> IA Avanzada</div>
             </div>
             
-            <a href="https://trading-master-pro.vercel.app" class="cta-btn">Comenzar Ahora →</a>
+            <a href="https://trading-master-pro.vercel.app" class="cta-btn">🎁 Comenzar Gratis →</a>
         </div>
     </section>
 
@@ -820,7 +839,7 @@
     <section class="section" id="pricing">
         <div class="container">
             <h2 class="section-title">Planes y Precios</h2>
-            <p class="section-subtitle">Elige el plan que mejor se adapte a tu nivel de trading</p>
+            <p class="section-subtitle">5 días de prueba gratis en todos los planes. Sin tarjeta de crédito.</p>
             
             <div class="pricing-grid">
                 <div class="price-card">
@@ -836,7 +855,7 @@
                         <li>Horario: 6AM-2PM COL</li>
                         <li>Soporte por email</li>
                     </ul>
-                    <a href="https://trading-master-pro.vercel.app" class="price-btn price-btn-secondary">Comenzar</a>
+                    <a href="https://trading-master-pro.vercel.app" class="price-btn price-btn-secondary">Probar 5 Días Gratis</a>
                 </div>
                 
                 <div class="price-card popular">
@@ -854,7 +873,7 @@
                         <li>Alertas Telegram</li>
                         <li>Soporte por chat</li>
                     </ul>
-                    <a href="https://trading-master-pro.vercel.app" class="price-btn price-btn-primary">Elegir Plan</a>
+                    <a href="https://trading-master-pro.vercel.app" class="price-btn price-btn-primary">🎁 Probar 5 Días Gratis</a>
                 </div>
                 
                 <div class="price-card">
@@ -872,7 +891,7 @@
                         <li>Canal privado Telegram</li>
                         <li>Soporte prioritario</li>
                     </ul>
-                    <a href="https://trading-master-pro.vercel.app" class="price-btn price-btn-secondary">Elegir Plan</a>
+                    <a href="https://trading-master-pro.vercel.app" class="price-btn price-btn-secondary">Probar 5 Días Gratis</a>
                 </div>
             </div>
         </div>
@@ -882,11 +901,15 @@
     <section class="section" style="text-align: center; padding: 100px 0;">
         <div class="container">
             <div class="elisa-avatar" style="margin-bottom: 30px;">
-                <img src="/elisa.png" alt="ELISA">
+                <img src="../elisa.png" alt="ELISA" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                <div class="elisa-avatar-fallback" style="display: none;">🤖</div>
+            </div>
+            <div style="display: inline-block; background: linear-gradient(135deg, var(--emerald), var(--cyan)); color: black; padding: 10px 25px; border-radius: 100px; font-weight: 700; margin-bottom: 25px;">
+                🎁 5 DÍAS GRATIS
             </div>
             <h2 style="font-size: 2.5rem; margin-bottom: 20px;">¿Listo para operar con ELISA?</h2>
-            <p style="color: rgba(255,255,255,0.6); max-width: 500px; margin: 0 auto 40px;">Únete a traders que ya usan nuestro sistema de señales SMC con IA para mejorar sus resultados.</p>
-            <a href="https://trading-master-pro.vercel.app" class="cta-btn" style="font-size: 1.1rem; padding: 16px 40px;">Comenzar Ahora →</a>
+            <p style="color: rgba(255,255,255,0.6); max-width: 500px; margin: 0 auto 40px;">Prueba gratis por 5 días. Sin tarjeta de crédito. Cancela cuando quieras.</p>
+            <a href="https://trading-master-pro.vercel.app" class="cta-btn" style="font-size: 1.1rem; padding: 16px 40px;">Comenzar Gratis →</a>
         </div>
     </section>
 
