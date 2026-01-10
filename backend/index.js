@@ -511,22 +511,50 @@ const memoryStore = {
 
 // =============================================
 // FUNCIONES DE SUSCRIPCIÓN - ESTRUCTURA NUEVA
-// Columnas: id, email, plan, estado, periodo, created_at, updated_at, trial_ends_at
+// Columnas: id, email, plan, estado, periodo, created_at, updated_at, trial_ends_at, subscription_ends_at
 // =============================================
 
-// Función para calcular días restantes del trial
-function calculateTrialDaysLeft(createdAt, trialEndsAt) {
-  if (trialEndsAt) {
+// Días por periodo
+const PERIOD_DAYS = {
+  mensual: 30,
+  semestral: 180,
+  anual: 365
+};
+
+// Función para calcular días restantes de cualquier suscripción
+function calculateDaysLeft(subscriptionEndsAt, trialEndsAt, estado, periodo) {
+  const now = new Date();
+  
+  // Si es trial, usar trial_ends_at
+  if (estado === 'trial' && trialEndsAt) {
     const ends = new Date(trialEndsAt);
-    const now = new Date();
     const diffDays = Math.ceil((ends - now) / (1000 * 60 * 60 * 24));
     return Math.max(0, diffDays);
   }
-  if (!createdAt) return 5;
-  const created = new Date(createdAt);
-  const now = new Date();
-  const diffDays = Math.floor((now - created) / (1000 * 60 * 60 * 24));
-  return Math.max(0, 5 - diffDays);
+  
+  // Si tiene fecha de vencimiento de suscripción
+  if (subscriptionEndsAt) {
+    const ends = new Date(subscriptionEndsAt);
+    const diffDays = Math.ceil((ends - now) / (1000 * 60 * 60 * 24));
+    return Math.max(0, diffDays);
+  }
+  
+  return 0;
+}
+
+// Función para verificar si la suscripción está activa
+function isSubscriptionActive(estado, daysLeft) {
+  if (estado === 'expired') return false;
+  if (daysLeft <= 0) return false;
+  return true;
+}
+
+// Función para calcular fecha de vencimiento al activar plan
+function calculateExpirationDate(periodo) {
+  const days = PERIOD_DAYS[periodo] || 30;
+  const expirationDate = new Date();
+  expirationDate.setDate(expirationDate.getDate() + days);
+  return expirationDate.toISOString();
 }
 
 async function getSubscription(userId) {
@@ -544,18 +572,38 @@ async function getSubscription(userId) {
       }
       
       if (data) {
-        const trialDaysLeft = (data.estado === 'trial') 
-          ? calculateTrialDaysLeft(data.created_at, data.trial_ends_at)
-          : null;
+        // Calcular días restantes
+        const daysLeft = calculateDaysLeft(
+          data.subscription_ends_at, 
+          data.trial_ends_at, 
+          data.estado, 
+          data.periodo
+        );
+        
+        // Verificar si está activa
+        const isActive = isSubscriptionActive(data.estado, daysLeft);
+        
+        // Si expiró, marcar como expired
+        let estado = data.estado;
+        if (!isActive && estado !== 'expired' && daysLeft <= 0) {
+          estado = 'expired';
+          // Actualizar en DB
+          await supabase
+            .from('suscripciones')
+            .update({ estado: 'expired', updated_at: new Date().toISOString() })
+            .eq('email', userId);
+        }
         
         return {
           id: data.id,
           email: data.email,
           plan: data.plan || 'free',
-          estado: data.estado || 'trial',
+          estado: estado,
           periodo: data.periodo || 'mensual',
           trial_ends_at: data.trial_ends_at,
-          trial_days_left: trialDaysLeft,
+          subscription_ends_at: data.subscription_ends_at,
+          days_left: daysLeft,
+          is_active: isActive,
           created_at: data.created_at,
           updated_at: data.updated_at
         };
@@ -578,7 +626,7 @@ async function saveSubscription(subData) {
       // Verificar si existe
       const { data: existing } = await supabase
         .from('suscripciones')
-        .select('id')
+        .select('*')
         .eq('email', email)
         .single();
       
@@ -595,6 +643,16 @@ async function saveSubscription(subData) {
           updateData.trial_ends_at = subData.trial_ends_at;
         }
         
+        // Si es un plan activo (no trial), calcular fecha de vencimiento
+        if (subData.estado === 'active' && subData.plan !== 'free') {
+          // Si ya tiene fecha de vencimiento y aún es válida, no cambiar
+          // Si no tiene o cambió de periodo, calcular nueva
+          if (!existing.subscription_ends_at || subData.periodo !== existing.periodo || subData.renew) {
+            updateData.subscription_ends_at = calculateExpirationDate(subData.periodo);
+            console.log(`📅 Nueva fecha vencimiento: ${updateData.subscription_ends_at} (${subData.periodo})`);
+          }
+        }
+        
         const result = await supabase
           .from('suscripciones')
           .update(updateData)
@@ -604,7 +662,7 @@ async function saveSubscription(subData) {
         if (result.error) {
           console.log('Supabase update error:', result.error.message);
         } else {
-          console.log(`✅ Suscripción actualizada: ${email} -> ${subData.plan}`);
+          console.log(`✅ Suscripción actualizada: ${email} -> ${subData.plan} (${subData.periodo})`);
         }
         return result;
       } else {
@@ -616,6 +674,11 @@ async function saveSubscription(subData) {
           periodo: subData.periodo || 'mensual'
         };
         
+        // Si es plan activo, calcular fecha de vencimiento
+        if (subData.estado === 'active' && subData.plan !== 'free') {
+          insertData.subscription_ends_at = calculateExpirationDate(subData.periodo);
+        }
+        
         // trial_ends_at se establece automáticamente por el trigger
         
         const result = await supabase
@@ -626,7 +689,7 @@ async function saveSubscription(subData) {
         if (result.error) {
           console.log('Supabase insert error:', result.error.message);
         } else {
-          console.log(`✅ Suscripción creada: ${email} -> ${subData.plan}`);
+          console.log(`✅ Suscripción creada: ${email} -> ${subData.plan} (${subData.periodo})`);
         }
         return result;
       }
@@ -637,10 +700,15 @@ async function saveSubscription(subData) {
   }
   
   // Guardar en memoria (fallback)
+  const subscriptionEndsAt = (subData.estado === 'active' && subData.plan !== 'free')
+    ? calculateExpirationDate(subData.periodo)
+    : null;
+    
   memoryStore.subscriptions.set(subData.email, {
     ...subData,
     created_at: subData.created_at || new Date().toISOString(),
-    trial_ends_at: subData.trial_ends_at || new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString()
+    trial_ends_at: subData.trial_ends_at || new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
+    subscription_ends_at: subscriptionEndsAt
   });
   return { data: [subData] };
 }
@@ -660,9 +728,15 @@ async function getAllSubscriptions() {
       
       // Normalizar datos para el admin panel
       return (data || []).map(sub => {
-        const trialDaysLeft = sub.estado === 'trial' 
-          ? calculateTrialDaysLeft(sub.created_at, sub.trial_ends_at) 
-          : null;
+        // Calcular días restantes para cualquier plan
+        const daysLeft = calculateDaysLeft(
+          sub.subscription_ends_at,
+          sub.trial_ends_at,
+          sub.estado,
+          sub.periodo
+        );
+        
+        const isActive = isSubscriptionActive(sub.estado, daysLeft);
         
         return {
           id: sub.id,
@@ -670,8 +744,10 @@ async function getAllSubscriptions() {
           plan: sub.plan || 'free',
           estado: sub.estado || 'trial',
           periodo: sub.periodo || 'mensual',
-          trial_days_left: trialDaysLeft,
+          days_left: daysLeft,
+          is_active: isActive,
           trial_ends_at: sub.trial_ends_at,
+          subscription_ends_at: sub.subscription_ends_at,
           created_at: sub.created_at
         };
       });
@@ -712,8 +788,8 @@ async function deleteSubscription(userId) {
 const PLANS = {
   free: {
     name: 'Free Trial',
-    // Durante el trial FREE, tiene acceso a TODO (5 días)
-    assets: ['stpRNG', 'R_75', 'frxXAUUSD', 'frxGBPUSD', 'cryBTCUSD', 'BOOM1000', 'BOOM500', 'CRASH1000', 'CRASH500'],
+    // FREE: Solo Step Index y Oro durante 5 días
+    assets: ['stpRNG', 'frxXAUUSD'],
     duration: 5, // días
     price: 0
   },
@@ -1121,7 +1197,10 @@ const SMC = {
       
       // ✅ SETUP VÁLIDO PARA BOOM
       const entry = lastCandle.close;
-      const stop = validZone.low - avgRange * 0.3;
+      // SL DEBAJO del Order Block con margen amplio para aguantar retrocesos
+      const zoneHeight = validZone.high - validZone.low;
+      const slMargin = Math.max(avgRange * 1.2, zoneHeight * 0.5); // El mayor entre 1.2x ATR o 50% de la zona
+      const stop = validZone.low - slMargin;
       const risk = entry - stop;
       
       const recentHighs = swings.filter(s => s.type === 'high').slice(-3);
@@ -1270,7 +1349,10 @@ const SMC = {
       
       // ✅ SETUP VÁLIDO PARA CRASH
       const entry = lastCandle.close;
-      const stop = validZone.high + avgRange * 0.3;
+      // SL ENCIMA del Order Block con margen amplio para aguantar retrocesos
+      const zoneHeight = validZone.high - validZone.low;
+      const slMargin = Math.max(avgRange * 1.2, zoneHeight * 0.5); // El mayor entre 1.2x ATR o 50% de la zona
+      const stop = validZone.high + slMargin;
       const risk = stop - entry;
       
       const recentLows = swings.filter(s => s.type === 'low').slice(-3);
@@ -3969,7 +4051,24 @@ app.get('/api/subscription/:userId', async (req, res) => {
     const planKey = sub.plan || 'free';
     const plan = PLANS[planKey] || PLANS.free;
     
-    console.log(`✅ Usuario ${userId} tiene plan: ${planKey} (${plan.name})`);
+    // Verificar si el plan está expirado
+    if (!sub.is_active || sub.days_left <= 0) {
+      console.log(`⚠️ Usuario ${userId} plan expirado: ${planKey}`);
+      return res.json({ 
+        subscription: {
+          status: 'expired',
+          plan: planKey,
+          plan_name: `${plan.name} - Expirado`,
+          days_left: 0,
+          assets: [],
+          period: sub.periodo,
+          email: sub.email,
+          message: 'Tu suscripción ha expirado. Renueva para continuar.'
+        }
+      });
+    }
+    
+    console.log(`✅ Usuario ${userId} tiene plan: ${planKey} (${plan.name}) - ${sub.days_left} días restantes`);
     
     return res.json({ 
       subscription: {
@@ -3978,6 +4077,8 @@ app.get('/api/subscription/:userId', async (req, res) => {
         plan_name: plan.name,
         assets: plan.assets,
         period: sub.periodo,
+        days_left: sub.days_left,
+        subscription_ends_at: sub.subscription_ends_at,
         email: sub.email
       }
     });
@@ -4006,8 +4107,10 @@ app.get('/api/admin/users', async (req, res) => {
         plan: planKey,
         plan_name: planInfo.name,
         period: sub.periodo,
-        trial_days_left: sub.trial_days_left,
+        days_left: sub.days_left,
+        is_active: sub.is_active,
         trial_ends_at: sub.trial_ends_at,
+        subscription_ends_at: sub.subscription_ends_at,
         created_at: sub.created_at
       };
     });
@@ -4015,10 +4118,10 @@ app.get('/api/admin/users', async (req, res) => {
     const total = users.length;
     const trial = users.filter(u => u.status === 'trial').length;
     const active = users.filter(u => u.status === 'active').length;
-    const expired = users.filter(u => u.status === 'expired').length;
-    const basico = users.filter(u => u.plan === 'basico').length;
-    const premium = users.filter(u => u.plan === 'premium').length;
-    const elite = users.filter(u => u.plan === 'elite').length;
+    const expired = users.filter(u => u.status === 'expired' || (u.days_left !== undefined && u.days_left <= 0)).length;
+    const basico = users.filter(u => u.plan === 'basico' && u.status === 'active').length;
+    const premium = users.filter(u => u.plan === 'premium' && u.status === 'active').length;
+    const elite = users.filter(u => u.plan === 'elite' && u.status === 'active').length;
     
     // Calcular ingresos estimados
     const monthlyRevenue = (basico * 29900) + (premium * 59900) + (elite * 99900);

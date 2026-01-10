@@ -379,7 +379,7 @@ export default function AdminPanel() {
                     <th className="text-left p-4 text-white/50 text-xs font-medium">Plan</th>
                     <th className="text-left p-4 text-white/50 text-xs font-medium">Período</th>
                     <th className="text-left p-4 text-white/50 text-xs font-medium">Registro</th>
-                    <th className="text-left p-4 text-white/50 text-xs font-medium">Trial Días</th>
+                    <th className="text-left p-4 text-white/50 text-xs font-medium">Días Restantes</th>
                     <th className="text-left p-4 text-white/50 text-xs font-medium">Acciones</th>
                   </tr>
                 </thead>
@@ -416,8 +416,14 @@ export default function AdminPanel() {
                         {formatDate(user.created_at)}
                       </td>
                       <td className="p-4 text-white/60 text-sm">
-                        {user.trial_days_left !== null && user.trial_days_left !== undefined
-                          ? <span className={user.trial_days_left <= 1 ? 'text-red-400' : 'text-amber-400'}>{user.trial_days_left} días</span>
+                        {user.days_left !== null && user.days_left !== undefined
+                          ? <span className={`font-medium ${
+                              user.days_left <= 0 ? 'text-red-400' : 
+                              user.days_left <= 5 ? 'text-red-400' : 
+                              user.days_left <= 10 ? 'text-amber-400' : 'text-emerald-400'
+                            }`}>
+                              {user.days_left <= 0 ? 'Expirado' : `${user.days_left} días`}
+                            </span>
                           : '-'
                         }
                       </td>
@@ -503,9 +509,9 @@ export default function AdminPanel() {
             <button 
               onClick={() => {
                 const csv = [
-                  'Email,Estado,Plan,Periodo,Registro,Dias Trial',
+                  'Email,Estado,Plan,Periodo,Registro,Dias Restantes',
                   ...users.map(u => 
-                    `${u.email},${u.status || u.estado},${u.plan},${u.period || u.periodo},${u.created_at || '-'},${u.trial_days_left || '-'}`
+                    `${u.email},${u.status || u.estado},${u.plan},${u.period || u.periodo},${u.created_at || '-'},${u.days_left !== undefined ? u.days_left : '-'}`
                   )
                 ].join('\n');
                 

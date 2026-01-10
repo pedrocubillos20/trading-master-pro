@@ -457,15 +457,22 @@ export default function Dashboard({ user, onLogout }) {
             subscription?.status === 'trial' ? 'bg-amber-500/20' : 
             subscription?.status === 'expired' ? 'bg-red-500/20' : 'bg-emerald-500/20'
           }`}>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center justify-between">
               <span className={`text-xs font-bold px-2 py-0.5 rounded ${
                 subscription?.status === 'trial' ? 'bg-amber-500 text-black' : 
                 subscription?.status === 'expired' ? 'bg-red-500 text-white' : 'bg-emerald-500 text-black'
               }`}>
-                {subscription?.status === 'trial' ? 'FREE' : subscription?.plan_name?.toUpperCase() || 'ACTIVE'}
+                {subscription?.status === 'trial' ? 'FREE' : 
+                 subscription?.status === 'expired' ? 'EXPIRADO' :
+                 subscription?.plan_name?.toUpperCase() || 'ACTIVE'}
               </span>
-              {subscription?.status === 'trial' && subscription?.days_left && (
-                <span className="text-amber-400 text-xs">{subscription.days_left} días</span>
+              {subscription?.days_left !== undefined && subscription?.days_left !== null && subscription?.status !== 'expired' && (
+                <span className={`text-xs font-medium ${
+                  subscription?.days_left <= 5 ? 'text-red-400' : 
+                  subscription?.days_left <= 10 ? 'text-amber-400' : 'text-emerald-400'
+                }`}>
+                  {subscription.days_left} días
+                </span>
               )}
             </div>
           </div>
@@ -478,6 +485,7 @@ export default function Dashboard({ user, onLogout }) {
             { id: 'chat', icon: '🤖', label: 'Chat ELISA' },
             { id: 'stats', icon: '📈', label: 'Estadísticas' },
             { id: 'history', icon: '📜', label: 'Historial' },
+            { id: 'download', icon: '📱', label: 'Descargar App' },
           ].map(item => (
             <button key={item.id}
               onClick={() => { setActiveSection(item.id); if (isMobile) setSidebarOpen(false); }}
@@ -654,8 +662,8 @@ export default function Dashboard({ user, onLogout }) {
             <p className="text-2xl font-bold text-emerald-400">{data?.stats?.wins || 0}</p>
           </div>
           <div className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
-            <p className="text-white/40 text-xs mb-1">TP3 Hits</p>
-            <p className="text-2xl font-bold text-purple-400">{data?.stats?.tp3Hits || 0}</p>
+            <p className="text-white/40 text-xs mb-1">Loss</p>
+            <p className="text-2xl font-bold text-red-400">{data?.stats?.losses || 0}</p>
           </div>
         </div>
 
@@ -946,6 +954,112 @@ export default function Dashboard({ user, onLogout }) {
           {activeSection === 'signals' && <SignalsSection />}
           {activeSection === 'stats' && <StatsSection />}
           {activeSection === 'history' && <HistorySection />}
+          {activeSection === 'download' && (
+            <div className="space-y-4">
+              <div className="bg-[#0d0d12] rounded-xl border border-white/5 p-6">
+                <h2 className="text-xl font-bold text-white mb-2">📱 Descargar App</h2>
+                <p className="text-white/60 text-sm mb-6">Accede a Trading Master Pro desde tu dispositivo móvil o escritorio</p>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Android */}
+                  <div className="bg-gradient-to-br from-emerald-500/10 to-emerald-600/5 rounded-xl border border-emerald-500/20 p-5">
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="w-12 h-12 bg-emerald-500/20 rounded-xl flex items-center justify-center">
+                        <svg className="w-7 h-7 text-emerald-400" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M17.523 2.047a.5.5 0 0 0-.832.025L14.804 5.07a6.93 6.93 0 0 0-5.608 0L7.309 2.072a.5.5 0 0 0-.832-.025.5.5 0 0 0-.046.836L8.14 5.4A6.893 6.893 0 0 0 5 11h14a6.893 6.893 0 0 0-3.14-5.6l1.71-2.517a.5.5 0 0 0-.047-.836zM9 9a1 1 0 1 1 0-2 1 1 0 0 1 0 2zm6 0a1 1 0 1 1 0-2 1 1 0 0 1 0 2zM5 12v8a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-8H5z"/>
+                        </svg>
+                      </div>
+                      <div>
+                        <h3 className="text-white font-semibold">Android</h3>
+                        <p className="text-white/40 text-xs">APK disponible</p>
+                      </div>
+                    </div>
+                    <p className="text-white/60 text-sm mb-4">Descarga la app para tu dispositivo Android. Compatible con Android 7.0+</p>
+                    <a 
+                      href="https://github.com/tu-usuario/trading-master-pro/releases/download/v1.0.0/TradingMasterPro-v1.0.0.apk"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-center gap-2 w-full py-3 bg-emerald-500 hover:bg-emerald-600 text-black font-semibold rounded-lg transition-colors"
+                    >
+                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                      </svg>
+                      Descargar APK
+                    </a>
+                    <p className="text-white/30 text-[10px] mt-2 text-center">Versión 1.0.0 • 5.2 MB</p>
+                  </div>
+
+                  {/* Mac */}
+                  <div className="bg-gradient-to-br from-blue-500/10 to-blue-600/5 rounded-xl border border-blue-500/20 p-5">
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="w-12 h-12 bg-blue-500/20 rounded-xl flex items-center justify-center">
+                        <svg className="w-7 h-7 text-blue-400" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
+                        </svg>
+                      </div>
+                      <div>
+                        <h3 className="text-white font-semibold">macOS</h3>
+                        <p className="text-white/40 text-xs">DMG disponible</p>
+                      </div>
+                    </div>
+                    <p className="text-white/60 text-sm mb-4">Descarga la app para Mac. Compatible con macOS 11.0+ (Intel & Apple Silicon)</p>
+                    <a 
+                      href="https://github.com/tu-usuario/trading-master-pro/releases/download/v1.0.0/TradingMasterPro-v1.0.0.dmg"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-center gap-2 w-full py-3 bg-blue-500 hover:bg-blue-600 text-white font-semibold rounded-lg transition-colors"
+                    >
+                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                      </svg>
+                      Descargar DMG
+                    </a>
+                    <p className="text-white/30 text-[10px] mt-2 text-center">Versión 1.0.0 • 85 MB</p>
+                  </div>
+                </div>
+
+                {/* Windows */}
+                <div className="mt-4 bg-gradient-to-br from-purple-500/10 to-purple-600/5 rounded-xl border border-purple-500/20 p-5">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-12 h-12 bg-purple-500/20 rounded-xl flex items-center justify-center">
+                      <svg className="w-7 h-7 text-purple-400" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M3 12V6.75l6-1.32v6.48L3 12zm6.58.08l-.01 6.67 5.8 1.12V12.16l-5.79.02zm-.58-6.91l-.01 6.46 5.79-.03V5.5l-5.78.74zM9.57 18.75L3 17.88v-5.67l6.57.07v6.47zm10.67-12.3L11.3 4.89v6.77l8.94-.03V6.45zm0 11.33l-8.94 1.69v-6.55l8.94.03v4.83z"/>
+                      </svg>
+                    </div>
+                    <div className="flex-1">
+                      <h3 className="text-white font-semibold">Windows</h3>
+                      <p className="text-white/40 text-xs">Instalador EXE disponible</p>
+                    </div>
+                    <a 
+                      href="https://github.com/tu-usuario/trading-master-pro/releases/download/v1.0.0/TradingMasterPro-Setup-v1.0.0.exe"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-2 px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white font-semibold rounded-lg transition-colors text-sm"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                      </svg>
+                      Descargar EXE
+                    </a>
+                  </div>
+                  <p className="text-white/30 text-[10px]">Versión 1.0.0 • 78 MB • Windows 10/11</p>
+                </div>
+
+                {/* PWA Info */}
+                <div className="mt-6 p-4 bg-white/5 rounded-lg border border-white/10">
+                  <div className="flex items-start gap-3">
+                    <span className="text-2xl">💡</span>
+                    <div>
+                      <h4 className="text-white font-medium mb-1">También puedes instalar desde el navegador</h4>
+                      <p className="text-white/50 text-sm">
+                        En Chrome/Edge, haz clic en el icono de instalación en la barra de direcciones para agregar Trading Master Pro a tu escritorio como una app.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
           {activeSection === 'chat' && (
             <div className="bg-[#0d0d12] rounded-xl border border-white/5 p-6 text-center">
               <p className="text-white/60 mb-4">Usa el botón de Elisa en la esquina inferior derecha para chatear</p>
