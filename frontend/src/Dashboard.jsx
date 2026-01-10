@@ -694,6 +694,26 @@ export default function Dashboard({ user, onLogout }) {
           </div>
         </div>
 
+        {/* ELISA Recommendation Banner */}
+        <div className="bg-gradient-to-r from-emerald-500/10 via-cyan-500/10 to-purple-500/10 rounded-xl border border-emerald-500/20 p-4">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-400 to-cyan-400 flex-shrink-0 flex items-center justify-center">
+              <img src="/elisa.png" alt="ELISA" className="w-full h-full rounded-full object-cover" onError={(e) => { e.target.style.display = 'none'; }} />
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-emerald-400 font-semibold text-sm">ELISA</span>
+                <span className="text-[10px] px-1.5 py-0.5 bg-emerald-500/20 text-emerald-400 rounded">IA Trading Expert</span>
+              </div>
+              <p className="text-white/80 text-sm leading-relaxed">
+                <span className="text-amber-400">⚠️</span> <strong>Recuerda:</strong> No sobreoperes. Máximo <span className="text-emerald-400 font-semibold">2-3 operaciones por día</span>. 
+                Sigue las señales con disciplina, usa el <span className="text-cyan-400">1-2% de tu capital</span> por operación, y respeta siempre el Stop Loss. 
+                <span className="text-purple-400">La constancia genera rentabilidad</span>. 🎯
+              </p>
+            </div>
+          </div>
+        </div>
+
         {/* Chart */}
         <div className="bg-[#0d0d12] rounded-xl border border-white/5 overflow-hidden">
           <div className="p-3 border-b border-white/5 flex items-center justify-between">

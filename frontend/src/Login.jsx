@@ -58,22 +58,39 @@ export default function Login({ supabase, onLogin }) {
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl" />
         <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl" />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-cyan-500/5 rounded-full blur-3xl" />
       </div>
 
       <div className="relative w-full max-w-md">
-        {/* Logo */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-400 to-cyan-400 mb-4">
-            <svg className="w-8 h-8 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-            </svg>
+        {/* ELISA Avatar + Logo */}
+        <div className="text-center mb-6">
+          {/* ELISA Image */}
+          <div className="relative inline-block mb-4">
+            <div className="w-24 h-24 rounded-full bg-gradient-to-br from-emerald-400 via-cyan-400 to-purple-500 p-1 shadow-lg shadow-emerald-500/30">
+              <img 
+                src="/elisa.png" 
+                alt="ELISA - IA Trading Expert" 
+                className="w-full h-full rounded-full object-cover bg-[#0a0a0f]"
+                onError={(e) => {
+                  e.target.style.display = 'none';
+                  e.target.nextSibling.style.display = 'flex';
+                }}
+              />
+              <div className="w-full h-full rounded-full bg-gradient-to-br from-emerald-500 to-cyan-500 items-center justify-center text-3xl hidden">
+                🤖
+              </div>
+            </div>
+            {/* Online indicator */}
+            <div className="absolute bottom-1 right-1 w-4 h-4 bg-emerald-400 rounded-full border-2 border-[#06060a] animate-pulse" />
           </div>
+          
           <h1 className="text-2xl font-bold text-white mb-1">Trading Master Pro</h1>
-          <p className="text-white/50 text-sm">Plataforma exclusiva para afiliados</p>
+          <p className="text-emerald-400 text-sm font-medium">ELISA - IA Trading Expert</p>
+          <p className="text-white/40 text-xs mt-1">12 Modelos SMC · Señales en Tiempo Real</p>
         </div>
 
         {/* Card */}
-        <div className="bg-[#0d0d12] rounded-2xl border border-white/10 p-6 shadow-2xl">
+        <div className="bg-[#0d0d12] rounded-2xl border border-white/10 p-6 shadow-2xl backdrop-blur-sm">
           <h2 className="text-xl font-semibold text-white mb-6 text-center">
             {mode === 'login' ? 'Iniciar Sesión' : 'Crear Cuenta'}
           </h2>
@@ -153,9 +170,25 @@ export default function Login({ supabase, onLogin }) {
           </div>
         </div>
 
+        {/* Features mini */}
+        <div className="mt-6 grid grid-cols-3 gap-3 text-center">
+          <div className="bg-white/5 rounded-xl p-3">
+            <span className="text-xl">🎯</span>
+            <p className="text-white/60 text-[10px] mt-1">12 Modelos</p>
+          </div>
+          <div className="bg-white/5 rounded-xl p-3">
+            <span className="text-xl">📊</span>
+            <p className="text-white/60 text-[10px] mt-1">17 Mercados</p>
+          </div>
+          <div className="bg-white/5 rounded-xl p-3">
+            <span className="text-xl">🤖</span>
+            <p className="text-white/60 text-[10px] mt-1">IA ELISA</p>
+          </div>
+        </div>
+
         {/* Footer */}
         <p className="text-center text-white/30 text-xs mt-6">
-          © 2024 Trading Master Pro. Todos los derechos reservados.
+          © 2026 Trading Master Pro. Todos los derechos reservados.
         </p>
       </div>
     </div>

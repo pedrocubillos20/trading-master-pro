@@ -3,59 +3,49 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Trading Master Pro - Señales SMC con Inteligencia Artificial</title>
-    <meta name="description" content="Plataforma de señales de trading con Smart Money Concepts y asistente IA. Prueba gratis 5 días.">
+    <title>ELISA IA - Trading Master Pro | Señales SMC en Tiempo Real</title>
+    <meta name="description" content="ELISA es tu asistente de IA para trading. 12 modelos SMC, 17 mercados, señales en tiempo real. Aprende a operar con disciplina.">
     
-    <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         
         :root {
             --emerald: #10b981;
-            --emerald-dark: #059669;
+            --cyan: #06b6d4;
             --purple: #8b5cf6;
             --pink: #ec4899;
             --dark: #06060a;
-            --dark-card: #0d0d14;
-            --dark-border: #1a1a2e;
+            --card: #0d0d12;
         }
         
-        html {
-            scroll-behavior: smooth;
-        }
+        html { scroll-behavior: smooth; }
         
         body {
             font-family: 'Inter', sans-serif;
             background: var(--dark);
-            color: #fff;
-            line-height: 1.6;
-            overflow-x: hidden;
+            color: #e2e8f0;
+            line-height: 1.7;
         }
         
-        /* Navbar */
-        .navbar {
+        .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+        
+        /* Header */
+        header {
             position: fixed;
             top: 0;
             left: 0;
             right: 0;
-            z-index: 1000;
-            padding: 1rem 2rem;
             background: rgba(6, 6, 10, 0.9);
             backdrop-filter: blur(20px);
             border-bottom: 1px solid rgba(255,255,255,0.05);
+            z-index: 100;
+            padding: 15px 0;
         }
         
-        .navbar-content {
-            max-width: 1200px;
-            margin: 0 auto;
+        .header-content {
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -64,128 +54,85 @@
         .logo {
             display: flex;
             align-items: center;
-            gap: 10px;
-            font-weight: 800;
-            font-size: 1.5rem;
+            gap: 12px;
         }
         
         .logo-icon {
             width: 40px;
             height: 40px;
-            background: linear-gradient(135deg, var(--emerald), var(--purple));
+            background: linear-gradient(135deg, var(--emerald), var(--cyan));
             border-radius: 12px;
             display: flex;
             align-items: center;
             justify-content: center;
+        }
+        
+        .logo-text {
+            font-weight: 700;
             font-size: 1.2rem;
+            color: white;
         }
         
-        .nav-links {
-            display: flex;
-            gap: 2rem;
-            align-items: center;
-        }
-        
-        .nav-links a {
-            color: rgba(255,255,255,0.7);
-            text-decoration: none;
-            font-weight: 500;
-            transition: color 0.3s;
-        }
-        
-        .nav-links a:hover {
-            color: var(--emerald);
-        }
-        
-        .btn {
-            padding: 12px 28px;
+        .cta-btn {
+            background: linear-gradient(135deg, var(--emerald), var(--cyan));
+            color: black;
+            padding: 12px 24px;
             border-radius: 12px;
             font-weight: 600;
             text-decoration: none;
             transition: all 0.3s;
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            cursor: pointer;
-            border: none;
-            font-size: 1rem;
         }
         
-        .btn-primary {
-            background: linear-gradient(135deg, var(--emerald), var(--emerald-dark));
-            color: #000;
-            box-shadow: 0 4px 20px rgba(16, 185, 129, 0.3);
-        }
+        .cta-btn:hover { transform: translateY(-2px); box-shadow: 0 10px 40px rgba(16, 185, 129, 0.3); }
         
-        .btn-primary:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 30px rgba(16, 185, 129, 0.4);
-        }
-        
-        .btn-secondary {
-            background: rgba(255,255,255,0.1);
-            color: #fff;
-            border: 1px solid rgba(255,255,255,0.2);
-        }
-        
-        .btn-secondary:hover {
-            background: rgba(255,255,255,0.15);
-        }
-        
-        .btn-large {
-            padding: 18px 40px;
-            font-size: 1.1rem;
-            border-radius: 16px;
-        }
-        
-        /* Hero Section */
+        /* Hero */
         .hero {
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            padding: 120px 2rem 80px;
+            padding: 150px 0 80px;
+            text-align: center;
             position: relative;
             overflow: hidden;
         }
         
-        .hero-bg {
+        .hero::before {
+            content: '';
             position: absolute;
             top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: 
-                radial-gradient(ellipse at 20% 20%, rgba(16, 185, 129, 0.15) 0%, transparent 50%),
-                radial-gradient(ellipse at 80% 80%, rgba(139, 92, 246, 0.15) 0%, transparent 50%),
-                radial-gradient(ellipse at 50% 50%, rgba(236, 72, 153, 0.1) 0%, transparent 50%);
-            z-index: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 800px;
+            height: 800px;
+            background: radial-gradient(circle, rgba(16, 185, 129, 0.1) 0%, transparent 70%);
+            pointer-events: none;
         }
         
-        .hero-content {
-            max-width: 1200px;
-            margin: 0 auto;
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 4rem;
-            align-items: center;
+        .elisa-avatar {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--emerald), var(--cyan), var(--purple));
+            padding: 4px;
+            margin: 0 auto 30px;
             position: relative;
-            z-index: 1;
         }
         
-        .hero-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            background: rgba(16, 185, 129, 0.1);
-            border: 1px solid rgba(16, 185, 129, 0.3);
-            padding: 8px 16px;
-            border-radius: 100px;
-            font-size: 0.9rem;
-            color: var(--emerald);
-            margin-bottom: 1.5rem;
+        .elisa-avatar img {
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            object-fit: cover;
+            background: var(--dark);
         }
         
-        .hero-badge span {
+        .elisa-avatar::after {
+            content: '';
+            position: absolute;
+            bottom: 8px;
+            right: 8px;
+            width: 20px;
+            height: 20px;
+            background: #10b981;
+            border-radius: 50%;
+            border: 3px solid var(--dark);
             animation: pulse 2s infinite;
         }
         
@@ -195,446 +142,282 @@
         }
         
         .hero h1 {
-            font-size: 3.5rem;
+            font-size: clamp(2rem, 5vw, 3.5rem);
             font-weight: 800;
-            line-height: 1.1;
-            margin-bottom: 1.5rem;
-        }
-        
-        .hero h1 .gradient {
-            background: linear-gradient(135deg, var(--emerald), var(--purple));
+            margin-bottom: 20px;
+            background: linear-gradient(135deg, #fff 0%, #10b981 50%, #06b6d4 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
-            background-clip: text;
         }
         
         .hero p {
-            font-size: 1.25rem;
-            color: rgba(255,255,255,0.7);
-            margin-bottom: 2rem;
-            max-width: 500px;
+            font-size: 1.2rem;
+            color: rgba(255,255,255,0.6);
+            max-width: 600px;
+            margin: 0 auto 40px;
         }
         
-        .hero-buttons {
+        .hero-badges {
             display: flex;
-            gap: 1rem;
+            justify-content: center;
+            gap: 15px;
             flex-wrap: wrap;
+            margin-bottom: 40px;
         }
         
-        .hero-stats {
-            display: flex;
-            gap: 2rem;
-            margin-top: 3rem;
-            padding-top: 2rem;
-            border-top: 1px solid rgba(255,255,255,0.1);
+        .badge {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            padding: 10px 20px;
+            border-radius: 100px;
+            font-size: 0.9rem;
         }
         
-        .stat {
+        .badge span { margin-right: 8px; }
+        
+        /* Stats */
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            padding: 60px 0;
+        }
+        
+        .stat-card {
+            background: var(--card);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 20px;
+            padding: 30px;
             text-align: center;
         }
         
-        .stat-value {
-            font-size: 2rem;
+        .stat-number {
+            font-size: 3rem;
             font-weight: 800;
-            color: var(--emerald);
+            background: linear-gradient(135deg, var(--emerald), var(--cyan));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
         }
         
         .stat-label {
-            font-size: 0.85rem;
             color: rgba(255,255,255,0.5);
-        }
-        
-        .hero-image {
-            position: relative;
-        }
-        
-        .dashboard-preview {
-            width: 100%;
-            border-radius: 20px;
-            box-shadow: 
-                0 25px 50px -12px rgba(0, 0, 0, 0.5),
-                0 0 0 1px rgba(255,255,255,0.1);
-            transform: perspective(1000px) rotateY(-5deg) rotateX(5deg);
-            transition: transform 0.5s;
-        }
-        
-        .dashboard-preview:hover {
-            transform: perspective(1000px) rotateY(0deg) rotateX(0deg);
-        }
-        
-        .floating-card {
-            position: absolute;
-            background: var(--dark-card);
-            border: 1px solid var(--dark-border);
-            border-radius: 16px;
-            padding: 16px 20px;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.3);
-            animation: float 3s ease-in-out infinite;
-        }
-        
-        .floating-card.signal {
-            top: 10%;
-            right: -20px;
-            animation-delay: 0s;
-        }
-        
-        .floating-card.elisa {
-            bottom: 15%;
-            left: -30px;
-            animation-delay: 1s;
-        }
-        
-        @keyframes float {
-            0%, 100% { transform: translateY(0); }
-            50% { transform: translateY(-10px); }
-        }
-        
-        .signal-card-content {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-        
-        .signal-badge {
-            background: var(--emerald);
-            color: #000;
-            padding: 4px 10px;
-            border-radius: 6px;
-            font-weight: 700;
-            font-size: 0.8rem;
-        }
-        
-        .signal-badge.short {
-            background: #ef4444;
-            color: #fff;
-        }
-        
-        .signal-info {
-            font-size: 0.85rem;
-        }
-        
-        .signal-asset {
-            font-weight: 600;
-        }
-        
-        .signal-score {
-            color: var(--emerald);
-            font-weight: 700;
-        }
-        
-        .elisa-card-content {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-        
-        .elisa-avatar {
-            width: 40px;
-            height: 40px;
-            background: linear-gradient(135deg, var(--pink), var(--purple));
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.2rem;
-        }
-        
-        .elisa-text {
-            font-size: 0.85rem;
-        }
-        
-        .elisa-name {
-            font-weight: 600;
-            color: var(--pink);
-        }
-        
-        /* Features Section */
-        .features {
-            padding: 100px 2rem;
-            background: linear-gradient(180deg, transparent, rgba(16, 185, 129, 0.02));
-        }
-        
-        .section-header {
-            text-align: center;
-            max-width: 700px;
-            margin: 0 auto 4rem;
-        }
-        
-        .section-tag {
-            color: var(--emerald);
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 2px;
-            font-size: 0.85rem;
-            margin-bottom: 1rem;
-        }
-        
-        .section-title {
-            font-size: 2.5rem;
-            font-weight: 800;
-            margin-bottom: 1rem;
-        }
-        
-        .section-desc {
-            color: rgba(255,255,255,0.6);
-            font-size: 1.1rem;
-        }
-        
-        .features-grid {
-            max-width: 1200px;
-            margin: 0 auto;
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 2rem;
-        }
-        
-        .feature-card {
-            background: var(--dark-card);
-            border: 1px solid var(--dark-border);
-            border-radius: 20px;
-            padding: 2rem;
-            transition: all 0.3s;
-        }
-        
-        .feature-card:hover {
-            transform: translateY(-5px);
-            border-color: var(--emerald);
-            box-shadow: 0 20px 40px rgba(16, 185, 129, 0.1);
-        }
-        
-        .feature-icon {
-            width: 60px;
-            height: 60px;
-            background: linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(139, 92, 246, 0.2));
-            border-radius: 16px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.8rem;
-            margin-bottom: 1.5rem;
-        }
-        
-        .feature-title {
-            font-size: 1.25rem;
-            font-weight: 700;
-            margin-bottom: 0.75rem;
-        }
-        
-        .feature-desc {
-            color: rgba(255,255,255,0.6);
-            font-size: 0.95rem;
+            margin-top: 5px;
         }
         
         /* Models Section */
-        .models {
-            padding: 100px 2rem;
+        .section {
+            padding: 80px 0;
         }
         
-        .models-container {
-            max-width: 1200px;
-            margin: 0 auto;
+        .section-title {
+            text-align: center;
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 20px;
+        }
+        
+        .section-subtitle {
+            text-align: center;
+            color: rgba(255,255,255,0.5);
+            max-width: 600px;
+            margin: 0 auto 50px;
         }
         
         .models-grid {
             display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 1.5rem;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
         }
         
         .model-card {
-            background: var(--dark-card);
-            border: 1px solid var(--dark-border);
+            background: var(--card);
+            border: 1px solid rgba(255,255,255,0.05);
             border-radius: 16px;
-            padding: 1.5rem;
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-            transition: all 0.3s;
+            padding: 25px;
         }
         
-        .model-card:hover {
-            border-color: var(--emerald);
+        .model-tier {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 100px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-bottom: 15px;
         }
         
-        .model-score {
-            background: linear-gradient(135deg, var(--emerald), var(--emerald-dark));
-            color: #000;
-            font-weight: 800;
-            padding: 12px 16px;
-            border-radius: 12px;
+        .tier-s { background: rgba(234, 179, 8, 0.2); color: #eab308; }
+        .tier-a { background: rgba(168, 85, 247, 0.2); color: #a855f7; }
+        .tier-b { background: rgba(16, 185, 129, 0.2); color: #10b981; }
+        .tier-c { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
+        .tier-special { background: rgba(236, 72, 153, 0.2); color: #ec4899; }
+        
+        .model-name {
             font-size: 1.1rem;
-            min-width: 70px;
-            text-align: center;
+            font-weight: 600;
+            margin-bottom: 8px;
         }
         
-        .model-info h4 {
-            font-weight: 700;
-            margin-bottom: 4px;
-        }
-        
-        .model-info p {
+        .model-desc {
             color: rgba(255,255,255,0.5);
-            font-size: 0.85rem;
-        }
-        
-        /* ELISA Section */
-        .elisa-section {
-            padding: 100px 2rem;
-            background: linear-gradient(180deg, transparent, rgba(236, 72, 153, 0.05));
-            position: relative;
-            overflow: hidden;
-        }
-        
-        .elisa-container {
-            max-width: 1200px;
-            margin: 0 auto;
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 4rem;
-            align-items: center;
-        }
-        
-        .elisa-chat-preview {
-            background: var(--dark-card);
-            border: 1px solid var(--dark-border);
-            border-radius: 24px;
-            padding: 1.5rem;
-            box-shadow: 0 25px 50px rgba(236, 72, 153, 0.1);
-        }
-        
-        .chat-header {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding-bottom: 1rem;
-            border-bottom: 1px solid var(--dark-border);
-            margin-bottom: 1rem;
-        }
-        
-        .chat-avatar {
-            width: 48px;
-            height: 48px;
-            background: linear-gradient(135deg, var(--pink), var(--purple));
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.5rem;
-        }
-        
-        .chat-name {
-            font-weight: 700;
-            font-size: 1.1rem;
-        }
-        
-        .chat-status {
-            color: var(--emerald);
-            font-size: 0.8rem;
-            display: flex;
-            align-items: center;
-            gap: 4px;
-        }
-        
-        .chat-status::before {
-            content: '';
-            width: 8px;
-            height: 8px;
-            background: var(--emerald);
-            border-radius: 50%;
-        }
-        
-        .chat-messages {
-            display: flex;
-            flex-direction: column;
-            gap: 1rem;
-        }
-        
-        .chat-message {
-            max-width: 85%;
-            padding: 12px 16px;
-            border-radius: 16px;
-            font-size: 0.95rem;
-            line-height: 1.5;
-        }
-        
-        .chat-message.user {
-            background: var(--emerald);
-            color: #000;
-            align-self: flex-end;
-            border-bottom-right-radius: 4px;
-        }
-        
-        .chat-message.assistant {
-            background: rgba(255,255,255,0.1);
-            align-self: flex-start;
-            border-bottom-left-radius: 4px;
-        }
-        
-        .elisa-features {
-            display: grid;
-            gap: 1.5rem;
-        }
-        
-        .elisa-feature {
-            display: flex;
-            gap: 1rem;
-            align-items: flex-start;
-        }
-        
-        .elisa-feature-icon {
-            width: 48px;
-            height: 48px;
-            background: linear-gradient(135deg, rgba(236, 72, 153, 0.2), rgba(139, 92, 246, 0.2));
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.3rem;
-            flex-shrink: 0;
-        }
-        
-        .elisa-feature h4 {
-            font-weight: 700;
-            margin-bottom: 4px;
-        }
-        
-        .elisa-feature p {
-            color: rgba(255,255,255,0.6);
             font-size: 0.9rem;
         }
         
-        /* Pricing Section */
-        .pricing {
-            padding: 100px 2rem;
+        /* Tutorial Section */
+        .tutorial {
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.05), rgba(6, 182, 212, 0.05));
+            border-radius: 30px;
+            padding: 60px 40px;
+            margin: 40px 0;
         }
         
-        .pricing-container {
-            max-width: 1200px;
-            margin: 0 auto;
+        .steps {
+            display: grid;
+            gap: 30px;
+            margin-top: 40px;
         }
         
+        .step {
+            display: flex;
+            gap: 20px;
+            align-items: flex-start;
+        }
+        
+        .step-number {
+            width: 50px;
+            height: 50px;
+            background: linear-gradient(135deg, var(--emerald), var(--cyan));
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 1.2rem;
+            color: black;
+            flex-shrink: 0;
+        }
+        
+        .step-content h4 {
+            font-size: 1.2rem;
+            margin-bottom: 8px;
+        }
+        
+        .step-content p {
+            color: rgba(255,255,255,0.6);
+        }
+        
+        /* Signal Example */
+        .signal-example {
+            background: var(--card);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: 16px;
+            padding: 25px;
+            margin: 30px 0;
+        }
+        
+        .signal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        
+        .signal-badge {
+            display: inline-block;
+            padding: 6px 16px;
+            border-radius: 8px;
+            font-weight: 700;
+            font-size: 0.9rem;
+        }
+        
+        .signal-long { background: #10b981; color: black; }
+        .signal-short { background: #ef4444; color: white; }
+        
+        .signal-score {
+            font-size: 2rem;
+            font-weight: 800;
+            color: #10b981;
+        }
+        
+        .signal-levels {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 10px;
+            text-align: center;
+        }
+        
+        .signal-level {
+            padding: 12px;
+            border-radius: 10px;
+            background: rgba(255,255,255,0.05);
+        }
+        
+        .signal-level small {
+            display: block;
+            color: rgba(255,255,255,0.4);
+            font-size: 0.75rem;
+            margin-bottom: 5px;
+        }
+        
+        .signal-level span {
+            font-weight: 600;
+        }
+        
+        /* Rules */
+        .rules {
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.1), rgba(245, 158, 11, 0.1));
+            border: 1px solid rgba(239, 68, 68, 0.2);
+            border-radius: 20px;
+            padding: 40px;
+            margin: 40px 0;
+        }
+        
+        .rules h3 {
+            color: #f59e0b;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .rules ul {
+            list-style: none;
+        }
+        
+        .rules li {
+            padding: 12px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .rules li:last-child { border-bottom: none; }
+        
+        /* Pricing */
         .pricing-grid {
             display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 1.5rem;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 25px;
+            margin-top: 50px;
         }
         
-        .pricing-card {
-            background: var(--dark-card);
-            border: 1px solid var(--dark-border);
+        .price-card {
+            background: var(--card);
+            border: 1px solid rgba(255,255,255,0.05);
             border-radius: 24px;
-            padding: 2rem;
+            padding: 40px 30px;
             position: relative;
             transition: all 0.3s;
         }
         
-        .pricing-card:hover {
+        .price-card:hover {
             transform: translateY(-5px);
+            border-color: rgba(16, 185, 129, 0.3);
         }
         
-        .pricing-card.popular {
-            border-color: var(--emerald);
-            box-shadow: 0 0 40px rgba(16, 185, 129, 0.2);
+        .price-card.popular {
+            border: 2px solid var(--emerald);
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.1), rgba(6, 182, 212, 0.1));
         }
         
         .popular-badge {
@@ -642,948 +425,477 @@
             top: -12px;
             left: 50%;
             transform: translateX(-50%);
-            background: linear-gradient(135deg, var(--emerald), var(--emerald-dark));
-            color: #000;
-            padding: 6px 16px;
+            background: linear-gradient(135deg, var(--emerald), var(--cyan));
+            color: black;
+            padding: 6px 20px;
             border-radius: 100px;
-            font-size: 0.75rem;
-            font-weight: 700;
-            text-transform: uppercase;
+            font-size: 0.8rem;
+            font-weight: 600;
         }
         
-        .pricing-name {
-            font-size: 1.25rem;
+        .price-name {
+            font-size: 1.5rem;
             font-weight: 700;
-            margin-bottom: 0.5rem;
+            margin-bottom: 10px;
         }
         
-        .pricing-price {
-            font-size: 2.5rem;
+        .price-amount {
+            font-size: 3rem;
             font-weight: 800;
-            margin-bottom: 0.25rem;
+            color: var(--emerald);
         }
         
-        .pricing-price span {
-            font-size: 1rem;
-            font-weight: 400;
-            color: rgba(255,255,255,0.5);
+        .price-period {
+            color: rgba(255,255,255,0.4);
+            font-size: 0.9rem;
         }
         
-        .pricing-period {
-            color: rgba(255,255,255,0.5);
-            font-size: 0.85rem;
-            margin-bottom: 1.5rem;
-        }
-        
-        .pricing-features {
+        .price-features {
             list-style: none;
-            margin-bottom: 2rem;
+            margin: 30px 0;
         }
         
-        .pricing-features li {
+        .price-features li {
+            padding: 10px 0;
             display: flex;
             align-items: center;
             gap: 10px;
-            padding: 8px 0;
-            font-size: 0.9rem;
-            color: rgba(255,255,255,0.8);
+            color: rgba(255,255,255,0.7);
         }
         
-        .pricing-features li::before {
+        .price-features li::before {
             content: '✓';
             color: var(--emerald);
             font-weight: 700;
         }
         
-        .pricing-card .btn {
+        .price-btn {
+            display: block;
             width: 100%;
-            justify-content: center;
-        }
-        
-        /* Testimonials */
-        .testimonials {
-            padding: 100px 2rem;
-            background: linear-gradient(180deg, transparent, rgba(139, 92, 246, 0.03));
-        }
-        
-        .testimonials-grid {
-            max-width: 1200px;
-            margin: 0 auto;
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 2rem;
-        }
-        
-        .testimonial-card {
-            background: var(--dark-card);
-            border: 1px solid var(--dark-border);
-            border-radius: 20px;
-            padding: 2rem;
-        }
-        
-        .testimonial-stars {
-            color: #fbbf24;
-            font-size: 1.2rem;
-            margin-bottom: 1rem;
-        }
-        
-        .testimonial-text {
-            color: rgba(255,255,255,0.8);
+            padding: 16px;
+            border: none;
+            border-radius: 12px;
             font-size: 1rem;
-            line-height: 1.7;
-            margin-bottom: 1.5rem;
-        }
-        
-        .testimonial-author {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-        
-        .testimonial-avatar {
-            width: 48px;
-            height: 48px;
-            background: linear-gradient(135deg, var(--emerald), var(--purple));
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 700;
-        }
-        
-        .testimonial-name {
             font-weight: 600;
-        }
-        
-        .testimonial-role {
-            color: rgba(255,255,255,0.5);
-            font-size: 0.85rem;
-        }
-        
-        /* CTA Section */
-        .cta {
-            padding: 100px 2rem;
-        }
-        
-        .cta-container {
-            max-width: 900px;
-            margin: 0 auto;
-            background: linear-gradient(135deg, rgba(16, 185, 129, 0.1), rgba(139, 92, 246, 0.1));
-            border: 1px solid rgba(16, 185, 129, 0.3);
-            border-radius: 32px;
-            padding: 4rem;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-decoration: none;
             text-align: center;
-            position: relative;
-            overflow: hidden;
         }
         
-        .cta-container::before {
-            content: '';
-            position: absolute;
-            top: -50%;
-            left: -50%;
-            width: 200%;
-            height: 200%;
-            background: radial-gradient(circle, rgba(16, 185, 129, 0.1) 0%, transparent 50%);
-            animation: rotate 20s linear infinite;
+        .price-btn-primary {
+            background: linear-gradient(135deg, var(--emerald), var(--cyan));
+            color: black;
         }
         
-        @keyframes rotate {
-            from { transform: rotate(0deg); }
-            to { transform: rotate(360deg); }
+        .price-btn-secondary {
+            background: rgba(255,255,255,0.05);
+            color: white;
+            border: 1px solid rgba(255,255,255,0.1);
         }
         
-        .cta-content {
-            position: relative;
-            z-index: 1;
+        /* Markets */
+        .markets-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-top: 30px;
         }
         
-        .cta h2 {
-            font-size: 2.5rem;
-            font-weight: 800;
-            margin-bottom: 1rem;
+        .market-item {
+            background: var(--card);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 15px;
+            text-align: center;
         }
         
-        .cta p {
-            color: rgba(255,255,255,0.7);
-            font-size: 1.2rem;
-            margin-bottom: 2rem;
-        }
-        
-        .cta-highlight {
-            color: var(--emerald);
-            font-weight: 700;
-        }
+        .market-item span { font-size: 1.5rem; }
+        .market-item p { margin-top: 8px; font-size: 0.9rem; }
         
         /* Footer */
-        .footer {
-            padding: 60px 2rem 30px;
-            border-top: 1px solid var(--dark-border);
-        }
-        
-        .footer-content {
-            max-width: 1200px;
-            margin: 0 auto;
-            display: grid;
-            grid-template-columns: 2fr 1fr 1fr 1fr;
-            gap: 3rem;
-        }
-        
-        .footer-brand p {
-            color: rgba(255,255,255,0.5);
-            margin-top: 1rem;
-            font-size: 0.9rem;
-        }
-        
-        .footer-title {
-            font-weight: 700;
-            margin-bottom: 1rem;
-        }
-        
-        .footer-links {
-            list-style: none;
-        }
-        
-        .footer-links li {
-            margin-bottom: 0.5rem;
-        }
-        
-        .footer-links a {
-            color: rgba(255,255,255,0.6);
-            text-decoration: none;
-            font-size: 0.9rem;
-            transition: color 0.3s;
-        }
-        
-        .footer-links a:hover {
-            color: var(--emerald);
-        }
-        
-        .footer-bottom {
-            max-width: 1200px;
-            margin: 3rem auto 0;
-            padding-top: 2rem;
-            border-top: 1px solid var(--dark-border);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+        footer {
+            background: var(--card);
+            border-top: 1px solid rgba(255,255,255,0.05);
+            padding: 40px 0;
+            text-align: center;
             color: rgba(255,255,255,0.4);
-            font-size: 0.85rem;
         }
         
-        .social-links {
-            display: flex;
-            gap: 1rem;
-        }
-        
-        .social-links a {
-            width: 40px;
-            height: 40px;
-            background: rgba(255,255,255,0.1);
-            border-radius: 10px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: #fff;
-            text-decoration: none;
-            transition: all 0.3s;
-        }
-        
-        .social-links a:hover {
-            background: var(--emerald);
-            color: #000;
-        }
-        
-        /* Responsive */
-        @media (max-width: 1024px) {
-            .hero-content {
-                grid-template-columns: 1fr;
-                text-align: center;
-            }
-            
-            .hero p {
-                margin: 0 auto 2rem;
-            }
-            
-            .hero-buttons {
-                justify-content: center;
-            }
-            
-            .hero-stats {
-                justify-content: center;
-            }
-            
-            .hero-image {
-                order: -1;
-            }
-            
-            .dashboard-preview {
-                transform: none;
-                max-width: 600px;
-                margin: 0 auto;
-            }
-            
-            .floating-card {
-                display: none;
-            }
-            
-            .features-grid {
-                grid-template-columns: repeat(2, 1fr);
-            }
-            
-            .models-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .elisa-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .pricing-grid {
-                grid-template-columns: repeat(2, 1fr);
-            }
-            
-            .testimonials-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .footer-content {
-                grid-template-columns: 1fr 1fr;
-            }
-        }
-        
+        /* Mobile */
         @media (max-width: 768px) {
-            .navbar {
-                padding: 1rem;
-            }
-            
-            .nav-links {
-                display: none;
-            }
-            
-            .hero h1 {
-                font-size: 2.5rem;
-            }
-            
-            .section-title {
-                font-size: 2rem;
-            }
-            
-            .features-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .pricing-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .cta-container {
-                padding: 2rem;
-            }
-            
-            .cta h2 {
-                font-size: 1.75rem;
-            }
-            
-            .footer-content {
-                grid-template-columns: 1fr;
-                text-align: center;
-            }
-            
-            .footer-bottom {
-                flex-direction: column;
-                gap: 1rem;
-            }
-        }
-        
-        /* Modal */
-        .modal-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0,0,0,0.8);
-            backdrop-filter: blur(5px);
-            display: none;
-            align-items: center;
-            justify-content: center;
-            z-index: 2000;
-            padding: 2rem;
-        }
-        
-        .modal-overlay.active {
-            display: flex;
-        }
-        
-        .modal {
-            background: var(--dark-card);
-            border: 1px solid var(--dark-border);
-            border-radius: 24px;
-            padding: 3rem;
-            max-width: 500px;
-            width: 100%;
-            position: relative;
-        }
-        
-        .modal-close {
-            position: absolute;
-            top: 1rem;
-            right: 1rem;
-            background: none;
-            border: none;
-            color: rgba(255,255,255,0.5);
-            font-size: 1.5rem;
-            cursor: pointer;
-        }
-        
-        .modal h3 {
-            font-size: 1.5rem;
-            margin-bottom: 0.5rem;
-        }
-        
-        .modal p {
-            color: rgba(255,255,255,0.6);
-            margin-bottom: 2rem;
-        }
-        
-        .form-group {
-            margin-bottom: 1.5rem;
-        }
-        
-        .form-group label {
-            display: block;
-            margin-bottom: 0.5rem;
-            font-weight: 500;
-        }
-        
-        .form-group input {
-            width: 100%;
-            padding: 14px 18px;
-            background: rgba(255,255,255,0.05);
-            border: 1px solid var(--dark-border);
-            border-radius: 12px;
-            color: #fff;
-            font-size: 1rem;
-            transition: border-color 0.3s;
-        }
-        
-        .form-group input:focus {
-            outline: none;
-            border-color: var(--emerald);
-        }
-        
-        .modal .btn {
-            width: 100%;
-            justify-content: center;
-            margin-top: 1rem;
+            .hero h1 { font-size: 2rem; }
+            .section-title { font-size: 1.8rem; }
+            .tutorial { padding: 40px 20px; }
+            .step { flex-direction: column; text-align: center; }
+            .step-number { margin: 0 auto; }
+            .signal-levels { grid-template-columns: repeat(2, 1fr); }
         }
     </style>
 </head>
 <body>
-    <!-- Navbar -->
-    <nav class="navbar">
-        <div class="navbar-content">
-            <div class="logo">
-                <div class="logo-icon">📈</div>
-                <span>TradingPro</span>
-            </div>
-            <div class="nav-links">
-                <a href="#features">Características</a>
-                <a href="#models">Modelos SMC</a>
-                <a href="#elisa">ELISA IA</a>
-                <a href="#pricing">Precios</a>
-                <a href="https://trading-master-pro.vercel.app" class="btn btn-primary">Iniciar Sesión</a>
+    <!-- Header -->
+    <header>
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">
+                    <div class="logo-icon">📈</div>
+                    <span class="logo-text">Trading Master Pro</span>
+                </div>
+                <a href="https://trading-master-pro.vercel.app" class="cta-btn">Acceder →</a>
             </div>
         </div>
-    </nav>
+    </header>
 
-    <!-- Hero Section -->
+    <!-- Hero -->
     <section class="hero">
-        <div class="hero-bg"></div>
-        <div class="hero-content">
-            <div class="hero-text">
-                <div class="hero-badge">
-                    <span>🔥</span> Prueba GRATIS por 5 días
-                </div>
-                <h1>
-                    Señales de Trading con <span class="gradient">Inteligencia Artificial</span>
-                </h1>
-                <p>
-                    Plataforma profesional de señales basada en Smart Money Concepts (SMC) con asistente IA que analiza el mercado 24/7 y te guía en cada operación.
-                </p>
-                <div class="hero-buttons">
-                    <a href="#" class="btn btn-primary btn-large" onclick="openModal()">
-                        🚀 Comenzar Gratis
-                    </a>
-                    <a href="#features" class="btn btn-secondary btn-large">
-                        Ver Demo
-                    </a>
-                </div>
-                <div class="hero-stats">
-                    <div class="stat">
-                        <div class="stat-value">9</div>
-                        <div class="stat-label">Activos</div>
-                    </div>
-                    <div class="stat">
-                        <div class="stat-value">6</div>
-                        <div class="stat-label">Modelos SMC</div>
-                    </div>
-                    <div class="stat">
-                        <div class="stat-value">24/7</div>
-                        <div class="stat-label">Análisis IA</div>
-                    </div>
-                </div>
+        <div class="container">
+            <div class="elisa-avatar">
+                <img src="/elisa.png" alt="ELISA - IA Trading Expert">
             </div>
-            <div class="hero-image">
-                <img src="https://placehold.co/600x400/0d0d14/10b981?text=Dashboard+Preview" alt="Dashboard Preview" class="dashboard-preview">
-                
-                <div class="floating-card signal">
-                    <div class="signal-card-content">
-                        <span class="signal-badge">LONG</span>
-                        <div class="signal-info">
-                            <div class="signal-asset">V75 Index</div>
-                            <div class="signal-score">Score: 95%</div>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="floating-card elisa">
-                    <div class="elisa-card-content">
-                        <div class="elisa-avatar">🤖</div>
-                        <div class="elisa-text">
-                            <div class="elisa-name">ELISA IA</div>
-                            <div>Analizando mercado...</div>
-                        </div>
-                    </div>
-                </div>
+            <h1>ELISA - Tu Asistente de Trading IA</h1>
+            <p>Sistema inteligente con 12 modelos SMC que analiza el mercado 24/7 y te envía señales de alta probabilidad en tiempo real.</p>
+            
+            <div class="hero-badges">
+                <div class="badge"><span>🎯</span> 12 Modelos SMC</div>
+                <div class="badge"><span>📊</span> 17 Mercados</div>
+                <div class="badge"><span>⚡</span> Tiempo Real</div>
+                <div class="badge"><span>🤖</span> IA Avanzada</div>
+            </div>
+            
+            <a href="https://trading-master-pro.vercel.app" class="cta-btn">Comenzar Ahora →</a>
+        </div>
+    </section>
+
+    <!-- Stats -->
+    <section class="container">
+        <div class="stats">
+            <div class="stat-card">
+                <div class="stat-number">12</div>
+                <div class="stat-label">Modelos SMC</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">17</div>
+                <div class="stat-label">Mercados</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">24/7</div>
+                <div class="stat-label">Análisis Continuo</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">M5+H1</div>
+                <div class="stat-label">Multi-Timeframe</div>
             </div>
         </div>
     </section>
 
-    <!-- Features Section -->
-    <section class="features" id="features">
-        <div class="section-header">
-            <div class="section-tag">Características</div>
-            <h2 class="section-title">Todo lo que necesitas para operar</h2>
-            <p class="section-desc">Herramientas profesionales de trading en una sola plataforma</p>
-        </div>
-        
-        <div class="features-grid">
-            <div class="feature-card">
-                <div class="feature-icon">📊</div>
-                <h3 class="feature-title">Gráficos en Tiempo Real</h3>
-                <p class="feature-desc">Visualiza velas M5 y H1 con zonas de demanda/supply, niveles de entrada, SL y hasta 3 TPs.</p>
-            </div>
-            
-            <div class="feature-card">
-                <div class="feature-icon">🎯</div>
-                <h3 class="feature-title">Señales SMC Precisas</h3>
-                <p class="feature-desc">6 modelos de Smart Money Concepts con scores del 70% al 100% para entradas de alta probabilidad.</p>
-            </div>
-            
-            <div class="feature-card">
-                <div class="feature-icon">🤖</div>
-                <h3 class="feature-title">ELISA - Asistente IA</h3>
-                <p class="feature-desc">Tu mentora personal de trading 24/7. Analiza, explica patrones y te guía en psicotrading.</p>
-            </div>
-            
-            <div class="feature-card">
-                <div class="feature-icon">📱</div>
-                <h3 class="feature-title">Alertas Telegram</h3>
-                <p class="feature-desc">Recibe cada señal instantáneamente en tu Telegram con todos los detalles de entrada.</p>
-            </div>
-            
-            <div class="feature-card">
-                <div class="feature-icon">📈</div>
-                <h3 class="feature-title">Multi-Timeframe</h3>
-                <p class="feature-desc">Análisis automático de M5 y H1 para confirmar confluencia y aumentar la precisión.</p>
-            </div>
-            
-            <div class="feature-card">
-                <div class="feature-icon">🧠</div>
-                <h3 class="feature-title">Aprendizaje Automático</h3>
-                <p class="feature-desc">El sistema aprende de los resultados y ajusta los scores para mejorar constantemente.</p>
-            </div>
-        </div>
-    </section>
-
-    <!-- Models Section -->
-    <section class="models" id="models">
-        <div class="models-container">
-            <div class="section-header">
-                <div class="section-tag">Modelos SMC</div>
-                <h2 class="section-title">6 Estrategias Profesionales</h2>
-                <p class="section-desc">Basadas en Smart Money Concepts utilizadas por traders institucionales</p>
-            </div>
+    <!-- Models -->
+    <section class="section">
+        <div class="container">
+            <h2 class="section-title">12 Modelos SMC Institucionales</h2>
+            <p class="section-subtitle">Sistema completo basado en Smart Money Concepts con análisis multi-timeframe M5 + H1</p>
             
             <div class="models-grid">
                 <div class="model-card">
-                    <div class="model-score">95%</div>
-                    <div class="model-info">
-                        <h4>MTF Confluence</h4>
-                        <p>Confluencia Multi-Timeframe M5 + H1</p>
-                    </div>
+                    <span class="model-tier tier-s">🏆 TIER S - 95pts</span>
+                    <h3 class="model-name">MTF_CONFLUENCE</h3>
+                    <p class="model-desc">Confluencia M5 + H1 perfecta. La señal más fuerte del sistema.</p>
                 </div>
                 
                 <div class="model-card">
-                    <div class="model-score">90%</div>
-                    <div class="model-info">
-                        <h4>CHoCH Pullback</h4>
-                        <p>Cambio de carácter + Retroceso a zona</p>
-                    </div>
+                    <span class="model-tier tier-a">⭐ TIER A - 85-92pts</span>
+                    <h3 class="model-name">CHOCH_PULLBACK</h3>
+                    <p class="model-desc">Change of Character + Pullback a zona válida.</p>
                 </div>
                 
                 <div class="model-card">
-                    <div class="model-score">82%</div>
-                    <div class="model-info">
-                        <h4>Liquidity Sweep</h4>
-                        <p>Barrido de liquidez + Reversión</p>
-                    </div>
+                    <span class="model-tier tier-a">⭐ TIER A - 85-92pts</span>
+                    <h3 class="model-name">LIQUIDITY_GRAB</h3>
+                    <p class="model-desc">Barrido de liquidez + reversión institucional.</p>
                 </div>
                 
                 <div class="model-card">
-                    <div class="model-score">80%</div>
-                    <div class="model-info">
-                        <h4>BOS Continuation</h4>
-                        <p>Ruptura de estructura + Continuación</p>
-                    </div>
+                    <span class="model-tier tier-a">⭐ TIER A - 85-92pts</span>
+                    <h3 class="model-name">OB_ENTRY</h3>
+                    <p class="model-desc">Entrada en Order Block con confirmación H1.</p>
                 </div>
                 
                 <div class="model-card">
-                    <div class="model-score">85%</div>
-                    <div class="model-info">
-                        <h4>Boom Spike</h4>
-                        <p>Especializado para Boom Index (Solo LONG)</p>
-                    </div>
+                    <span class="model-tier tier-a">⭐ TIER A - 85-92pts</span>
+                    <h3 class="model-name">FVG_ENTRY</h3>
+                    <p class="model-desc">Fair Value Gap + estructura alineada.</p>
                 </div>
                 
                 <div class="model-card">
-                    <div class="model-score">85%</div>
-                    <div class="model-info">
-                        <h4>Crash Spike</h4>
-                        <p>Especializado para Crash Index (Solo SHORT)</p>
+                    <span class="model-tier tier-b">✅ TIER B - 78-85pts</span>
+                    <h3 class="model-name">BOS_CONTINUATION</h3>
+                    <p class="model-desc">Break of Structure + continuación de tendencia.</p>
+                </div>
+                
+                <div class="model-card">
+                    <span class="model-tier tier-b">✅ TIER B - 78-85pts</span>
+                    <h3 class="model-name">BREAKER_BLOCK</h3>
+                    <p class="model-desc">Zona de Order Block rota usada como soporte/resistencia.</p>
+                </div>
+                
+                <div class="model-card">
+                    <span class="model-tier tier-b">✅ TIER B - 78-85pts</span>
+                    <h3 class="model-name">MITIGATION_BLOCK</h3>
+                    <p class="model-desc">Mitigación de zonas institucionales pendientes.</p>
+                </div>
+                
+                <div class="model-card">
+                    <span class="model-tier tier-c">📊 TIER C - 72-78pts</span>
+                    <h3 class="model-name">EQH_EQL</h3>
+                    <p class="model-desc">Equal Highs/Lows - Liquidez por tomar.</p>
+                </div>
+                
+                <div class="model-card">
+                    <span class="model-tier tier-c">📊 TIER C - 72-78pts</span>
+                    <h3 class="model-name">SWING_FAILURE</h3>
+                    <p class="model-desc">Fallo en swing + reversión.</p>
+                </div>
+                
+                <div class="model-card">
+                    <span class="model-tier tier-special">🚀 ESPECIAL</span>
+                    <h3 class="model-name">BOOM_SPIKE</h3>
+                    <p class="model-desc">Señales LONG para índices Boom. Detecta spikes alcistas.</p>
+                </div>
+                
+                <div class="model-card">
+                    <span class="model-tier tier-special">📉 ESPECIAL</span>
+                    <h3 class="model-name">CRASH_SPIKE</h3>
+                    <p class="model-desc">Señales SHORT para índices Crash. Detecta spikes bajistas.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Tutorial -->
+    <section class="section">
+        <div class="container">
+            <div class="tutorial">
+                <h2 class="section-title">📚 Cómo Usar las Señales</h2>
+                <p class="section-subtitle">Sigue estos pasos para copiar las señales en tu broker favorito</p>
+                
+                <div class="steps">
+                    <div class="step">
+                        <div class="step-number">1</div>
+                        <div class="step-content">
+                            <h4>Recibe la Señal</h4>
+                            <p>ELISA analiza el mercado y te envía señales cuando detecta un setup de alta probabilidad. Verás el activo, dirección (LONG/SHORT), entry, SL y 3 Take Profits.</p>
+                        </div>
+                    </div>
+                    
+                    <div class="step">
+                        <div class="step-number">2</div>
+                        <div class="step-content">
+                            <h4>Abre tu Broker</h4>
+                            <p>Abre tu plataforma de trading (Deriv, MT5, etc.) y busca el activo indicado en la señal (ej: Boom 1000, V75, EUR/USD, Oro).</p>
+                        </div>
+                    </div>
+                    
+                    <div class="step">
+                        <div class="step-number">3</div>
+                        <div class="step-content">
+                            <h4>Configura la Operación</h4>
+                            <p><strong>LONG:</strong> Abre una operación de COMPRA (Buy)<br>
+                            <strong>SHORT:</strong> Abre una operación de VENTA (Sell)<br>
+                            Usa el precio de Entry como referencia.</p>
+                        </div>
+                    </div>
+                    
+                    <div class="step">
+                        <div class="step-number">4</div>
+                        <div class="step-content">
+                            <h4>Coloca el Stop Loss (SL)</h4>
+                            <p>⚠️ <strong>OBLIGATORIO:</strong> Siempre coloca el Stop Loss en el nivel indicado. Esto protege tu capital de pérdidas grandes.</p>
+                        </div>
+                    </div>
+                    
+                    <div class="step">
+                        <div class="step-number">5</div>
+                        <div class="step-content">
+                            <h4>Configura los Take Profits</h4>
+                            <p><strong>TP1:</strong> Cierra 50% de la posición<br>
+                            <strong>TP2:</strong> Cierra 30% de la posición<br>
+                            <strong>TP3:</strong> Cierra el 20% restante (máximo beneficio)</p>
+                        </div>
+                    </div>
+                    
+                    <div class="step">
+                        <div class="step-number">6</div>
+                        <div class="step-content">
+                            <h4>Registra el Resultado</h4>
+                            <p>Cuando la operación cierre, marca en la plataforma si fue WIN o LOSS. Esto ayuda a ELISA a mejorar y te muestra tus estadísticas.</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Signal Example -->
+                <h3 style="margin-top: 50px; margin-bottom: 20px; text-align: center;">Ejemplo de Señal</h3>
+                <div class="signal-example">
+                    <div class="signal-header">
+                        <div>
+                            <span class="signal-badge signal-long">LONG</span>
+                            <span style="margin-left: 15px; color: rgba(255,255,255,0.5);">FVG_ENTRY - Jump 75</span>
+                        </div>
+                        <div class="signal-score">83%</div>
+                    </div>
+                    <div class="signal-levels">
+                        <div class="signal-level">
+                            <small>Entry</small>
+                            <span>20396.02</span>
+                        </div>
+                        <div class="signal-level" style="background: rgba(16, 185, 129, 0.2);">
+                            <small>TP1</small>
+                            <span style="color: #10b981;">20824.60</span>
+                        </div>
+                        <div class="signal-level" style="background: rgba(16, 185, 129, 0.2);">
+                            <small>TP2</small>
+                            <span style="color: #10b981;">21110.33</span>
+                        </div>
+                        <div class="signal-level" style="background: rgba(16, 185, 129, 0.2);">
+                            <small>TP3</small>
+                            <span style="color: #10b981;">21396.05</span>
+                        </div>
+                        <div class="signal-level" style="background: rgba(239, 68, 68, 0.2);">
+                            <small>Stop Loss</small>
+                            <span style="color: #ef4444;">20110.30</span>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
     </section>
 
-    <!-- ELISA Section -->
-    <section class="elisa-section" id="elisa">
-        <div class="elisa-container">
-            <div class="elisa-chat-preview">
-                <div class="chat-header">
-                    <div class="chat-avatar">💜</div>
-                    <div>
-                        <div class="chat-name">ELISA</div>
-                        <div class="chat-status">En línea</div>
-                    </div>
-                </div>
-                <div class="chat-messages">
-                    <div class="chat-message user">
-                        ¿Cómo veo el mercado de V75 ahora?
-                    </div>
-                    <div class="chat-message assistant">
-                        📊 <strong>Análisis V75:</strong><br><br>
-                        • M5: BULLISH (HH + HL)<br>
-                        • H1: BULLISH<br>
-                        • MTF Confluence: ✅<br><br>
-                        Hay una zona de demanda en 42,100. Si el precio hace pullback y muestra rechazo, podría ser una buena entrada LONG con TP en 42,400.
-                    </div>
-                    <div class="chat-message user">
-                        ¿Qué es un CHoCH?
-                    </div>
-                    <div class="chat-message assistant">
-                        🎓 <strong>CHoCH (Change of Character)</strong> es un cambio en la estructura del mercado. Por ejemplo, si venía haciendo HH-HL (alcista) y rompe el último HL, eso indica un posible cambio a tendencia bajista. Es una señal temprana de reversión.
-                    </div>
-                </div>
+    <!-- Rules -->
+    <section class="section">
+        <div class="container">
+            <div class="rules">
+                <h3>⚠️ Reglas de Oro de ELISA</h3>
+                <ul>
+                    <li><span style="font-size: 1.2rem;">🎯</span> <strong>Máximo 2-3 operaciones por día.</strong> La calidad supera la cantidad.</li>
+                    <li><span style="font-size: 1.2rem;">💰</span> <strong>Riesgo 1-2% por operación.</strong> Nunca arriesgues más del 2% de tu capital.</li>
+                    <li><span style="font-size: 1.2rem;">🛑</span> <strong>SIEMPRE usa Stop Loss.</strong> Sin excepción. Es tu escudo protector.</li>
+                    <li><span style="font-size: 1.2rem;">📊</span> <strong>Sigue las señales con disciplina.</strong> No modifiques los niveles.</li>
+                    <li><span style="font-size: 1.2rem;">🧘</span> <strong>Controla tus emociones.</strong> No operes por venganza después de una pérdida.</li>
+                    <li><span style="font-size: 1.2rem;">📈</span> <strong>Lleva un diario de trading.</strong> Registra cada operación para aprender.</li>
+                    <li><span style="font-size: 1.2rem;">⏰</span> <strong>Respeta el horario.</strong> Los mejores setups ocurren en sesiones activas.</li>
+                    <li><span style="font-size: 1.2rem;">🎓</span> <strong>La constancia genera rentabilidad.</strong> Es un maratón, no un sprint.</li>
+                </ul>
             </div>
+        </div>
+    </section>
+
+    <!-- Markets -->
+    <section class="section">
+        <div class="container">
+            <h2 class="section-title">17 Mercados Disponibles</h2>
+            <p class="section-subtitle">Opera en los mercados más populares con análisis SMC especializado</p>
             
-            <div class="elisa-content">
-                <div class="section-tag">Asistente IA</div>
-                <h2 class="section-title">Conoce a ELISA</h2>
-                <p class="section-desc" style="text-align: left; margin-bottom: 2rem;">
-                    Tu mentora de trading con inteligencia artificial. Disponible 24/7 para responder tus dudas, analizar el mercado y ayudarte a mejorar.
-                </p>
-                
-                <div class="elisa-features">
-                    <div class="elisa-feature">
-                        <div class="elisa-feature-icon">📚</div>
-                        <div>
-                            <h4>Educación SMC</h4>
-                            <p>Aprende todos los conceptos de Smart Money con explicaciones claras y ejemplos.</p>
-                        </div>
-                    </div>
-                    
-                    <div class="elisa-feature">
-                        <div class="elisa-feature-icon">🧘</div>
-                        <div>
-                            <h4>Psicotrading</h4>
-                            <p>Controla tus emociones, maneja el riesgo y desarrolla disciplina como trader.</p>
-                        </div>
-                    </div>
-                    
-                    <div class="elisa-feature">
-                        <div class="elisa-feature-icon">📋</div>
-                        <div>
-                            <h4>Plan de Trading</h4>
-                            <p>ELISA te ayuda a crear y seguir tu plan de trading personalizado.</p>
-                        </div>
-                    </div>
-                    
-                    <div class="elisa-feature">
-                        <div class="elisa-feature-icon">🎮</div>
-                        <div>
-                            <h4>Simulador</h4>
-                            <p>Practica con escenarios reales antes de arriesgar tu capital.</p>
-                        </div>
-                    </div>
-                </div>
+            <div class="markets-list">
+                <div class="market-item"><span>📊</span><p>Step Index</p></div>
+                <div class="market-item"><span>📈</span><p>V75</p></div>
+                <div class="market-item"><span>🔥</span><p>V100</p></div>
+                <div class="market-item"><span>⚡</span><p>Jump 75</p></div>
+                <div class="market-item"><span>🚀</span><p>Boom 1000</p></div>
+                <div class="market-item"><span>💥</span><p>Boom 500</p></div>
+                <div class="market-item"><span>⚡</span><p>Boom 300</p></div>
+                <div class="market-item"><span>📉</span><p>Crash 1000</p></div>
+                <div class="market-item"><span>💣</span><p>Crash 500</p></div>
+                <div class="market-item"><span>🔻</span><p>Crash 300</p></div>
+                <div class="market-item"><span>💶</span><p>EUR/USD</p></div>
+                <div class="market-item"><span>💷</span><p>GBP/USD</p></div>
+                <div class="market-item"><span>💴</span><p>USD/JPY</p></div>
+                <div class="market-item"><span>🥇</span><p>Oro</p></div>
+                <div class="market-item"><span>🥈</span><p>Plata</p></div>
+                <div class="market-item"><span>₿</span><p>Bitcoin</p></div>
+                <div class="market-item"><span>⟠</span><p>Ethereum</p></div>
             </div>
         </div>
     </section>
 
-    <!-- Pricing Section -->
-    <section class="pricing" id="pricing">
-        <div class="pricing-container">
-            <div class="section-header">
-                <div class="section-tag">Precios</div>
-                <h2 class="section-title">Elige tu Plan</h2>
-                <p class="section-desc">Comienza gratis y escala cuando estés listo</p>
-            </div>
+    <!-- Pricing -->
+    <section class="section" id="pricing">
+        <div class="container">
+            <h2 class="section-title">Planes y Precios</h2>
+            <p class="section-subtitle">Elige el plan que mejor se adapte a tu nivel de trading</p>
             
             <div class="pricing-grid">
-                <div class="pricing-card">
-                    <div class="pricing-name">Free Trial</div>
-                    <div class="pricing-price">$0</div>
-                    <div class="pricing-period">5 días gratis</div>
-                    <ul class="pricing-features">
-                        <li>Todos los activos</li>
+                <div class="price-card">
+                    <h3 class="price-name">Básico</h3>
+                    <p style="color: rgba(255,255,255,0.5); margin-bottom: 20px;">Ideal para comenzar</p>
+                    <div class="price-amount">$29.900</div>
+                    <div class="price-period">COP / mes</div>
+                    <ul class="price-features">
+                        <li>6 activos (Step, V75, EUR, JPY, Oro, Plata)</li>
+                        <li>10 señales por día</li>
                         <li>6 modelos SMC</li>
-                        <li>Chat ELISA IA</li>
+                        <li>Gráfico M5</li>
+                        <li>Horario: 6AM-2PM COL</li>
+                        <li>Soporte por email</li>
+                    </ul>
+                    <a href="https://trading-master-pro.vercel.app" class="price-btn price-btn-secondary">Comenzar</a>
+                </div>
+                
+                <div class="price-card popular">
+                    <span class="popular-badge">MÁS POPULAR</span>
+                    <h3 class="price-name">Premium</h3>
+                    <p style="color: rgba(255,255,255,0.5); margin-bottom: 20px;">Para traders serios</p>
+                    <div class="price-amount">$59.900</div>
+                    <div class="price-period">COP / mes</div>
+                    <ul class="price-features">
+                        <li>11 activos (+V100, Jump75, GBP, BTC, ETH)</li>
+                        <li>25 señales por día</li>
+                        <li>9 modelos SMC</li>
+                        <li>Gráficos M5 y H1</li>
+                        <li>Acceso 24/7 🌙</li>
                         <li>Alertas Telegram</li>
-                        <li>Soporte básico</li>
+                        <li>Soporte por chat</li>
                     </ul>
-                    <a href="#" class="btn btn-secondary" onclick="openModal()">Comenzar Gratis</a>
+                    <a href="https://trading-master-pro.vercel.app" class="price-btn price-btn-primary">Elegir Plan</a>
                 </div>
                 
-                <div class="pricing-card">
-                    <div class="pricing-name">Básico</div>
-                    <div class="pricing-price">$29.900 <span>COP</span></div>
-                    <div class="pricing-period">por mes</div>
-                    <ul class="pricing-features">
-                        <li>Step Index</li>
-                        <li>V75 Index</li>
-                        <li>Oro (XAU/USD)</li>
-                        <li>Bitcoin (BTC)</li>
-                        <li>Chat ELISA IA</li>
-                    </ul>
-                    <a href="#" class="btn btn-secondary" onclick="openModal()">Elegir Plan</a>
-                </div>
-                
-                <div class="pricing-card popular">
-                    <div class="popular-badge">Más Popular</div>
-                    <div class="pricing-name">Premium</div>
-                    <div class="pricing-price">$59.900 <span>COP</span></div>
-                    <div class="pricing-period">por mes</div>
-                    <ul class="pricing-features">
-                        <li>Todo del Básico</li>
-                        <li>GBP/USD</li>
-                        <li>Horario nocturno</li>
+                <div class="price-card">
+                    <h3 class="price-name">Elite</h3>
+                    <p style="color: rgba(255,255,255,0.5); margin-bottom: 20px;">Acceso total</p>
+                    <div class="price-amount">$99.900</div>
+                    <div class="price-period">COP / mes</div>
+                    <ul class="price-features">
+                        <li>17 activos (todos + Boom/Crash)</li>
+                        <li>Señales ilimitadas</li>
+                        <li>12 modelos SMC completos</li>
+                        <li>Todos los timeframes</li>
+                        <li>Acceso 24/7 🌙</li>
+                        <li>ELISA IA Chat avanzado</li>
+                        <li>Canal privado Telegram</li>
                         <li>Soporte prioritario</li>
-                        <li>Mentoría ELISA+</li>
                     </ul>
-                    <a href="#" class="btn btn-primary" onclick="openModal()">Elegir Plan</a>
-                </div>
-                
-                <div class="pricing-card">
-                    <div class="pricing-name">Elite</div>
-                    <div class="pricing-price">$99.900 <span>COP</span></div>
-                    <div class="pricing-period">por mes</div>
-                    <ul class="pricing-features">
-                        <li>Todo del Premium</li>
-                        <li>Boom 500 & 1000</li>
-                        <li>Crash 500 & 1000</li>
-                        <li>Acceso anticipado</li>
-                        <li>Soporte VIP</li>
-                    </ul>
-                    <a href="#" class="btn btn-secondary" onclick="openModal()">Elegir Plan</a>
+                    <a href="https://trading-master-pro.vercel.app" class="price-btn price-btn-secondary">Elegir Plan</a>
                 </div>
             </div>
         </div>
     </section>
 
-    <!-- Testimonials -->
-    <section class="testimonials">
-        <div class="section-header">
-            <div class="section-tag">Testimonios</div>
-            <h2 class="section-title">Lo que dicen nuestros traders</h2>
-        </div>
-        
-        <div class="testimonials-grid">
-            <div class="testimonial-card">
-                <div class="testimonial-stars">⭐⭐⭐⭐⭐</div>
-                <p class="testimonial-text">
-                    "Las señales son muy precisas. El modelo CHoCH Pullback me ha dado entradas increíbles en V75. ELISA me ayudó a entender los conceptos SMC que no entendía."
-                </p>
-                <div class="testimonial-author">
-                    <div class="testimonial-avatar">JC</div>
-                    <div>
-                        <div class="testimonial-name">Juan Carlos</div>
-                        <div class="testimonial-role">Trader desde 2023</div>
-                    </div>
-                </div>
+    <!-- CTA Final -->
+    <section class="section" style="text-align: center; padding: 100px 0;">
+        <div class="container">
+            <div class="elisa-avatar" style="margin-bottom: 30px;">
+                <img src="/elisa.png" alt="ELISA">
             </div>
-            
-            <div class="testimonial-card">
-                <div class="testimonial-stars">⭐⭐⭐⭐⭐</div>
-                <p class="testimonial-text">
-                    "Lo mejor es el análisis automático 24/7. Las alertas de Telegram me permiten operar incluso cuando no estoy frente a la pantalla. 100% recomendado."
-                </p>
-                <div class="testimonial-author">
-                    <div class="testimonial-avatar">ML</div>
-                    <div>
-                        <div class="testimonial-name">María López</div>
-                        <div class="testimonial-role">Trader parte tiempo</div>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="testimonial-card">
-                <div class="testimonial-stars">⭐⭐⭐⭐⭐</div>
-                <p class="testimonial-text">
-                    "Los modelos especializados para Boom y Crash son exactamente lo que buscaba. El score del 100% casi siempre llega al TP3. Excelente herramienta."
-                </p>
-                <div class="testimonial-author">
-                    <div class="testimonial-avatar">AR</div>
-                    <div>
-                        <div class="testimonial-name">Andrés Ruiz</div>
-                        <div class="testimonial-role">Especialista Sintéticos</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <!-- CTA Section -->
-    <section class="cta">
-        <div class="cta-container">
-            <div class="cta-content">
-                <h2>¿Listo para transformar tu trading?</h2>
-                <p>
-                    Únete a cientos de traders que ya están usando <span class="cta-highlight">Trading Master Pro</span> para tomar mejores decisiones.
-                </p>
-                <a href="#" class="btn btn-primary btn-large" onclick="openModal()">
-                    🚀 Comenzar 5 Días Gratis
-                </a>
-            </div>
+            <h2 style="font-size: 2.5rem; margin-bottom: 20px;">¿Listo para operar con ELISA?</h2>
+            <p style="color: rgba(255,255,255,0.6); max-width: 500px; margin: 0 auto 40px;">Únete a traders que ya usan nuestro sistema de señales SMC con IA para mejorar sus resultados.</p>
+            <a href="https://trading-master-pro.vercel.app" class="cta-btn" style="font-size: 1.1rem; padding: 16px 40px;">Comenzar Ahora →</a>
         </div>
     </section>
 
     <!-- Footer -->
-    <footer class="footer">
-        <div class="footer-content">
-            <div class="footer-brand">
-                <div class="logo">
-                    <div class="logo-icon">📈</div>
-                    <span>TradingPro</span>
-                </div>
-                <p>Plataforma de señales de trading con Smart Money Concepts e Inteligencia Artificial.</p>
-            </div>
-            
-            <div>
-                <h4 class="footer-title">Producto</h4>
-                <ul class="footer-links">
-                    <li><a href="#features">Características</a></li>
-                    <li><a href="#models">Modelos SMC</a></li>
-                    <li><a href="#pricing">Precios</a></li>
-                    <li><a href="#elisa">ELISA IA</a></li>
-                </ul>
-            </div>
-            
-            <div>
-                <h4 class="footer-title">Soporte</h4>
-                <ul class="footer-links">
-                    <li><a href="#">Centro de Ayuda</a></li>
-                    <li><a href="#">Tutoriales</a></li>
-                    <li><a href="#">Contacto</a></li>
-                    <li><a href="#">FAQ</a></li>
-                </ul>
-            </div>
-            
-            <div>
-                <h4 class="footer-title">Legal</h4>
-                <ul class="footer-links">
-                    <li><a href="#">Términos de Uso</a></li>
-                    <li><a href="#">Política de Privacidad</a></li>
-                    <li><a href="#">Disclaimer</a></li>
-                </ul>
-            </div>
-        </div>
-        
-        <div class="footer-bottom">
-            <span>© 2024-2026 Trading Master Pro. Todos los derechos reservados.</span>
-            <div class="social-links">
-                <a href="#">📱</a>
-                <a href="#">💬</a>
-                <a href="#">📧</a>
-            </div>
+    <footer>
+        <div class="container">
+            <p>© 2026 Trading Master Pro - ELISA IA. Todos los derechos reservados.</p>
+            <p style="margin-top: 10px; font-size: 0.85rem;">Trading implica riesgo. Opera con responsabilidad.</p>
         </div>
     </footer>
-
-    <!-- Modal Registro -->
-    <div class="modal-overlay" id="modal">
-        <div class="modal">
-            <button class="modal-close" onclick="closeModal()">✕</button>
-            <h3>🚀 Comienza tu Prueba Gratis</h3>
-            <p>5 días de acceso completo a todas las funciones</p>
-            
-            <form action="https://trading-master-pro.vercel.app" method="GET">
-                <div class="form-group">
-                    <label>Nombre</label>
-                    <input type="text" placeholder="Tu nombre" required>
-                </div>
-                <div class="form-group">
-                    <label>Email</label>
-                    <input type="email" placeholder="tu@email.com" required>
-                </div>
-                <div class="form-group">
-                    <label>WhatsApp</label>
-                    <input type="tel" placeholder="+57 300 123 4567">
-                </div>
-                <button type="submit" class="btn btn-primary btn-large">
-                    Comenzar Ahora →
-                </button>
-            </form>
-        </div>
-    </div>
-
-    <script>
-        function openModal() {
-            document.getElementById('modal').classList.add('active');
-        }
-        
-        function closeModal() {
-            document.getElementById('modal').classList.remove('active');
-        }
-        
-        // Cerrar modal al hacer clic fuera
-        document.getElementById('modal').addEventListener('click', function(e) {
-            if (e.target === this) {
-                closeModal();
-            }
-        });
-        
-        // Navbar scroll effect
-        window.addEventListener('scroll', function() {
-            const navbar = document.querySelector('.navbar');
-            if (window.scrollY > 50) {
-                navbar.style.background = 'rgba(6, 6, 10, 0.95)';
-            } else {
-                navbar.style.background = 'rgba(6, 6, 10, 0.9)';
-            }
-        });
-    </script>
 </body>
 </html>
