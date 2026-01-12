@@ -1,114 +1,60 @@
-# Trading Master Pro v14.0 - Backend
+# Backend - Trading Master Pro
 
-## 📦 Contenido del ZIP
+## 🚀 Deploy en Railway
 
+### 1. Variables de Entorno
 ```
-backend/
-├── index.js          # Servidor principal (3500+ líneas)
-├── package.json      # Dependencias
-├── .env.example      # Variables de entorno ejemplo
-├── railway.json      # Configuración Railway
-├── data/
-│   └── smc-models.json  # Modelos SMC para ELISA
-├── elisa-ai.js       # Módulo ELISA IA
-└── elisa-integration.js # Integración ELISA
+PORT=3000
+SUPABASE_URL=https://mtzycmqtxdvoazomipye.supabase.co
+SUPABASE_KEY=tu_service_role_key
+DERIV_API_KEY=tu_api_key (opcional)
 ```
 
-## 🔧 Variables de Entorno Requeridas en Railway
-
-| Variable | Descripción | Dónde obtenerla |
-|----------|-------------|-----------------|
-| `PORT` | Puerto del servidor | Railway lo asigna automático |
-| `DERIV_APP_ID` | App ID de Deriv | https://app.deriv.com/account/api-token |
-| `OPENAI_API_KEY` | API Key OpenAI | https://platform.openai.com/api-keys |
-| `SUPABASE_URL` | URL proyecto | https://app.supabase.com |
-| `SUPABASE_SERVICE_ROLE_KEY` | Service Role Key | Supabase → Settings → API |
-| `TELEGRAM_BOT_TOKEN` | Token del bot | @BotFather en Telegram |
-| `TELEGRAM_CHAT_ID` | ID del chat | Usar @userinfobot |
-
-## 🚀 Cómo Desplegar en Railway
-
-### Opción 1: Git Push (Recomendado)
-```bash
-cd ~/Desktop/new\ flim/trading-platform
-
-# Extraer el ZIP y reemplazar backend/
-# Luego:
-git add .
-git commit -m "v14.0 - Trading Master Pro"
-git push origin main
+### 2. Configuración Railway
+El archivo `railway.json` ya está configurado:
+```json
+{
+  "build": { "builder": "NIXPACKS" },
+  "deploy": { "startCommand": "node index.js", "restartPolicyType": "ON_FAILURE" }
+}
 ```
 
-### Opción 2: Railway CLI
-```bash
-railway login
-railway link
-railway up
-```
+## 📡 Endpoints API
 
-## ✅ Verificar que funciona
+### Señales
+- `GET /api/signals` - Obtener señales activas
+- `POST /api/signals/:id/update` - Actualizar estado de señal
 
-Después del deploy, en los logs de Railway debes ver:
+### Reportes
+- `GET /api/reports/:userId` - Obtener reporte por período
+- `GET /api/reports/summary/:userId` - Resumen general
+- `GET /api/reports/equity/:userId` - Curva de equity
 
-```
-╔═══════════════════════════════════════════════════════╗
-║   🤖 TRADING MASTER PRO v14.0 - ELISA AI              ║
-╠═══════════════════════════════════════════════════════╣
-║  Puerto: 3001                                         ║
-║  OpenAI: ✅ Conectado                                 ║
-║  Supabase: ✅ Conectado                               ║
-║  Telegram: ✅ Configurado                             ║
-║  Modelos SMC: 6 cargados                              ║
-║  Aprendizaje: ✅ Activo                               ║
-╚═══════════════════════════════════════════════════════╝
+### Sistema
+- `GET /health` - Health check
+- `GET /api/status` - Estado del sistema
+- `GET /api/assets` - Lista de activos
 
-🔌 Conectando a Deriv WebSocket...
-   App ID: 1089
-   URL: wss://ws.derivws.com/websockets/v3
-✅ Conectado a Deriv WebSocket
+## 🗄️ Base de Datos (Supabase)
 
-📊 Suscribiendo a activos:
-   → Step (stpRNG)
-   → V75 (R_75)
-   → XAU (frxXAUUSD)
-   → GBP (frxGBPUSD)
-   → BTC (cryBTCUSD)
-   → Boom1K (BOOM1000)
-   → Boom500 (BOOM500)
-   → Crash1K (CRASH1000)
-   → Crash500 (CRASH500)
+Ejecutar `supabase-schema.sql` en el SQL Editor de Supabase para crear:
+- Tabla `users` - Usuarios y suscripciones
+- Tabla `signals` - Historial de señales
+- Tabla `daily_snapshots` - Snapshots diarios para reportes
+- Funciones RPC para estadísticas
 
-✅ Suscripciones enviadas - Esperando datos...
+## 📊 Modelos SMC Incluidos
 
-📊 [Step] M5: 100 velas cargadas
-📊 [V75] M5: 100 velas cargadas
-...
-```
-
-## 📋 Modelos SMC Incluidos
-
-| Modelo | Score | Requisitos |
-|--------|-------|------------|
-| MTF_CONFLUENCE | 95-100 | M5=H1 + Pullback |
-| CHOCH_PULLBACK | 85-90 | CHoCH + Pullback (NO MTF) |
-| BOS_CONTINUATION | 80 | BOS + Pullback + MTF |
-| ZONE_TOUCH | 78 | OB + Rechazo + MTF |
-| BOOM_SPIKE | 70-95 | Estructura + Demanda (LONG) |
-| CRASH_SPIKE | 70-95 | Estructura + Supply (SHORT) |
-
-## 🆘 Troubleshooting
-
-### "Supabase no configurado"
-- Verifica que SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY estén correctas en Railway
-
-### "No se conecta a Deriv"
-- El App ID 1089 es el público de demo
-- Verifica la conexión a internet del servidor
-
-### "No llegan señales a Telegram"
-- Verifica TELEGRAM_BOT_TOKEN y TELEGRAM_CHAT_ID
-- El bot debe estar agregado al grupo/canal
-
-### "ELISA no responde"
-- Verifica OPENAI_API_KEY
-- Si no hay API key, ELISA usa modo fallback local
+El archivo contiene los 12 modelos SMC:
+1. MTF_CONFLUENCE
+2. CHOCH_PULLBACK
+3. BOS_CONTINUATION
+4. BREAKER_BLOCK
+5. INDUCEMENT
+6. LIQUIDITY_GRAB
+7. SMART_MONEY_TRAP
+8. FVG_ENTRY
+9. OB_ENTRY
+10. OTE_ENTRY
+11. BOOM_SPIKE
+12. CRASH_SPIKE

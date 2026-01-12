@@ -1,5 +1,17 @@
 {
   "rewrites": [
+    { "source": "/modelosmc", "destination": "/Modelosmc/index.html" },
+    { "source": "/modelosmc/", "destination": "/Modelosmc/index.html" },
+    { "source": "/Modelosmc", "destination": "/Modelosmc/index.html" },
+    { "source": "/Modelosmc/", "destination": "/Modelosmc/index.html" },
+    { "source": "/elisaiapro", "destination": "/ElisaIAPro/index.html" },
+    { "source": "/elisaiapro/", "destination": "/ElisaIAPro/index.html" },
+    { "source": "/ElisaIAPro", "destination": "/ElisaIAPro/index.html" },
+    { "source": "/ElisaIAPro/", "destination": "/ElisaIAPro/index.html" },
+    { "source": "/ofertaelisaia", "destination": "/ofertaelisaIA/index.html" },
+    { "source": "/ofertaelisaia/", "destination": "/ofertaelisaIA/index.html" },
+    { "source": "/ofertaelisaIA", "destination": "/ofertaelisaIA/index.html" },
+    { "source": "/ofertaelisaIA/", "destination": "/ofertaelisaIA/index.html" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }

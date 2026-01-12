@@ -1,207 +1,121 @@
-# 🤖 Trading Master Pro v14.0
+# 📊 Trading Master Pro v24.2
 
-**Plataforma de Señales de Trading con Smart Money Concepts (SMC) + ELISA IA**
+Sistema de señales de trading SMC (Smart Money Concepts) con IA integrada (ELISA).
 
-![Version](https://img.shields.io/badge/version-14.0-blue)
-![React](https://img.shields.io/badge/React-18.2-61dafb)
-![Node](https://img.shields.io/badge/Node-18+-green)
+## 🚀 Características
 
----
+- **12 Modelos SMC**: MTF_CONFLUENCE, CHOCH_PULLBACK, BOS_CONTINUATION, BREAKER_BLOCK, INDUCEMENT, LIQUIDITY_GRAB, SMART_MONEY_TRAP, FVG_ENTRY, OB_ENTRY, OTE_ENTRY, BOOM_SPIKE, CRASH_SPIKE
+- **ELISA AI**: Asistente de trading con recomendaciones personalizadas
+- **Multi-Timeframe**: Análisis H1 + M5 para mayor precisión
+- **Reportes Avanzados**: Capital simulado editable, gráficos de rendimiento, estadísticas por modelo/activo
+- **Sistema de Planes**: ELITE, PREMIUM, STARTER con diferentes características
 
-## 📋 Descripción
-
-Trading Master Pro es una plataforma de análisis técnico basada en **Smart Money Concepts (SMC)** que proporciona señales de trading en tiempo real para diversos activos sintéticos y forex.
-
-### ✨ Características Principales
-
-- 🎯 **6 Modelos SMC** - MTF Confluence, CHoCH Pullback, BOS Continuation, Zone Touch, Boom Spike, Crash Spike
-- 🤖 **ELISA IA** - Asistente inteligente con OpenAI para análisis y mentoría
-- 📊 **9 Activos** - Step Index, V75, XAU, GBP, BTC, Boom 500/1000, Crash 500/1000
-- 📱 **Telegram** - Notificaciones en tiempo real
-- 📈 **Sistema de Aprendizaje** - Mejora automática basada en resultados
-- 💳 **Suscripciones** - Planes Free, Básico, Premium y Elite
-
----
-
-## 🏗️ Arquitectura
-
-```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│    FRONTEND     │────▶│     BACKEND     │────▶│   SERVICIOS     │
-│    (Vercel)     │◀────│    (Railway)    │◀────│                 │
-└─────────────────┘     └─────────────────┘     └─────────────────┘
-        │                       │                       │
-   React + Vite            Node.js               Deriv WebSocket
-   Tailwind CSS            Express               OpenAI API
-   Supabase Auth           WebSocket             Telegram Bot
-                           SMC Engine            Supabase DB
-```
-
----
-
-## 📦 Estructura del Proyecto
+## 📁 Estructura del Proyecto
 
 ```
 trading-platform/
-├── backend/                 # Servidor Node.js
-│   ├── index.js            # Servidor principal (3500+ líneas)
-│   ├── package.json        # Dependencias
-│   ├── data/
-│   │   └── smc-models.json # Modelos SMC
-│   └── README.md           # Documentación backend
+├── backend/
+│   ├── index.js              # Servidor principal (Express + SMC Engine)
+│   ├── package.json          # Dependencias Node.js
+│   ├── railway.json          # Configuración Railway
+│   ├── supabase-schema.sql   # Schema de base de datos
+│   └── .env.example          # Variables de entorno ejemplo
 │
-├── frontend/               # Aplicación React
-│   ├── src/
-│   │   ├── App.jsx        # Componente principal
-│   │   ├── Dashboard.jsx  # Dashboard
-│   │   ├── Login.jsx      # Login
-│   │   ├── AdminPanel.jsx # Panel admin
-│   │   └── Pricing.jsx    # Planes
-│   ├── package.json       # Dependencias
-│   └── README.md          # Documentación frontend
-│
-└── README.md              # Este archivo
+└── frontend/
+    ├── src/
+    │   ├── App.jsx           # Componente principal
+    │   ├── Dashboard.jsx     # Dashboard principal
+    │   ├── ReportsSection.jsx # Sección de reportes
+    │   ├── Login.jsx         # Página de login
+    │   ├── AdminPanel.jsx    # Panel de administración
+    │   ├── Pricing.jsx       # Página de precios
+    │   ├── main.jsx          # Entry point
+    │   ├── index.css         # Estilos globales
+    │   └── config/
+    │       └── plans.js      # Configuración de planes
+    │
+    ├── public/
+    │   ├── Modelosmc/        # Tutorial modelos SMC
+    │   ├── ElisaIAPro/       # Página ELISA IA Pro
+    │   ├── ofertaelisaIA/    # Página oferta ELISA
+    │   └── elisa.png         # Logo ELISA
+    │
+    ├── index.html            # HTML principal
+    ├── package.json          # Dependencias frontend
+    ├── vite.config.js        # Configuración Vite
+    ├── tailwind.config.js    # Configuración Tailwind
+    ├── postcss.config.js     # Configuración PostCSS
+    └── vercel.json           # Configuración Vercel (rewrites)
 ```
 
----
-
-## 🚀 Instalación Rápida
-
-### 1. Clonar Repositorio
-```bash
-git clone https://github.com/tu-usuario/trading-master-pro.git
-cd trading-master-pro
-```
-
-### 2. Configurar Backend
-```bash
-cd backend
-npm install
-cp .env.example .env
-# Editar .env con tus credenciales
-npm start
-```
-
-### 3. Configurar Frontend
-```bash
-cd frontend
-npm install
-cp .env.example .env
-# Editar .env con tus credenciales
-npm run dev
-```
-
----
-
-## 🔧 Variables de Entorno
+## 🛠️ Instalación
 
 ### Backend (Railway)
-| Variable | Descripción |
-|----------|-------------|
-| `PORT` | Puerto del servidor |
-| `DERIV_APP_ID` | App ID de Deriv |
-| `OPENAI_API_KEY` | API Key de OpenAI |
-| `SUPABASE_URL` | URL de Supabase |
-| `SUPABASE_SERVICE_ROLE_KEY` | Service Role Key |
-| `TELEGRAM_BOT_TOKEN` | Token del bot |
-| `TELEGRAM_CHAT_ID` | ID del chat |
+
+1. Crear proyecto en Railway
+2. Conectar repositorio GitHub
+3. Configurar variables de entorno:
+   ```
+   SUPABASE_URL=tu_url
+   SUPABASE_KEY=tu_key
+   DERIV_API_KEY=tu_api_key (opcional)
+   ```
+4. Deploy automático
 
 ### Frontend (Vercel)
-| Variable | Descripción |
-|----------|-------------|
-| `VITE_API_URL` | URL del backend |
-| `VITE_SUPABASE_URL` | URL de Supabase |
-| `VITE_SUPABASE_ANON_KEY` | Anon Key |
 
----
+1. Crear proyecto en Vercel
+2. Conectar repositorio GitHub
+3. Configurar variables de entorno:
+   ```
+   VITE_API_URL=https://tu-backend.railway.app
+   VITE_SUPABASE_URL=tu_url
+   VITE_SUPABASE_ANON_KEY=tu_key
+   ```
+4. Deploy automático
+
+### Base de Datos (Supabase)
+
+1. Crear proyecto en Supabase
+2. Ejecutar `supabase-schema.sql` en el SQL Editor
+3. Configurar autenticación (Email/Password)
 
 ## 📊 Modelos SMC
 
-| Modelo | Score | Dirección | Requisitos |
-|--------|-------|-----------|------------|
-| MTF_CONFLUENCE | 95-100 | Ambas | M5=H1 + Pullback |
-| CHOCH_PULLBACK | 85-90 | Ambas | CHoCH + Pullback |
-| BOS_CONTINUATION | 80 | Ambas | BOS + MTF |
-| ZONE_TOUCH | 78 | Ambas | OB + Rechazo + MTF |
-| BOOM_SPIKE | 70-95 | LONG | Estructura + Demanda |
-| CRASH_SPIKE | 70-95 | SHORT | Estructura + Supply |
+| # | Modelo | Score | Tier | Descripción |
+|---|--------|-------|------|-------------|
+| 1 | MTF_CONFLUENCE | 95-100 | S | Multi-timeframe H1+M5 alineados |
+| 2 | CHOCH_PULLBACK | 85-95 | A | Cambio de carácter + pullback |
+| 3 | BOS_CONTINUATION | 78-90 | A | Break of Structure + continuación |
+| 4 | BREAKER_BLOCK | 80-93 | A | OB que falla se convierte en opuesto |
+| 5 | INDUCEMENT | 80-92 | A | Barrido de liquidez (equal H/L) |
+| 6 | LIQUIDITY_GRAB | 80-92 | A | Captura de liquidez rápida |
+| 7 | SMART_MONEY_TRAP | 75-88 | B | Falso breakout/trampa institucional |
+| 8 | FVG_ENTRY | 76-89 | B | Fair Value Gap entry |
+| 9 | OB_ENTRY | 76-90 | B | Order Block directo |
+| 10 | OTE_ENTRY | 90-98 | S | Optimal Trade Entry (61.8%-78.6%) |
+| 11 | BOOM_SPIKE | 80-95 | A | Solo LONG para índices Boom |
+| 12 | CRASH_SPIKE | 80-95 | A | Solo SHORT para índices Crash |
 
----
+## 🔧 Correcciones v24.1
 
-## 💳 Planes de Suscripción
+- **OB = Solo cuerpo**: El Order Block ahora es solo el cuerpo de la vela (no incluye mechas)
+- **Pullback TOCA OB**: El precio debe tocar el OB, no solo estar "cerca"
+- **SL en mecha del OB**: Stop Loss colocado en la mecha del OB (no arbitrario)
+- **Confirmación obligatoria**: Se requiere engulfing o mecha de rechazo > 50%
 
-| Plan | Precio COP | Precio USD | Activos |
-|------|------------|------------|---------|
-| Free Trial | $0 | $0 | Todos (5 días) |
-| Básico | $29,900 | $9 | Step, V75, XAU, BTC |
-| Premium | $59,900 | $19 | + GBP |
-| Elite | $99,900 | $29 | + Boom/Crash |
+## 📱 URLs
 
----
-
-## 🌐 Despliegue
-
-### Backend → Railway
-```bash
-cd backend
-railway login
-railway link
-railway up
-```
-
-### Frontend → Vercel
-```bash
-cd frontend
-vercel --prod
-```
-
----
-
-## 📱 Funcionalidades
-
-### Dashboard
-- 📊 Gráfico de velas en tiempo real
-- 🎯 Panel de señales activas con Entry/SL/TP
-- 📈 Indicadores M5/H1 de estructura
-- 💰 Estadísticas de Win/Loss
-- ✅ Botones Win/Loss para registrar resultados
-
-### ELISA IA Chat
-- 💬 Asistente IA 24/7 powered by OpenAI
-- 📚 Mentoría de trading (psicotrading, plan, simulador)
-- 🧠 Explicación de patrones SMC
-- ✅ Control de operaciones (máx 10/día)
-
-### Admin Panel (/admin)
-- 👥 Gestión de usuarios y suscripciones
-- 📊 Estadísticas del sistema
-- 🔧 Configuración de parámetros
-- 📈 Métricas de rendimiento
-
----
-
-## 🔌 APIs Externas
-
-| Servicio | Uso |
-|----------|-----|
-| **Deriv** | WebSocket para datos de mercado en tiempo real |
-| **OpenAI** | GPT-4 para ELISA IA |
-| **Supabase** | Autenticación y base de datos |
-| **Telegram** | Notificaciones de señales |
-
----
-
-## 📞 Soporte
-
-- 💬 Telegram: @TradingMasterProSupport
-- 📧 Email: soporte@tradingmasterpro.com
-
----
+- **App Principal**: https://trading-master-pro.vercel.app
+- **Tutorial SMC**: https://trading-master-pro.vercel.app/modelosmc
+- **ELISA IA Pro**: https://trading-master-pro.vercel.app/elisaiapro
+- **Oferta**: https://trading-master-pro.vercel.app/ofertaelisaia
+- **Admin**: https://trading-master-pro.vercel.app/admin
 
 ## 📄 Licencia
 
-Propiedad de Trading Master Pro © 2024-2026. Todos los derechos reservados.
+Proyecto privado - Todos los derechos reservados.
 
----
+## 📞 Soporte
 
-**Desarrollado con ❤️ por el equipo de Trading Master Pro**
+WhatsApp: +57 300 000 0000
