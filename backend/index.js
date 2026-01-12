@@ -4084,6 +4084,121 @@ app.get('/api/dashboard', (req, res) => {
   });
 });
 
+// =============================================
+// DASHBOARD PERSONALIZADO POR USUARIO
+// =============================================
+app.get('/api/dashboard/:userId', async (req, res) => {
+  const { userId } = req.params;
+  
+  try {
+    // Obtener suscripción del usuario
+    const subscription = await getUserSubscription(userId);
+    const userPlan = subscription?.plan || 'free';
+    const planConfig = PLANS[userPlan] || PLANS.free;
+    const allowedAssets = planConfig.assets || PLANS.free.assets;
+    
+    // Filtrar activos según el plan del usuario
+    const userAssets = Object.entries(assetData)
+      .filter(([symbol]) => allowedAssets.includes(symbol))
+      .map(([symbol, data]) => ({
+        symbol,
+        ...ASSETS[symbol],
+        price: data.price,
+        signal: data.signal,
+        lockedSignal: data.lockedSignal,
+        structureM5: data.structure?.trend || 'LOADING',
+        structureH1: data.structureH1?.trend || 'LOADING',
+        h1Loaded: data.h1Loaded || false,
+        mtfConfluence: data.mtfConfluence || false,
+        premiumDiscount: data.premiumDiscount || 'EQUILIBRIUM',
+        demandZones: data.demandZones?.length || 0,
+        supplyZones: data.supplyZones?.length || 0,
+        fvgZones: data.fvgZones?.length || 0
+      }));
+    
+    // Filtrar señales solo de activos del plan del usuario
+    const userSignals = signalHistory.filter(s => allowedAssets.includes(s.symbol));
+    
+    // Calcular estadísticas SOLO de los activos del usuario
+    const userStats = {
+      total: 0,
+      wins: 0,
+      losses: 0,
+      pending: 0,
+      tp1Hits: 0,
+      tp2Hits: 0,
+      tp3Hits: 0,
+      winRate: 0
+    };
+    
+    userSignals.forEach(signal => {
+      if (signal.status === 'PENDING') {
+        userStats.pending++;
+      } else if (signal.status === 'WIN') {
+        userStats.wins++;
+        userStats.total++;
+        if (signal.tpHit === 1) userStats.tp1Hits++;
+        else if (signal.tpHit === 2) userStats.tp2Hits++;
+        else if (signal.tpHit === 3) userStats.tp3Hits++;
+      } else if (signal.status === 'LOSS') {
+        userStats.losses++;
+        userStats.total++;
+      }
+    });
+    
+    userStats.winRate = userStats.total > 0 
+      ? Math.round((userStats.wins / userStats.total) * 100) 
+      : 0;
+    
+    // Obtener estadísticas guardadas del usuario si existen
+    let savedStats = null;
+    if (reportsManager) {
+      try {
+        savedStats = await reportsManager.getUserSummary(userId);
+      } catch (e) {
+        console.log('No saved stats for user:', userId);
+      }
+    }
+    
+    // Combinar estadísticas en tiempo real con las guardadas
+    const finalStats = savedStats?.totalTrades > 0 ? {
+      total: savedStats.totalTrades,
+      wins: savedStats.wins,
+      losses: savedStats.losses,
+      pending: userStats.pending,
+      tp1Hits: savedStats.tp1Hits || 0,
+      tp2Hits: savedStats.tp2Hits || 0,
+      tp3Hits: savedStats.tp3Hits || 0,
+      winRate: savedStats.winRate,
+      profitFactor: savedStats.profitFactor,
+      avgScore: savedStats.avgScore
+    } : userStats;
+    
+    res.json({
+      connected: isConnected,
+      timestamp: Date.now(),
+      userId,
+      userPlan,
+      planName: planConfig.name,
+      assets: userAssets,
+      recentSignals: userSignals.slice(0, 30),
+      stats: finalStats,
+      subscription: {
+        plan: userPlan,
+        planName: planConfig.name,
+        status: subscription?.status || 'trial',
+        daysLeft: subscription?.days_left,
+        assetsCount: allowedAssets.length,
+        hasNightAccess: userPlan === 'premium' || userPlan === 'elite'
+      }
+    });
+    
+  } catch (error) {
+    console.error('Error getting user dashboard:', error);
+    res.status(500).json({ error: 'Error loading dashboard' });
+  }
+});
+
 app.get('/api/analyze/:symbol', (req, res) => {
   const { symbol } = req.params;
   const data = assetData[symbol];

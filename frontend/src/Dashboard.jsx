@@ -404,12 +404,16 @@ export default function Dashboard({ user, onLogout }) {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Data fetching - SIN allowedAssets en dependencias
+  // Data fetching - Dashboard personalizado por usuario
   useEffect(() => {
+    if (!user?.email && !user?.id) return;
+    
     let isCancelled = false;
     const fetchData = async () => {
       try {
-        const res = await fetch(`${API_URL}/api/dashboard`);
+        // Usar el endpoint personalizado con el userId
+        const identifier = encodeURIComponent(user.email || user.id);
+        const res = await fetch(`${API_URL}/api/dashboard/${identifier}`);
         const json = await res.json();
         if (!isCancelled && mountedRef.current) {
           setData(json);
@@ -419,12 +423,26 @@ export default function Dashboard({ user, onLogout }) {
             setSelectedAsset(json.assets[0].symbol);
           }
         }
-      } catch (e) { console.error('Fetch error:', e); }
+      } catch (e) { 
+        console.error('Fetch error:', e);
+        // Fallback al endpoint genérico si falla
+        try {
+          const res = await fetch(`${API_URL}/api/dashboard`);
+          const json = await res.json();
+          if (!isCancelled && mountedRef.current) {
+            setData(json);
+            if (!initialAssetSetRef.current && json.assets?.length) {
+              initialAssetSetRef.current = true;
+              setSelectedAsset(json.assets[0].symbol);
+            }
+          }
+        } catch (e2) { console.error('Fallback fetch error:', e2); }
+      }
     };
     fetchData();
     const interval = setInterval(fetchData, 3000);
     return () => { isCancelled = true; clearInterval(interval); };
-  }, []); // Sin dependencias - se ejecuta solo una vez y luego el interval
+  }, [user?.email, user?.id]);
 
   useEffect(() => {
     if (!selectedAsset) return;
@@ -461,7 +479,7 @@ export default function Dashboard({ user, onLogout }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           status,
-          userId: user?.id,
+          userId: user?.email || user?.id,
           tpHit: null
         })
       });
@@ -477,7 +495,7 @@ export default function Dashboard({ user, onLogout }) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ 
             status: 'WIN',
-            userId: user?.id,
+            userId: user?.email || user?.id,
             tpHit
           })
         });
@@ -760,12 +778,49 @@ export default function Dashboard({ user, onLogout }) {
     
     return (
       <div className="space-y-4">
-        {/* Stats */}
+        {/* Header del plan del usuario */}
+        <div className="bg-gradient-to-r from-[#0d0d12] to-[#12121a] rounded-xl border border-white/5 p-3">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-3">
+              <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                subscription?.plan === 'elite' ? 'bg-gradient-to-br from-purple-500 to-pink-500' :
+                subscription?.plan === 'premium' ? 'bg-gradient-to-br from-cyan-500 to-blue-500' :
+                subscription?.plan === 'basico' ? 'bg-gradient-to-br from-emerald-500 to-green-500' :
+                'bg-gradient-to-br from-amber-500 to-orange-500'
+              }`}>
+                <span className="text-xl">
+                  {subscription?.plan === 'elite' ? '👑' :
+                   subscription?.plan === 'premium' ? '💎' :
+                   subscription?.plan === 'basico' ? '⭐' : '🎯'}
+                </span>
+              </div>
+              <div>
+                <p className="text-white font-semibold text-sm">{subscription?.plan_name || 'Free Trial'}</p>
+                <p className="text-white/40 text-xs">
+                  {data?.assets?.length || 0} activos · {subscription?.status === 'trial' ? `${subscription.days_left}d trial` : 
+                   (subscription?.hasNightAccess ? 'Acceso 24/7' : 'Horario diurno')}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className={`text-xs px-2 py-1 rounded-lg ${
+                subscription?.plan === 'elite' ? 'bg-purple-500/20 text-purple-400' :
+                subscription?.plan === 'premium' ? 'bg-cyan-500/20 text-cyan-400' :
+                subscription?.plan === 'basico' ? 'bg-emerald-500/20 text-emerald-400' :
+                'bg-amber-500/20 text-amber-400'
+              }`}>
+                {user?.email?.split('@')[0] || 'Usuario'}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Stats - Estadísticas personales del usuario */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
-            <p className="text-white/40 text-xs mb-1">Win Rate</p>
+            <p className="text-white/40 text-xs mb-1">Tu Win Rate</p>
             <p className="text-2xl font-bold text-white">
-              {data?.stats?.total ? Math.round((data.stats.wins / data.stats.total) * 100) : 0}%
+              {data?.stats?.winRate || (data?.stats?.total ? Math.round((data.stats.wins / data.stats.total) * 100) : 0)}%
             </p>
           </div>
           <div className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
@@ -773,11 +828,11 @@ export default function Dashboard({ user, onLogout }) {
             <p className="text-2xl font-bold text-cyan-400">{data?.stats?.pending || 0}</p>
           </div>
           <div className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
-            <p className="text-white/40 text-xs mb-1">Wins</p>
+            <p className="text-white/40 text-xs mb-1">Tus Wins</p>
             <p className="text-2xl font-bold text-emerald-400">{data?.stats?.wins || 0}</p>
           </div>
           <div className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
-            <p className="text-white/40 text-xs mb-1">Loss</p>
+            <p className="text-white/40 text-xs mb-1">Tus Loss</p>
             <p className="text-2xl font-bold text-red-400">{data?.stats?.losses || 0}</p>
           </div>
         </div>
@@ -1090,43 +1145,110 @@ export default function Dashboard({ user, onLogout }) {
   // Stats Section
   const StatsSection = () => (
     <div className="space-y-4">
+      {/* Header con info del usuario */}
+      <div className="bg-gradient-to-r from-[#0d0d12] to-[#12121a] rounded-xl border border-white/5 p-4">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-3">
+            <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
+              subscription?.plan === 'elite' ? 'bg-gradient-to-br from-purple-500 to-pink-500' :
+              subscription?.plan === 'premium' ? 'bg-gradient-to-br from-cyan-500 to-blue-500' :
+              subscription?.plan === 'basico' ? 'bg-gradient-to-br from-emerald-500 to-green-500' :
+              'bg-gradient-to-br from-amber-500 to-orange-500'
+            }`}>
+              <span className="text-2xl">
+                {subscription?.plan === 'elite' ? '👑' :
+                 subscription?.plan === 'premium' ? '💎' :
+                 subscription?.plan === 'basico' ? '⭐' : '🎯'}
+              </span>
+            </div>
+            <div>
+              <p className="text-white font-bold">{user?.email?.split('@')[0] || 'Usuario'}</p>
+              <p className="text-white/40 text-sm">{subscription?.plan_name || 'Free Trial'}</p>
+            </div>
+          </div>
+          <div className="text-right">
+            <p className="text-white/40 text-xs">Activos disponibles</p>
+            <p className="text-white font-bold text-lg">{data?.assets?.length || 0} mercados</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Stats principales */}
       <div className="grid grid-cols-2 gap-3">
         <div className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
-          <p className="text-white/40 text-xs mb-1">Total Señales</p>
+          <p className="text-white/40 text-xs mb-1">Mis Señales</p>
           <p className="text-3xl font-bold text-white">{data?.stats?.total || 0}</p>
+          <p className="text-white/30 text-[10px] mt-1">En mis activos</p>
         </div>
         <div className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
-          <p className="text-white/40 text-xs mb-1">Win Rate</p>
+          <p className="text-white/40 text-xs mb-1">Mi Win Rate</p>
           <p className="text-3xl font-bold text-emerald-400">
-            {data?.stats?.total ? Math.round((data.stats.wins / data.stats.total) * 100) : 0}%
+            {data?.stats?.winRate || (data?.stats?.total ? Math.round((data.stats.wins / data.stats.total) * 100) : 0)}%
           </p>
+          <p className="text-white/30 text-[10px] mt-1">Rendimiento personal</p>
         </div>
         <div className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
-          <p className="text-white/40 text-xs mb-1">Wins</p>
+          <p className="text-white/40 text-xs mb-1">Mis Wins</p>
           <p className="text-3xl font-bold text-emerald-400">{data?.stats?.wins || 0}</p>
+          <p className="text-white/30 text-[10px] mt-1">Operaciones ganadoras</p>
         </div>
         <div className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
-          <p className="text-white/40 text-xs mb-1">Losses</p>
+          <p className="text-white/40 text-xs mb-1">Mis Losses</p>
           <p className="text-3xl font-bold text-red-400">{data?.stats?.losses || 0}</p>
+          <p className="text-white/30 text-[10px] mt-1">Operaciones perdidas</p>
         </div>
       </div>
       
+      {/* Take Profits */}
       <div className="bg-[#0d0d12] rounded-xl p-4 border border-white/5">
-        <h3 className="text-white font-medium mb-3">🎯 Take Profits</h3>
+        <h3 className="text-white font-medium mb-3">🎯 Mis Take Profits</h3>
         <div className="grid grid-cols-3 gap-3">
           <div className="text-center p-3 bg-white/5 rounded-lg">
             <p className="text-2xl font-bold text-emerald-400">{data?.stats?.tp1Hits || 0}</p>
-            <p className="text-xs text-white/40">TP1</p>
+            <p className="text-xs text-white/40">TP1 (1:1.5)</p>
           </div>
           <div className="text-center p-3 bg-white/5 rounded-lg">
             <p className="text-2xl font-bold text-cyan-400">{data?.stats?.tp2Hits || 0}</p>
-            <p className="text-xs text-white/40">TP2</p>
+            <p className="text-xs text-white/40">TP2 (1:2.5)</p>
           </div>
           <div className="text-center p-3 bg-white/5 rounded-lg">
             <p className="text-2xl font-bold text-purple-400">{data?.stats?.tp3Hits || 0}</p>
-            <p className="text-xs text-white/40">TP3</p>
+            <p className="text-xs text-white/40">TP3 (1:4)</p>
           </div>
         </div>
+      </div>
+
+      {/* Info del plan */}
+      <div className="bg-gradient-to-r from-purple-500/10 to-pink-500/10 rounded-xl p-4 border border-purple-500/20">
+        <h3 className="text-white font-medium mb-3">📊 Tu Plan: {subscription?.plan_name || 'Free Trial'}</h3>
+        <div className="grid grid-cols-2 gap-3 text-sm">
+          <div className="flex items-center gap-2">
+            <span className="text-emerald-400">✓</span>
+            <span className="text-white/70">{data?.assets?.length || 0} activos</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className={subscription?.hasNightAccess ? 'text-emerald-400' : 'text-white/30'}>
+              {subscription?.hasNightAccess ? '✓' : '✗'}
+            </span>
+            <span className="text-white/70">Sesión nocturna</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-emerald-400">✓</span>
+            <span className="text-white/70">12 Modelos SMC</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-emerald-400">✓</span>
+            <span className="text-white/70">ELISA IA</span>
+          </div>
+        </div>
+        {subscription?.plan !== 'elite' && (
+          <button 
+            onClick={() => setShowPricing(true)}
+            className="mt-4 w-full py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white font-semibold rounded-lg text-sm hover:opacity-90 transition-opacity"
+          >
+            ⚡ Mejorar Plan
+          </button>
+        )}
       </div>
     </div>
   );
