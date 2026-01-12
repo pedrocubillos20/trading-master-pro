@@ -300,6 +300,7 @@ export default function Dashboard({ user, onLogout }) {
   const [showPricing, setShowPricing] = useState(false);
   const [subscription, setSubscription] = useState(null);
   const [loadingSub, setLoadingSub] = useState(true);
+  const [tradingSession, setTradingSession] = useState(null);
   
   const mountedRef = useRef(true);
   const initialAssetSetRef = useRef(false);
@@ -339,6 +340,27 @@ export default function Dashboard({ user, onLogout }) {
     fetchSubscription();
   }, [user?.id, user?.email]);
 
+  // Verificar estado de sesión de trading
+  useEffect(() => {
+    const checkTradingSession = async () => {
+      try {
+        const plan = subscription?.plan || 'free';
+        const res = await fetch(`${API_URL}/api/trading-session?plan=${plan}`);
+        const json = await res.json();
+        if (mountedRef.current) {
+          setTradingSession(json);
+        }
+      } catch (e) {
+        console.error('Trading session error:', e);
+      }
+    };
+    
+    checkTradingSession();
+    // Verificar cada 30 segundos
+    const interval = setInterval(checkTradingSession, 30000);
+    return () => clearInterval(interval);
+  }, [subscription?.plan]);
+
   // Verificar acceso - usar useMemo para evitar recrear el array
   const isExpired = subscription?.status === 'expired';
   const allowedAssets = useMemo(() => {
@@ -347,13 +369,30 @@ export default function Dashboard({ user, onLogout }) {
   
   // Verificar bloqueo nocturno (Premium/Elite tienen acceso 24/7)
   const isNightBlocked = useMemo(() => {
+    // Usar el estado del servidor si está disponible
+    if (tradingSession) {
+      return tradingSession.isLocked && tradingSession.lockReason === 'night_session';
+    }
+    // Fallback: calcular localmente
     const plan = subscription?.plan;
     if (plan === 'premium' || plan === 'elite') return false;
     const now = new Date();
     const utcHour = now.getUTCHours() + now.getUTCMinutes() / 60;
-    // Horario diurno: 11:00 - 19:00 UTC (6AM - 2PM Colombia)
-    return !(utcHour >= 11 && utcHour < 19);
-  }, [subscription?.plan]);
+    // Horario nocturno: 01:30-06:00 UTC (8:30PM-1AM Colombia)
+    const isNightTime = utcHour >= 1.5 && utcHour < 6;
+    return isNightTime;
+  }, [subscription?.plan, tradingSession]);
+
+  // Verificar si el mercado está cerrado (para todos)
+  const isMarketClosed = useMemo(() => {
+    if (tradingSession) {
+      return tradingSession.isLocked && tradingSession.lockReason === 'market_closed';
+    }
+    const now = new Date();
+    const utcHour = now.getUTCHours() + now.getUTCMinutes() / 60;
+    // Fuera de horario base (11-19 UTC) y fuera de horario nocturno (1.5-6 UTC)
+    return !(utcHour >= 11 && utcHour < 19) && !(utcHour >= 1.5 && utcHour < 6);
+  }, [tradingSession]);
   
   useEffect(() => {
     const handleResize = () => {
@@ -1104,6 +1143,89 @@ export default function Dashboard({ user, onLogout }) {
         {showPricing && (
           <Pricing user={user} subscription={subscription} onClose={() => setShowPricing(false)} />
         )}
+      </div>
+    );
+  }
+
+  // Pantalla de bloqueo - Sesión nocturna (Free/Básico no tienen acceso)
+  if (isNightBlocked) {
+    return (
+      <div className="min-h-screen bg-[#06060a] flex flex-col">
+        <Sidebar />
+        <main className={`flex-1 transition-all duration-300 ${sidebarOpen && !isMobile ? 'ml-48' : 'ml-0'}`}>
+          <Header />
+          <div className="flex-1 flex items-center justify-center p-8">
+            <div className="text-center max-w-lg">
+              {/* Icono animado de candado */}
+              <div className="relative w-32 h-32 mx-auto mb-8">
+                <div className="absolute inset-0 bg-gradient-to-r from-purple-500/20 to-pink-500/20 rounded-full animate-pulse" />
+                <div className="absolute inset-2 bg-gradient-to-r from-purple-500/30 to-pink-500/30 rounded-full animate-pulse" style={{ animationDelay: '150ms' }} />
+                <div className="absolute inset-4 bg-[#0d0d12] rounded-full flex items-center justify-center">
+                  <span className="text-6xl">🌙</span>
+                </div>
+              </div>
+              
+              <h2 className="text-3xl font-bold text-white mb-3">Sesión Nocturna</h2>
+              <p className="text-white/60 mb-6">
+                Estás en horario nocturno. Los planes <span className="text-amber-400 font-semibold">Free</span> y <span className="text-cyan-400 font-semibold">Básico</span> solo tienen acceso durante el día.
+              </p>
+              
+              {/* Horarios */}
+              <div className="bg-white/5 rounded-xl p-4 mb-6 border border-white/10">
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div className="text-left">
+                    <p className="text-white/40 mb-1">☀️ Horario Diurno</p>
+                    <p className="text-emerald-400 font-semibold">6:00 AM - 2:00 PM</p>
+                    <p className="text-white/30 text-xs">Todos los planes</p>
+                  </div>
+                  <div className="text-left">
+                    <p className="text-white/40 mb-1">🌙 Horario Nocturno</p>
+                    <p className="text-purple-400 font-semibold">8:30 PM - 1:00 AM</p>
+                    <p className="text-white/30 text-xs">Premium & Elite</p>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Próxima apertura */}
+              {tradingSession?.nextOpen && (
+                <p className="text-white/40 text-sm mb-6">
+                  ⏰ Próxima apertura: <span className="text-white font-semibold">{tradingSession.nextOpen}</span>
+                </p>
+              )}
+              
+              {/* Beneficios Premium */}
+              <div className="bg-gradient-to-r from-purple-500/10 to-pink-500/10 rounded-xl p-4 mb-6 border border-purple-500/20">
+                <p className="text-white font-semibold mb-3">✨ Con Premium o Elite obtienes:</p>
+                <ul className="text-left space-y-2 text-sm">
+                  <li className="flex items-center gap-2 text-white/70">
+                    <span className="text-emerald-400">✓</span> Acceso 24/7 a todas las señales
+                  </li>
+                  <li className="flex items-center gap-2 text-white/70">
+                    <span className="text-emerald-400">✓</span> Sesión nocturna (8:30 PM - 1:00 AM)
+                  </li>
+                  <li className="flex items-center gap-2 text-white/70">
+                    <span className="text-emerald-400">✓</span> Más activos y mejores oportunidades
+                  </li>
+                  <li className="flex items-center gap-2 text-white/70">
+                    <span className="text-emerald-400">✓</span> Soporte prioritario vía Telegram
+                  </li>
+                </ul>
+              </div>
+              
+              <button 
+                onClick={() => setShowPricing(true)}
+                className="px-8 py-4 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-400 hover:to-pink-400 text-white font-bold rounded-xl transition-all transform hover:scale-105 text-lg shadow-lg shadow-purple-500/25"
+              >
+                🚀 Actualizar Plan
+              </button>
+              <p className="text-white/30 text-sm mt-4">Premium desde $59.900 COP/mes</p>
+            </div>
+          </div>
+        </main>
+        {showPricing && (
+          <Pricing user={user} subscription={subscription} onClose={() => setShowPricing(false)} />
+        )}
+        <ElisaChat selectedAsset={selectedAsset} isMobile={isMobile} />
       </div>
     );
   }

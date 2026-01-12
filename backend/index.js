@@ -1398,7 +1398,7 @@ const SMC = {
       
       return {
         action: 'LONG',
-        model: 'BOOM_SMC',
+        model: 'BOOM_SPIKE',
         score: Math.min(100, score),
         entry: +entry.toFixed(config.decimals),
         stop: +stop.toFixed(config.decimals),
@@ -1520,7 +1520,7 @@ const SMC = {
       
       return {
         action: 'SHORT',
-        model: 'CRASH_SMC',
+        model: 'CRASH_SPIKE',
         score: Math.min(100, score),
         entry: +entry.toFixed(config.decimals),
         stop: +stop.toFixed(config.decimals),
@@ -4312,6 +4312,90 @@ app.get('/api/models/:modelId', (req, res) => {
 // =============================================
 app.get('/api/plans', (req, res) => {
   res.json({ plans: PLANS });
+});
+
+// =============================================
+// ENDPOINT: Estado de sesión de trading
+// =============================================
+app.get('/api/trading-session', (req, res) => {
+  const plan = req.query.plan || 'free';
+  const now = new Date();
+  const utcHour = now.getUTCHours() + now.getUTCMinutes() / 60;
+  
+  // Horarios
+  const baseStart = SIGNAL_CONFIG.TRADING_HOURS.base.start; // 11:00 UTC (6AM COL)
+  const baseEnd = SIGNAL_CONFIG.TRADING_HOURS.base.end;     // 19:00 UTC (2PM COL)
+  const nightStart = SIGNAL_CONFIG.TRADING_HOURS.night.start; // 01:30 UTC (8:30PM COL)
+  const nightEnd = SIGNAL_CONFIG.TRADING_HOURS.night.end;     // 06:00 UTC (1AM COL)
+  
+  // Verificar sesión diurna
+  const isDaySession = utcHour >= baseStart && utcHour < baseEnd;
+  
+  // Verificar sesión nocturna (solo Premium/Elite)
+  const isNightSession = utcHour >= nightStart && utcHour < nightEnd;
+  
+  // Determinar acceso según plan
+  const hasDayAccess = true; // Todos tienen acceso diurno
+  const hasNightAccess = plan === 'premium' || plan === 'elite';
+  
+  // Estado actual
+  let sessionStatus = 'closed';
+  let currentSession = null;
+  let isLocked = false;
+  let lockReason = null;
+  
+  if (isDaySession) {
+    sessionStatus = 'open';
+    currentSession = 'day';
+    isLocked = false;
+  } else if (isNightSession) {
+    currentSession = 'night';
+    if (hasNightAccess) {
+      sessionStatus = 'open';
+      isLocked = false;
+    } else {
+      sessionStatus = 'restricted';
+      isLocked = true;
+      lockReason = 'night_session';
+    }
+  } else {
+    sessionStatus = 'closed';
+    currentSession = null;
+    isLocked = true;
+    lockReason = 'market_closed';
+  }
+  
+  // Calcular próxima apertura
+  let nextOpen = null;
+  if (sessionStatus !== 'open') {
+    if (utcHour < baseStart) {
+      nextOpen = `${Math.floor(baseStart)}:${Math.round((baseStart % 1) * 60).toString().padStart(2, '0')} UTC`;
+    } else if (utcHour >= baseEnd && utcHour < nightStart) {
+      if (hasNightAccess) {
+        nextOpen = `${Math.floor(nightStart)}:${Math.round((nightStart % 1) * 60).toString().padStart(2, '0')} UTC`;
+      } else {
+        nextOpen = `${Math.floor(baseStart)}:00 UTC (mañana)`;
+      }
+    } else {
+      nextOpen = `${Math.floor(baseStart)}:00 UTC (mañana)`;
+    }
+  }
+  
+  res.json({
+    sessionStatus,
+    currentSession,
+    isLocked,
+    lockReason,
+    plan,
+    hasNightAccess,
+    nextOpen,
+    hours: {
+      day: { start: '6:00 AM', end: '2:00 PM', timezone: 'Colombia' },
+      night: { start: '8:30 PM', end: '1:00 AM', timezone: 'Colombia', requiredPlan: 'premium' }
+    },
+    serverTime: now.toISOString(),
+    utcHour: utcHour.toFixed(2)
+  });
 });
 
 app.get('/api/subscription/:userId', async (req, res) => {
