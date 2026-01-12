@@ -1275,6 +1275,9 @@ const SMC = {
     const prevCandle = candles[candles.length - 2];
     const price = lastCandle.close;
     
+    // Log cada 15 segundos para Boom/Crash
+    const shouldLog = Date.now() % 15000 < 1000;
+    
     // Obtener swings M5
     const swingsM5 = this.findSwings(candles, 3);
     const structureM5 = this.analyzeStructureBoomCrash(candles, assetType);
@@ -1283,8 +1286,8 @@ const SMC = {
     // ANÁLISIS H1 (OBLIGATORIO para Boom/Crash)
     // ════════════════════════════════════════════════════════════════════════════
     if (!candlesH1 || candlesH1.length < 20) {
-      if (Date.now() % 60000 < 1000) {
-        console.log(`⚠️ [${config.shortName}] Sin datos H1 suficientes para análisis`);
+      if (shouldLog) {
+        console.log(`⚠️ [${config.shortName}] Sin datos H1 suficientes (${candlesH1?.length || 0} velas)`);
       }
       return null;
     }
@@ -1292,10 +1295,26 @@ const SMC = {
     const swingsH1 = this.findSwings(candlesH1, 2);
     const structureH1 = this.analyzeStructure(swingsH1);
     
+    if (shouldLog) {
+      console.log(`📊 [${config.shortName}] Análisis ${assetType.toUpperCase()}:`);
+      console.log(`   H1: ${structureH1.trend} (${structureH1.strength}%) | M5: ${structureM5.trend}`);
+      console.log(`   Velas H1: ${candlesH1.length} | Velas M5: ${candles.length}`);
+      console.log(`   Precio: ${price.toFixed(2)} | AvgRange: ${avgRange.toFixed(2)}`);
+    }
+    
     // ════════════════════════════════════════════════════════════════════════════
     // DETECTAR ORDER BLOCK CON CHOCH/BOS EN H1
     // ════════════════════════════════════════════════════════════════════════════
     const obAnalysis = this.detectOBWithChochBos(candlesH1, assetType);
+    
+    if (shouldLog) {
+      if (obAnalysis) {
+        console.log(`   ✅ OB encontrado: ${obAnalysis.side} zona ${obAnalysis.zone.low.toFixed(2)}-${obAnalysis.zone.high.toFixed(2)}`);
+        console.log(`   CHOCH: ${obAnalysis.hasChoch} | BOS: ${obAnalysis.hasBos}`);
+      } else {
+        console.log(`   ❌ No se encontró OB válido con CHOCH/BOS en H1`);
+      }
+    }
     
     // ═══════════════════════════════════════════════════════════════════════════
     //                    B O O M  -  S O L O  C O M P R A S
@@ -1602,20 +1621,24 @@ const SMC = {
   // 3. CHOCH o BOS de confirmación
   // 4. Nuevo alto/bajo estructural
   // ═══════════════════════════════════════════════════════════════════════════
-  detectOBWithChochBos(candlesH1, assetType, lookback = 20) {
-    if (!candlesH1 || candlesH1.length < lookback) return null;
+  detectOBWithChochBos(candlesH1, assetType, lookback = 30) {
+    if (!candlesH1 || candlesH1.length < 10) return null;
     
     const recentCandles = candlesH1.slice(-lookback);
     const avgRange = this.getAvgRange(candlesH1);
     
-    // Log para debug (cada 30 segundos)
-    const shouldLog = Date.now() % 30000 < 1000;
+    // Log para debug
+    const shouldLog = Date.now() % 15000 < 1000;
     
     // Buscar Order Blocks válidos con confirmación posterior
     let bestOB = null;
     let bestScore = 0;
     
-    for (let i = 1; i < recentCandles.length - 2; i++) {
+    if (shouldLog) {
+      console.log(`   🔍 Buscando OB en últimas ${recentCandles.length} velas H1...`);
+    }
+    
+    for (let i = 0; i < recentCandles.length - 2; i++) {
       const baseCandle = recentCandles[i];
       const engulfCandle = recentCandles[i + 1];
       
@@ -1624,66 +1647,62 @@ const SMC = {
       const baseBody = Math.abs(baseCandle.close - baseCandle.open);
       const engulfBody = Math.abs(engulfCandle.close - engulfCandle.open);
       
-      // Relajar el requisito de tamaño mínimo
-      if (baseBody < avgRange * 0.1 || engulfBody < avgRange * 0.1) continue;
+      // Requisito mínimo muy relajado
+      if (baseBody < avgRange * 0.05 || engulfBody < avgRange * 0.05) continue;
       
       // ═══════════════════════════════════════════════════════════════════════
       // BOOM (BUY): Buscar OB de DEMANDA
-      // Patrón: Vela ROJA + Vela VERDE envolvente + Impulso alcista + CHOCH/BOS
+      // Patrón: Vela ROJA + Vela VERDE que cierra arriba
       // ═══════════════════════════════════════════════════════════════════════
       if (assetType === 'boom') {
         const isBaseRed = baseCandle.close < baseCandle.open;
         const isEngulfGreen = engulfCandle.close > engulfCandle.open;
         
-        // Relajar el requisito de envolvente - solo necesita cerrar arriba del open de la roja
-        const isEngulfing = engulfBody >= baseBody * 0.8 &&
-                           engulfCandle.close > baseCandle.open;
+        // Solo necesita cerrar arriba del cierre de la roja
+        const isValidPattern = isBaseRed && isEngulfGreen && 
+                              engulfCandle.close > baseCandle.close;
         
-        if (isBaseRed && isEngulfGreen && isEngulfing) {
-          // Verificar impulso y CHOCH/BOS después del OB
+        if (isValidPattern) {
+          // Verificar que hubo movimiento alcista después
           const candlesAfterOB = recentCandles.slice(i + 2);
           if (candlesAfterOB.length < 1) continue;
           
-          // Buscar nuevo alto (BOS) o CHOCH después del OB
-          const obHigh = engulfCandle.high;
+          const obHigh = Math.max(engulfCandle.high, baseCandle.high);
           const obLow = Math.min(baseCandle.low, baseCandle.close);
           let hasChoch = false;
           let hasBos = false;
           let newHigh = obHigh;
           
-          // Buscar swing high antes del OB para validar CHOCH
-          const candlesBeforeOB = recentCandles.slice(0, i);
+          // Buscar máximo antes del OB
+          const candlesBeforeOB = recentCandles.slice(Math.max(0, i - 10), i);
           const prevHighs = candlesBeforeOB.map(c => c.high);
           const prevSwingHigh = prevHighs.length > 0 ? Math.max(...prevHighs) : obHigh;
           
           for (const candle of candlesAfterOB) {
-            // CHOCH: Rompe el máximo anterior de la tendencia bajista
-            if (candle.close > prevSwingHigh * 0.998) { // 0.2% tolerancia
-              hasChoch = true;
-            }
-            // BOS: Hace un nuevo alto más alto que el OB
+            if (candle.high > prevSwingHigh * 0.995) hasChoch = true;
             if (candle.high > obHigh) {
               hasBos = true;
               newHigh = Math.max(newHigh, candle.high);
             }
           }
           
-          // Calcular score del OB
-          let obScore = (engulfBody / baseBody) * 30;
-          if (hasChoch) obScore += 35;
-          if (hasBos) obScore += 25;
-          obScore += (10 - Math.min(10, recentCandles.length - i)); // Más reciente = mejor
+          // Calcular score - dar puntos incluso sin CHOCH/BOS si el patrón es bueno
+          let obScore = 20; // Base score por encontrar el patrón
+          obScore += (engulfBody / baseBody) * 20;
+          if (hasChoch) obScore += 30;
+          if (hasBos) obScore += 20;
+          obScore += Math.max(0, 15 - (recentCandles.length - i)); // Más reciente = mejor
           
-          // El OB es válido si hay CHOCH o BOS, o si tiene buen score
-          if ((hasChoch || hasBos) && obScore > bestScore) {
+          // Aceptar si tiene buen score O si tiene CHOCH/BOS
+          if (obScore > bestScore && (hasChoch || hasBos || obScore > 40)) {
             bestScore = obScore;
             bestOB = {
               valid: true,
               side: 'BUY',
               zone: {
-                high: Math.max(baseCandle.open, baseCandle.close),
+                high: Math.max(baseCandle.open, engulfCandle.open),
                 low: obLow,
-                mid: (baseCandle.open + baseCandle.close) / 2
+                mid: (baseCandle.open + obLow) / 2
               },
               hasChoch,
               hasBos,
@@ -1697,61 +1716,53 @@ const SMC = {
       
       // ═══════════════════════════════════════════════════════════════════════
       // CRASH (SELL): Buscar OB de SUPPLY
-      // Patrón: Vela VERDE + Vela ROJA envolvente + Impulso bajista + CHOCH/BOS
+      // Patrón: Vela VERDE + Vela ROJA que cierra abajo
       // ═══════════════════════════════════════════════════════════════════════
       if (assetType === 'crash') {
         const isBaseGreen = baseCandle.close > baseCandle.open;
         const isEngulfRed = engulfCandle.close < engulfCandle.open;
         
-        // Relajar el requisito de envolvente
-        const isEngulfing = engulfBody >= baseBody * 0.8 &&
-                           engulfCandle.close < baseCandle.open;
+        // Solo necesita cerrar abajo del cierre de la verde
+        const isValidPattern = isBaseGreen && isEngulfRed && 
+                              engulfCandle.close < baseCandle.close;
         
-        if (isBaseGreen && isEngulfRed && isEngulfing) {
-          // Verificar impulso y CHOCH/BOS después del OB
+        if (isValidPattern) {
           const candlesAfterOB = recentCandles.slice(i + 2);
           if (candlesAfterOB.length < 1) continue;
           
-          // Buscar nuevo bajo (BOS) o CHOCH después del OB
           const obHigh = Math.max(baseCandle.high, baseCandle.close);
-          const obLow = engulfCandle.low;
+          const obLow = Math.min(engulfCandle.low, baseCandle.low);
           let hasChoch = false;
           let hasBos = false;
           let newLow = obLow;
           
-          // Buscar swing low antes del OB para validar CHOCH
-          const candlesBeforeOB = recentCandles.slice(0, i);
+          const candlesBeforeOB = recentCandles.slice(Math.max(0, i - 10), i);
           const prevLows = candlesBeforeOB.map(c => c.low);
           const prevSwingLow = prevLows.length > 0 ? Math.min(...prevLows) : obLow;
           
           for (const candle of candlesAfterOB) {
-            // CHOCH: Rompe el mínimo anterior de la tendencia alcista
-            if (candle.close < prevSwingLow * 1.002) { // 0.2% tolerancia
-              hasChoch = true;
-            }
-            // BOS: Hace un nuevo bajo más bajo que el OB
+            if (candle.low < prevSwingLow * 1.005) hasChoch = true;
             if (candle.low < obLow) {
               hasBos = true;
               newLow = Math.min(newLow, candle.low);
             }
           }
           
-          // Calcular score del OB
-          let obScore = (engulfBody / baseBody) * 30;
-          if (hasChoch) obScore += 35;
-          if (hasBos) obScore += 25;
-          obScore += (10 - Math.min(10, recentCandles.length - i));
+          let obScore = 20;
+          obScore += (engulfBody / baseBody) * 20;
+          if (hasChoch) obScore += 30;
+          if (hasBos) obScore += 20;
+          obScore += Math.max(0, 15 - (recentCandles.length - i));
           
-          // El OB es válido si hay CHOCH o BOS
-          if ((hasChoch || hasBos) && obScore > bestScore) {
+          if (obScore > bestScore && (hasChoch || hasBos || obScore > 40)) {
             bestScore = obScore;
             bestOB = {
               valid: true,
               side: 'SELL',
               zone: {
                 high: obHigh,
-                low: Math.min(baseCandle.open, baseCandle.close),
-                mid: (baseCandle.close + baseCandle.open) / 2
+                low: Math.min(baseCandle.open, engulfCandle.open),
+                mid: (obHigh + baseCandle.open) / 2
               },
               hasChoch,
               hasBos,
@@ -1764,13 +1775,8 @@ const SMC = {
       }
     }
     
-    // Log del resultado
-    if (shouldLog && (assetType === 'boom' || assetType === 'crash')) {
-      if (bestOB) {
-        console.log(`🎯 [${assetType.toUpperCase()}] OB H1 encontrado: ${bestOB.side} zona ${bestOB.zone.low.toFixed(2)}-${bestOB.zone.high.toFixed(2)} (CHOCH:${bestOB.hasChoch} BOS:${bestOB.hasBos})`);
-      } else {
-        console.log(`⏳ [${assetType.toUpperCase()}] No se encontró OB H1 válido con CHOCH/BOS en últimas ${lookback} velas`);
-      }
+    if (shouldLog && bestOB) {
+      console.log(`   🎯 Mejor OB: ${bestOB.side} en ${bestOB.zone.low.toFixed(2)}-${bestOB.zone.high.toFixed(2)} (Score: ${bestScore.toFixed(0)})`);
     }
     
     return bestOB;
