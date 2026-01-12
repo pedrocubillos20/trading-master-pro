@@ -1235,131 +1235,134 @@ const SMC = {
   },
 
   // =============================================
-  // ANÁLISIS ESPECÍFICO BOOM/CRASH v16 - CON H1 + OB VÁLIDO
-  // Requiere: Estructura H1 + Order Block válido en H1
+  // ANÁLISIS ESPECÍFICO BOOM/CRASH v17 - ESTRATEGIA SMC ORGANIZADA
   // =============================================
+  // 
+  // ╔══════════════════════════════════════════════════════════════════════════════╗
+  // ║  ESTRATEGIA BOOM (SOLO COMPRAS)                                              ║
+  // ╠══════════════════════════════════════════════════════════════════════════════╣
+  // ║  PASO 1 - H1: Analizar dirección (debe ser BULLISH o NEUTRAL)               ║
+  // ║  PASO 2 - H1: El precio viene bajista, se forma estructura                   ║
+  // ║  PASO 3 - H1: Order Block = vela ROJA + vela VERDE envolvente (acumulación) ║
+  // ║  PASO 4 - H1: Después del OB → impulso → CHOCH/BOS → nuevo alto             ║
+  // ║  PASO 5 - H1: Esperar pullback/retroceso al Order Block                     ║
+  // ║  PASO 6 - M5: Confirmar estructura alcista O precio toca OB de H1           ║
+  // ║  PASO 7 - Entrada en el Order Block de H1                                   ║
+  // ║  PASO 8 - Stop Loss: Debajo del Order Block de H1                           ║
+  // ║  PASO 9 - TP1, TP2, TP3: Basados en la estructura                          ║
+  // ╚══════════════════════════════════════════════════════════════════════════════╝
+  // 
+  // ╔══════════════════════════════════════════════════════════════════════════════╗
+  // ║  ESTRATEGIA CRASH (SOLO VENTAS) - INVERSO                                   ║
+  // ╠══════════════════════════════════════════════════════════════════════════════╣
+  // ║  PASO 1 - H1: Analizar dirección (debe ser BEARISH o NEUTRAL)               ║
+  // ║  PASO 2 - H1: El precio viene alcista, se forma estructura                   ║
+  // ║  PASO 3 - H1: Order Block = vela VERDE + vela ROJA envolvente (distribución)║
+  // ║  PASO 4 - H1: Después del OB → impulso bajista → CHOCH/BOS → nuevo bajo     ║
+  // ║  PASO 5 - H1: Esperar pullback/retroceso al Order Block                     ║
+  // ║  PASO 6 - M5: Confirmar estructura bajista O precio toca OB de H1           ║
+  // ║  PASO 7 - Entrada en el Order Block de H1                                   ║
+  // ║  PASO 8 - Stop Loss: Arriba del Order Block de H1                           ║
+  // ║  PASO 9 - TP1, TP2, TP3: Basados en la estructura                          ║
+  // ╚══════════════════════════════════════════════════════════════════════════════╝
+  //
   analyzeBoomCrash(candles, config, state, rules, candlesH1 = null) {
     if (candles.length < 50) return null;
     
     const assetType = config.type; // 'boom' o 'crash'
-    const direction = rules.direction; // 'BUY' o 'SELL'
     const avgRange = this.getAvgRange(candles);
     const lastCandle = candles[candles.length - 1];
     const prevCandle = candles[candles.length - 2];
     const price = lastCandle.close;
     
-    // Obtener swings y estructura M5 (usando función específica para Boom/Crash)
-    const swings = this.findSwings(candles, 3);
-    const structure = this.analyzeStructureBoomCrash(candles, assetType);
-    const { demandZones, supplyZones } = state;
+    // Obtener swings M5
+    const swingsM5 = this.findSwings(candles, 3);
+    const structureM5 = this.analyzeStructureBoomCrash(candles, assetType);
     
-    // ════════════════════════════════════════════════════════════════════
-    // NUEVO v16: Analizar estructura H1 (OBLIGATORIO para Boom/Crash)
-    // ════════════════════════════════════════════════════════════════════
-    let structureH1 = { trend: 'NEUTRAL', strength: 0 };
-    let obValidH1 = null;
-    
-    if (candlesH1 && candlesH1.length >= 20) {
-      const swingsH1 = this.findSwings(candlesH1, 2);
-      structureH1 = this.analyzeStructure(swingsH1);
-      
-      // Detectar Order Block válido en H1
-      obValidH1 = this.detectValidOBZoneH1(candlesH1, assetType === 'boom' ? 'BUY' : 'SELL');
+    // ════════════════════════════════════════════════════════════════════════════
+    // ANÁLISIS H1 (OBLIGATORIO para Boom/Crash)
+    // ════════════════════════════════════════════════════════════════════════════
+    if (!candlesH1 || candlesH1.length < 20) {
+      if (Date.now() % 60000 < 1000) {
+        console.log(`⚠️ [${config.shortName}] Sin datos H1 suficientes para análisis`);
+      }
+      return null;
     }
     
-    // ═══════════════════════════════════════════
-    // BOOM: SOLO COMPRAS - Lógica SMC Institucional
-    // ═══════════════════════════════════════════
-    // 1. H1 debe ser BULLISH o NEUTRAL
-    // 2. Precio toca Order Block H1 (vela roja + verde envolvente = acumulación)
-    // 3. M5 formando estructura alcista
-    // 4. Entrada en pullback a zona del OB
-    // ═══════════════════════════════════════════
+    const swingsH1 = this.findSwings(candlesH1, 2);
+    const structureH1 = this.analyzeStructure(swingsH1);
+    
+    // ════════════════════════════════════════════════════════════════════════════
+    // DETECTAR ORDER BLOCK CON CHOCH/BOS EN H1
+    // ════════════════════════════════════════════════════════════════════════════
+    const obAnalysis = this.detectOBWithChochBos(candlesH1, assetType);
+    
+    // ═══════════════════════════════════════════════════════════════════════════
+    //                    B O O M  -  S O L O  C O M P R A S
+    // ═══════════════════════════════════════════════════════════════════════════
     if (assetType === 'boom') {
-      // REGLA 1: H1 NO puede ser BEARISH
-      if (structureH1.trend === 'BEARISH') {
+      
+      // ──────────────────────────────────────────────────────────────────────────
+      // PASO 1: H1 debe ser BULLISH o NEUTRAL (NO BEARISH)
+      // ──────────────────────────────────────────────────────────────────────────
+      if (structureH1.trend === 'BEARISH' && structureH1.strength > 60) {
         if (Date.now() % 30000 < 1000) {
-          console.log(`⛔ [${config.shortName}] BOOM bloqueado: H1 BEARISH - Esperando cambio de estructura`);
+          console.log(`⛔ [${config.shortName}] BOOM bloqueado: H1 es BEARISH fuerte - Esperando cambio de estructura`);
         }
         return null;
       }
       
-      // REGLA 2: Debe existir un Order Block válido en H1 (zona de demanda/acumulación)
-      // OB de demanda = vela ROJA seguida de vela VERDE envolvente (acumulación institucional)
-      if (!obValidH1 || !obValidH1.valid) {
+      // ──────────────────────────────────────────────────────────────────────────
+      // PASO 2-4: Verificar que existe OB válido con CHOCH/BOS posterior
+      // El OB de demanda: vela ROJA + vela VERDE envolvente + impulso + CHOCH/BOS
+      // ──────────────────────────────────────────────────────────────────────────
+      if (!obAnalysis || !obAnalysis.valid || obAnalysis.side !== 'BUY') {
         if (Date.now() % 30000 < 1000) {
-          console.log(`⏳ [${config.shortName}] BOOM esperando: No hay Order Block H1 válido`);
+          console.log(`⏳ [${config.shortName}] BOOM esperando: No hay OB de demanda válido con CHOCH/BOS en H1`);
         }
         return null;
       }
       
-      const obZone = obValidH1.zone;
+      const obZone = obAnalysis.zone;
       
-      // REGLA 3: El precio debe estar tocando o dentro de la zona del OB H1
-      const tolerance = avgRange * 0.5; // Tolerancia de medio ATR
-      const priceInOBZone = lastCandle.low <= (obZone.high + tolerance) && 
-                            lastCandle.low >= (obZone.low - tolerance);
+      // ──────────────────────────────────────────────────────────────────────────
+      // PASO 5: El precio debe estar en pullback hacia el OB (retroceso)
+      // El precio debe tocar o estar cerca de la zona del OB
+      // ──────────────────────────────────────────────────────────────────────────
+      const tolerance = avgRange * 0.8;
+      const priceNearOB = lastCandle.low <= (obZone.high + tolerance) && 
+                          price >= (obZone.low - tolerance);
       
-      if (!priceInOBZone) {
+      if (!priceNearOB) {
         if (Date.now() % 30000 < 1000) {
-          console.log(`⏳ [${config.shortName}] BOOM esperando: Precio no toca OB H1 (OB: ${obZone.low.toFixed(2)}-${obZone.high.toFixed(2)}, Low: ${lastCandle.low.toFixed(2)})`);
+          console.log(`⏳ [${config.shortName}] BOOM esperando pullback al OB H1 (OB: ${obZone.low.toFixed(2)}-${obZone.high.toFixed(2)}, Precio: ${price.toFixed(2)})`);
         }
         return null;
       }
       
-      // REGLA 4: M5 debe estar formando estructura ALCISTA o NEUTRAL (pullback en tendencia)
-      if (structure.trend === 'BEARISH') {
-        // Si M5 es bajista pero hay señal de reversión, podemos continuar
-        const hasReversalSignal = state.choch?.type === 'BULLISH_CHOCH' || 
-                                  (lastCandle.close > lastCandle.open && prevCandle.close < prevCandle.open);
-        if (!hasReversalSignal) {
-          if (Date.now() % 30000 < 1000) {
-            console.log(`⏳ [${config.shortName}] BOOM esperando: M5 BEARISH sin señal de reversión`);
-          }
-          return null;
-        }
-      }
+      // ──────────────────────────────────────────────────────────────────────────
+      // PASO 6: M5 debe confirmar - estructura alcista O señal de reversión
+      // ──────────────────────────────────────────────────────────────────────────
+      const m5Bullish = structureM5.trend === 'BULLISH';
+      const m5Neutral = structureM5.trend === 'NEUTRAL';
+      const hasChochM5 = state.choch?.type === 'BULLISH_CHOCH';
+      const hasBullishEngulfing = prevCandle.close < prevCandle.open && 
+                                   lastCandle.close > lastCandle.open &&
+                                   lastCandle.close > prevCandle.open;
       
-      // REGLA 5: Confirmación de entrada (pullback completado)
-      const body = Math.abs(lastCandle.close - lastCandle.open);
-      const lowerWick = Math.min(lastCandle.open, lastCandle.close) - lastCandle.low;
-      const totalRange = lastCandle.high - lastCandle.low;
+      const m5Confirmed = m5Bullish || m5Neutral || hasChochM5 || hasBullishEngulfing;
       
-      // Confirmaciones válidas para entrada:
-      // a) Rechazo en zona (mecha inferior significativa + cierre verde)
-      const hasRejection = lowerWick > body * 0.3 && lastCandle.close > lastCandle.open;
-      
-      // b) Engulfing alcista (vela verde envuelve la roja anterior)
-      const hasEngulfing = prevCandle.close < prevCandle.open && 
-                           lastCandle.close > lastCandle.open &&
-                           lastCandle.close > prevCandle.open &&
-                           lastCandle.open <= prevCandle.close;
-      
-      // c) Vela verde fuerte en zona con H1 alcista
-      const hasStrongGreen = lastCandle.close > lastCandle.open && 
-                             body > totalRange * 0.5 &&
-                             structureH1.trend === 'BULLISH';
-      
-      // d) CHoCH alcista en M5 dentro de la zona
-      const hasChochConfirm = state.choch?.type === 'BULLISH_CHOCH';
-      
-      if (!hasRejection && !hasEngulfing && !hasStrongGreen && !hasChochConfirm) {
+      if (!m5Confirmed) {
         if (Date.now() % 30000 < 1000) {
-          console.log(`⏳ [${config.shortName}] BOOM esperando: En zona OB pero sin confirmación de entrada`);
+          console.log(`⏳ [${config.shortName}] BOOM esperando: M5 sin confirmación alcista (M5: ${structureM5.trend})`);
         }
         return null;
       }
       
-      // REGLA 6: No comprar en zona PREMIUM extrema
-      if (state.premiumDiscount === 'PREMIUM') {
-        console.log(`⛔ [${config.shortName}] BOOM bloqueado: Zona PREMIUM - Esperar pullback más profundo`);
-        return null;
-      }
-      
-      // ═══════════════════════════════════════════════════════════════════════════
-      // ✅ SETUP VÁLIDO PARA BOOM - Calcular niveles
-      // ═══════════════════════════════════════════════════════════════════════════
-      console.log(`✅ [${config.shortName}] BOOM SETUP DETECTADO en OB H1!`);
+      // ──────────────────────────────────────────────────────────────────────────
+      // PASO 7-9: SETUP VÁLIDO - Calcular entrada, SL y TPs
+      // ──────────────────────────────────────────────────────────────────────────
+      console.log(`✅ [${config.shortName}] BOOM SETUP VÁLIDO - OB H1 + CHOCH/BOS + M5 confirma`);
       
       const entry = lastCandle.close;
       
@@ -1367,36 +1370,35 @@ const SMC = {
       const slBuffer = avgRange * 0.3;
       const stop = Math.min(obZone.low, lastCandle.low) - slBuffer;
       
-      // Validar SL coherente
       if (stop >= entry) {
-        console.log(`⛔ [${config.shortName}] BOOM bloqueado: SL (${stop.toFixed(2)}) >= Entry (${entry.toFixed(2)})`);
+        console.log(`⛔ [${config.shortName}] BOOM bloqueado: SL inválido`);
         return null;
       }
       
       const risk = entry - stop;
       
-      // TPs basados en estructura
-      const recentHighs = swings.filter(s => s.type === 'high').slice(-5);
-      const targetHigh = recentHighs.length > 0 ? Math.max(...recentHighs.map(h => h.price)) : entry + risk * 4;
+      // TPs basados en estructura H1 y swings
+      const recentHighsH1 = swingsH1.filter(s => s.type === 'high').slice(-3);
+      const targetHigh = recentHighsH1.length > 0 ? Math.max(...recentHighsH1.map(h => h.price)) : entry + risk * 5;
       
-      const tp1 = entry + risk * 1.5;
-      const tp2 = entry + risk * 2.5;
-      const tp3 = Math.max(targetHigh, entry + risk * 4);
+      const tp1 = entry + risk * 1.5;  // 1:1.5 RR
+      const tp2 = entry + risk * 2.5;  // 1:2.5 RR
+      const tp3 = Math.max(targetHigh, entry + risk * 4);  // Máximo estructural o 1:4
       
-      // Score
-      let score = 75; // Base más alto porque ya pasó todas las validaciones
+      // Calcular score
+      let score = 70;
       let reasons = ['BOOM OB H1'];
       
-      if (structureH1.trend === 'BULLISH') { score += 10; reasons.push('H1 Alcista'); }
-      if (structure.trend === 'BULLISH') { score += 5; reasons.push('M5 Alcista'); }
-      if (hasRejection) { score += 5; reasons.push('Rechazo'); }
-      if (hasEngulfing) { score += 5; reasons.push('Engulfing'); }
-      if (hasChochConfirm) { score += 5; reasons.push('CHoCH'); }
-      if (state.premiumDiscount === 'DISCOUNT') { score += 3; reasons.push('Discount'); }
+      if (structureH1.trend === 'BULLISH') { score += 10; reasons.push('H1↑'); }
+      if (m5Bullish) { score += 5; reasons.push('M5↑'); }
+      if (hasChochM5) { score += 5; reasons.push('CHOCH M5'); }
+      if (hasBullishEngulfing) { score += 5; reasons.push('Engulfing'); }
+      if (obAnalysis.hasChoch) { score += 5; reasons.push('CHOCH H1'); }
+      if (obAnalysis.hasBos) { score += 3; reasons.push('BOS H1'); }
       
       return {
         action: 'LONG',
-        model: 'BOOM_SPIKE',
+        model: 'BOOM_SMC',
         score: Math.min(100, score),
         entry: +entry.toFixed(config.decimals),
         stop: +stop.toFixed(config.decimals),
@@ -1406,109 +1408,83 @@ const SMC = {
         reason: reasons.join(' + '),
         analysis: {
           type: 'boom',
-          structureM5: structure.trend,
+          structureM5: structureM5.trend,
           structureH1: structureH1.trend,
-          obH1Valid: true,
-          obZone: `${obZone.low.toFixed(2)}-${obZone.high.toFixed(2)}`,
-          confirmation: hasRejection ? 'rejection' : hasEngulfing ? 'engulfing' : hasChochConfirm ? 'choch' : 'strong_candle',
+          obH1: `${obZone.low.toFixed(2)}-${obZone.high.toFixed(2)}`,
+          hasChochH1: obAnalysis.hasChoch,
+          hasBosH1: obAnalysis.hasBos,
+          m5Confirmation: hasChochM5 ? 'CHOCH' : hasBullishEngulfing ? 'ENGULFING' : m5Bullish ? 'STRUCTURE' : 'NEUTRAL',
           risk: +risk.toFixed(config.decimals)
         }
       };
     }
     
-    // ═══════════════════════════════════════════
-    // CRASH: SOLO VENTAS - Lógica SMC Institucional
-    // ═══════════════════════════════════════════
-    // 1. H1 debe ser BEARISH o NEUTRAL
-    // 2. Precio toca Order Block H1 (vela verde + roja envolvente = distribución)
-    // 3. M5 formando estructura bajista
-    // 4. Entrada en pullback a zona del OB
-    // ═══════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════════════════
+    //                    C R A S H  -  S O L O  V E N T A S
+    // ═══════════════════════════════════════════════════════════════════════════
     if (assetType === 'crash') {
-      // REGLA 1: H1 NO puede ser BULLISH
-      if (structureH1.trend === 'BULLISH') {
+      
+      // ──────────────────────────────────────────────────────────────────────────
+      // PASO 1: H1 debe ser BEARISH o NEUTRAL (NO BULLISH)
+      // ──────────────────────────────────────────────────────────────────────────
+      if (structureH1.trend === 'BULLISH' && structureH1.strength > 60) {
         if (Date.now() % 30000 < 1000) {
-          console.log(`⛔ [${config.shortName}] CRASH bloqueado: H1 BULLISH - Esperando cambio de estructura`);
+          console.log(`⛔ [${config.shortName}] CRASH bloqueado: H1 es BULLISH fuerte - Esperando cambio de estructura`);
         }
         return null;
       }
       
-      // REGLA 2: Debe existir un Order Block válido en H1 (zona de supply/distribución)
-      // OB de supply = vela VERDE seguida de vela ROJA envolvente (distribución institucional)
-      if (!obValidH1 || !obValidH1.valid) {
+      // ──────────────────────────────────────────────────────────────────────────
+      // PASO 2-4: Verificar que existe OB válido con CHOCH/BOS posterior
+      // El OB de supply: vela VERDE + vela ROJA envolvente + impulso + CHOCH/BOS
+      // ──────────────────────────────────────────────────────────────────────────
+      if (!obAnalysis || !obAnalysis.valid || obAnalysis.side !== 'SELL') {
         if (Date.now() % 30000 < 1000) {
-          console.log(`⏳ [${config.shortName}] CRASH esperando: No hay Order Block H1 válido`);
+          console.log(`⏳ [${config.shortName}] CRASH esperando: No hay OB de supply válido con CHOCH/BOS en H1`);
         }
         return null;
       }
       
-      const obZone = obValidH1.zone;
+      const obZone = obAnalysis.zone;
       
-      // REGLA 3: El precio debe estar tocando o dentro de la zona del OB H1
-      const tolerance = avgRange * 0.5; // Tolerancia de medio ATR
-      const priceInOBZone = lastCandle.high >= (obZone.low - tolerance) && 
-                            lastCandle.high <= (obZone.high + tolerance);
+      // ──────────────────────────────────────────────────────────────────────────
+      // PASO 5: El precio debe estar en pullback hacia el OB (retroceso)
+      // El precio debe tocar o estar cerca de la zona del OB
+      // ──────────────────────────────────────────────────────────────────────────
+      const tolerance = avgRange * 0.8;
+      const priceNearOB = lastCandle.high >= (obZone.low - tolerance) && 
+                          price <= (obZone.high + tolerance);
       
-      if (!priceInOBZone) {
+      if (!priceNearOB) {
         if (Date.now() % 30000 < 1000) {
-          console.log(`⏳ [${config.shortName}] CRASH esperando: Precio no toca OB H1 (OB: ${obZone.low.toFixed(2)}-${obZone.high.toFixed(2)}, High: ${lastCandle.high.toFixed(2)})`);
+          console.log(`⏳ [${config.shortName}] CRASH esperando pullback al OB H1 (OB: ${obZone.low.toFixed(2)}-${obZone.high.toFixed(2)}, Precio: ${price.toFixed(2)})`);
         }
         return null;
       }
       
-      // REGLA 4: M5 debe estar formando estructura BAJISTA o NEUTRAL (pullback en tendencia)
-      if (structure.trend === 'BULLISH') {
-        // Si M5 es alcista pero hay señal de reversión, podemos continuar
-        const hasReversalSignal = state.choch?.type === 'BEARISH_CHOCH' || 
-                                  (lastCandle.close < lastCandle.open && prevCandle.close > prevCandle.open);
-        if (!hasReversalSignal) {
-          if (Date.now() % 30000 < 1000) {
-            console.log(`⏳ [${config.shortName}] CRASH esperando: M5 BULLISH sin señal de reversión`);
-          }
-          return null;
-        }
-      }
+      // ──────────────────────────────────────────────────────────────────────────
+      // PASO 6: M5 debe confirmar - estructura bajista O señal de reversión
+      // ──────────────────────────────────────────────────────────────────────────
+      const m5Bearish = structureM5.trend === 'BEARISH';
+      const m5Neutral = structureM5.trend === 'NEUTRAL';
+      const hasChochM5 = state.choch?.type === 'BEARISH_CHOCH';
+      const hasBearishEngulfing = prevCandle.close > prevCandle.open && 
+                                   lastCandle.close < lastCandle.open &&
+                                   lastCandle.close < prevCandle.open;
       
-      // REGLA 5: Confirmación de entrada (pullback completado)
-      const body = Math.abs(lastCandle.close - lastCandle.open);
-      const upperWick = lastCandle.high - Math.max(lastCandle.open, lastCandle.close);
-      const totalRange = lastCandle.high - lastCandle.low;
+      const m5Confirmed = m5Bearish || m5Neutral || hasChochM5 || hasBearishEngulfing;
       
-      // Confirmaciones válidas para entrada:
-      // a) Rechazo en zona (mecha superior significativa + cierre roja)
-      const hasRejection = upperWick > body * 0.3 && lastCandle.close < lastCandle.open;
-      
-      // b) Engulfing bajista (vela roja envuelve la verde anterior)
-      const hasEngulfing = prevCandle.close > prevCandle.open && 
-                           lastCandle.close < lastCandle.open &&
-                           lastCandle.close < prevCandle.open &&
-                           lastCandle.open >= prevCandle.close;
-      
-      // c) Vela roja fuerte en zona con H1 bajista
-      const hasStrongRed = lastCandle.close < lastCandle.open && 
-                           body > totalRange * 0.5 &&
-                           structureH1.trend === 'BEARISH';
-      
-      // d) CHoCH bajista en M5 dentro de la zona
-      const hasChochConfirm = state.choch?.type === 'BEARISH_CHOCH';
-      
-      if (!hasRejection && !hasEngulfing && !hasStrongRed && !hasChochConfirm) {
+      if (!m5Confirmed) {
         if (Date.now() % 30000 < 1000) {
-          console.log(`⏳ [${config.shortName}] CRASH esperando: En zona OB pero sin confirmación de entrada`);
+          console.log(`⏳ [${config.shortName}] CRASH esperando: M5 sin confirmación bajista (M5: ${structureM5.trend})`);
         }
         return null;
       }
       
-      // REGLA 6: No vender en zona DISCOUNT extrema
-      if (state.premiumDiscount === 'DISCOUNT') {
-        console.log(`⛔ [${config.shortName}] CRASH bloqueado: Zona DISCOUNT - Esperar pullback más alto`);
-        return null;
-      }
-      
-      // ═══════════════════════════════════════════════════════════════════════════
-      // ✅ SETUP VÁLIDO PARA CRASH - Calcular niveles
-      // ═══════════════════════════════════════════════════════════════════════════
-      console.log(`✅ [${config.shortName}] CRASH SETUP DETECTADO en OB H1!`);
+      // ──────────────────────────────────────────────────────────────────────────
+      // PASO 7-9: SETUP VÁLIDO - Calcular entrada, SL y TPs
+      // ──────────────────────────────────────────────────────────────────────────
+      console.log(`✅ [${config.shortName}] CRASH SETUP VÁLIDO - OB H1 + CHOCH/BOS + M5 confirma`);
       
       const entry = lastCandle.close;
       
@@ -1516,36 +1492,35 @@ const SMC = {
       const slBuffer = avgRange * 0.3;
       const stop = Math.max(obZone.high, lastCandle.high) + slBuffer;
       
-      // Validar SL coherente
       if (stop <= entry) {
-        console.log(`⛔ [${config.shortName}] CRASH bloqueado: SL (${stop.toFixed(2)}) <= Entry (${entry.toFixed(2)})`);
+        console.log(`⛔ [${config.shortName}] CRASH bloqueado: SL inválido`);
         return null;
       }
       
       const risk = stop - entry;
       
-      // TPs basados en estructura
-      const recentLows = swings.filter(s => s.type === 'low').slice(-5);
-      const targetLow = recentLows.length > 0 ? Math.min(...recentLows.map(l => l.price)) : entry - risk * 4;
+      // TPs basados en estructura H1 y swings
+      const recentLowsH1 = swingsH1.filter(s => s.type === 'low').slice(-3);
+      const targetLow = recentLowsH1.length > 0 ? Math.min(...recentLowsH1.map(l => l.price)) : entry - risk * 5;
       
-      const tp1 = entry - risk * 1.5;
-      const tp2 = entry - risk * 2.5;
-      const tp3 = Math.min(targetLow, entry - risk * 4);
+      const tp1 = entry - risk * 1.5;  // 1:1.5 RR
+      const tp2 = entry - risk * 2.5;  // 1:2.5 RR
+      const tp3 = Math.min(targetLow, entry - risk * 4);  // Mínimo estructural o 1:4
       
-      // Score
-      let score = 75; // Base más alto porque ya pasó todas las validaciones
+      // Calcular score
+      let score = 70;
       let reasons = ['CRASH OB H1'];
       
-      if (structureH1.trend === 'BEARISH') { score += 10; reasons.push('H1 Bajista'); }
-      if (structure.trend === 'BEARISH') { score += 5; reasons.push('M5 Bajista'); }
-      if (hasRejection) { score += 5; reasons.push('Rechazo'); }
-      if (hasEngulfing) { score += 5; reasons.push('Engulfing'); }
-      if (hasChochConfirm) { score += 5; reasons.push('CHoCH'); }
-      if (state.premiumDiscount === 'PREMIUM') { score += 3; reasons.push('Premium'); }
+      if (structureH1.trend === 'BEARISH') { score += 10; reasons.push('H1↓'); }
+      if (m5Bearish) { score += 5; reasons.push('M5↓'); }
+      if (hasChochM5) { score += 5; reasons.push('CHOCH M5'); }
+      if (hasBearishEngulfing) { score += 5; reasons.push('Engulfing'); }
+      if (obAnalysis.hasChoch) { score += 5; reasons.push('CHOCH H1'); }
+      if (obAnalysis.hasBos) { score += 3; reasons.push('BOS H1'); }
       
       return {
         action: 'SHORT',
-        model: 'CRASH_SPIKE',
+        model: 'CRASH_SMC',
         score: Math.min(100, score),
         entry: +entry.toFixed(config.decimals),
         stop: +stop.toFixed(config.decimals),
@@ -1555,11 +1530,12 @@ const SMC = {
         reason: reasons.join(' + '),
         analysis: {
           type: 'crash',
-          structureM5: structure.trend,
+          structureM5: structureM5.trend,
           structureH1: structureH1.trend,
-          obH1Valid: true,
-          obZone: `${obZone.low.toFixed(2)}-${obZone.high.toFixed(2)}`,
-          confirmation: hasRejection ? 'rejection' : hasEngulfing ? 'engulfing' : hasChochConfirm ? 'choch' : 'strong_candle',
+          obH1: `${obZone.low.toFixed(2)}-${obZone.high.toFixed(2)}`,
+          hasChochH1: obAnalysis.hasChoch,
+          hasBosH1: obAnalysis.hasBos,
+          m5Confirmation: hasChochM5 ? 'CHOCH' : hasBearishEngulfing ? 'ENGULFING' : m5Bearish ? 'STRUCTURE' : 'NEUTRAL',
           risk: +risk.toFixed(config.decimals)
         }
       };
@@ -1568,70 +1544,150 @@ const SMC = {
     return null;
   },
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // DETECTAR ORDER BLOCK VÁLIDO EN H1 (Nuevo v16)
-  // LONG: Vela ROJA + VERDE envolvente
-  // SHORT: Vela VERDE + ROJA envolvente
-  // ═══════════════════════════════════════════════════════════════════════
-  detectValidOBZoneH1(candlesH1, side, lookback = 10) {
-    if (!candlesH1 || candlesH1.length < 5) return null;
+  // ═══════════════════════════════════════════════════════════════════════════
+  // DETECTAR ORDER BLOCK CON CHOCH/BOS EN H1
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Esta función busca:
+  // 1. Order Block (vela base + vela envolvente)
+  // 2. Impulso después del OB
+  // 3. CHOCH o BOS de confirmación
+  // 4. Nuevo alto/bajo estructural
+  // ═══════════════════════════════════════════════════════════════════════════
+  detectOBWithChochBos(candlesH1, assetType, lookback = 15) {
+    if (!candlesH1 || candlesH1.length < lookback) return null;
     
     const recentCandles = candlesH1.slice(-lookback);
+    const avgRange = this.getAvgRange(candlesH1);
     
-    for (let i = recentCandles.length - 2; i >= 1; i--) {
-      const baseCandle = recentCandles[i - 1];
-      const engulfCandle = recentCandles[i];
+    // Buscar Order Blocks válidos con confirmación posterior
+    for (let i = 2; i < recentCandles.length - 3; i++) {
+      const baseCandle = recentCandles[i];
+      const engulfCandle = recentCandles[i + 1];
       
       if (!baseCandle || !engulfCandle) continue;
       
       const baseBody = Math.abs(baseCandle.close - baseCandle.open);
       const engulfBody = Math.abs(engulfCandle.close - engulfCandle.open);
       
-      if (baseBody < 0.00001 || engulfBody < 0.00001) continue;
+      if (baseBody < avgRange * 0.2 || engulfBody < avgRange * 0.2) continue;
       
-      const isEngulfing = engulfBody >= baseBody * 1.2;
-      
-      if (side === 'BUY') {
+      // ═══════════════════════════════════════════════════════════════════════
+      // BOOM (BUY): Buscar OB de DEMANDA
+      // Patrón: Vela ROJA + Vela VERDE envolvente + Impulso alcista + CHOCH/BOS
+      // ═══════════════════════════════════════════════════════════════════════
+      if (assetType === 'boom') {
         const isBaseRed = baseCandle.close < baseCandle.open;
         const isEngulfGreen = engulfCandle.close > engulfCandle.open;
-        const engulfsBody = engulfCandle.close > baseCandle.open && engulfCandle.open <= baseCandle.close;
+        const isEngulfing = engulfBody >= baseBody * 1.1 &&
+                           engulfCandle.close > baseCandle.open &&
+                           engulfCandle.open <= baseCandle.close;
         
-        if (isBaseRed && isEngulfGreen && isEngulfing && engulfsBody) {
-          return {
-            valid: true,
-            side: 'BUY',
-            zoneHigh: baseCandle.open,
-            zoneLow: baseCandle.close,
-            zone: {
-              high: baseCandle.open,
-              low: baseCandle.close,
-              mid: (baseCandle.open + baseCandle.close) / 2
-            },
-            strength: Math.min(100, (engulfBody / baseBody) * 50),
-            candlesAgo: recentCandles.length - i,
-            timeframe: 'H1'
-          };
+        if (isBaseRed && isEngulfGreen && isEngulfing) {
+          // Verificar impulso y CHOCH/BOS después del OB
+          const candlesAfterOB = recentCandles.slice(i + 2);
+          if (candlesAfterOB.length < 2) continue;
+          
+          // Buscar nuevo alto (BOS) o CHOCH después del OB
+          const obHigh = engulfCandle.high;
+          const obLow = baseCandle.low;
+          let hasChoch = false;
+          let hasBos = false;
+          let newHigh = obHigh;
+          
+          // Buscar swing high antes del OB para validar CHOCH
+          const candlesBeforeOB = recentCandles.slice(0, i);
+          const prevHighs = candlesBeforeOB.map(c => c.high);
+          const prevSwingHigh = prevHighs.length > 0 ? Math.max(...prevHighs) : obHigh;
+          
+          for (const candle of candlesAfterOB) {
+            // CHOCH: Rompe el máximo anterior de la tendencia bajista
+            if (candle.close > prevSwingHigh) {
+              hasChoch = true;
+            }
+            // BOS: Hace un nuevo alto más alto que el anterior
+            if (candle.high > newHigh) {
+              hasBos = true;
+              newHigh = candle.high;
+            }
+          }
+          
+          // El OB es válido si hay CHOCH o BOS
+          if (hasChoch || hasBos) {
+            return {
+              valid: true,
+              side: 'BUY',
+              zone: {
+                high: baseCandle.open,  // Parte superior del cuerpo de la vela roja
+                low: Math.min(baseCandle.close, baseCandle.low), // Parte inferior
+                mid: (baseCandle.open + baseCandle.close) / 2
+              },
+              hasChoch,
+              hasBos,
+              newHigh,
+              candlesAgo: recentCandles.length - i,
+              strength: Math.min(100, (engulfBody / baseBody) * 40 + (hasChoch ? 30 : 0) + (hasBos ? 20 : 0))
+            };
+          }
         }
-      } else if (side === 'SELL') {
+      }
+      
+      // ═══════════════════════════════════════════════════════════════════════
+      // CRASH (SELL): Buscar OB de SUPPLY
+      // Patrón: Vela VERDE + Vela ROJA envolvente + Impulso bajista + CHOCH/BOS
+      // ═══════════════════════════════════════════════════════════════════════
+      if (assetType === 'crash') {
         const isBaseGreen = baseCandle.close > baseCandle.open;
         const isEngulfRed = engulfCandle.close < engulfCandle.open;
-        const engulfsBody = engulfCandle.open > baseCandle.close && engulfCandle.close <= baseCandle.open;
+        const isEngulfing = engulfBody >= baseBody * 1.1 &&
+                           engulfCandle.close < baseCandle.open &&
+                           engulfCandle.open >= baseCandle.close;
         
-        if (isBaseGreen && isEngulfRed && isEngulfing && engulfsBody) {
-          return {
-            valid: true,
-            side: 'SELL',
-            zoneHigh: baseCandle.close,
-            zoneLow: baseCandle.open,
-            zone: {
-              high: baseCandle.close,
-              low: baseCandle.open,
-              mid: (baseCandle.close + baseCandle.open) / 2
-            },
-            strength: Math.min(100, (engulfBody / baseBody) * 50),
-            candlesAgo: recentCandles.length - i,
-            timeframe: 'H1'
-          };
+        if (isBaseGreen && isEngulfRed && isEngulfing) {
+          // Verificar impulso y CHOCH/BOS después del OB
+          const candlesAfterOB = recentCandles.slice(i + 2);
+          if (candlesAfterOB.length < 2) continue;
+          
+          // Buscar nuevo bajo (BOS) o CHOCH después del OB
+          const obHigh = baseCandle.high;
+          const obLow = engulfCandle.low;
+          let hasChoch = false;
+          let hasBos = false;
+          let newLow = obLow;
+          
+          // Buscar swing low antes del OB para validar CHOCH
+          const candlesBeforeOB = recentCandles.slice(0, i);
+          const prevLows = candlesBeforeOB.map(c => c.low);
+          const prevSwingLow = prevLows.length > 0 ? Math.min(...prevLows) : obLow;
+          
+          for (const candle of candlesAfterOB) {
+            // CHOCH: Rompe el mínimo anterior de la tendencia alcista
+            if (candle.close < prevSwingLow) {
+              hasChoch = true;
+            }
+            // BOS: Hace un nuevo bajo más bajo que el anterior
+            if (candle.low < newLow) {
+              hasBos = true;
+              newLow = candle.low;
+            }
+          }
+          
+          // El OB es válido si hay CHOCH o BOS
+          if (hasChoch || hasBos) {
+            return {
+              valid: true,
+              side: 'SELL',
+              zone: {
+                high: Math.max(baseCandle.close, baseCandle.high), // Parte superior
+                low: baseCandle.open,  // Parte inferior del cuerpo de la vela verde
+                mid: (baseCandle.close + baseCandle.open) / 2
+              },
+              hasChoch,
+              hasBos,
+              newLow,
+              candlesAgo: recentCandles.length - i,
+              strength: Math.min(100, (engulfBody / baseBody) * 40 + (hasChoch ? 30 : 0) + (hasBos ? 20 : 0))
+            };
+          }
         }
       }
     }
