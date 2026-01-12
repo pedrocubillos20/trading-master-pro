@@ -9,7 +9,7 @@ const TP_RR_RATIOS = {
   3: 3.5
 };
 
-// Mini componente de gráfica de líneas
+// Mini componente de gráfica de líneas mejorado
 const LineChart = ({ data, height = 200, color = '#10b981' }) => {
   if (!data || data.length === 0) {
     return (
@@ -28,22 +28,47 @@ const LineChart = ({ data, height = 200, color = '#10b981' }) => {
   const chartWidth = 100;
   const chartHeight = height - padding * 2;
   
-  const points = values.map((v, i) => {
+  // Calcular puntos para la línea
+  const pointsArray = values.map((v, i) => {
     const x = (i / (values.length - 1 || 1)) * 100;
     const y = ((max - v) / range) * chartHeight + padding;
-    return `${x},${y}`;
-  }).join(' ');
-
+    return { x, y, value: v, date: data[i]?.snapshot_date || '' };
+  });
+  
+  const points = pointsArray.map(p => `${p.x},${p.y}`).join(' ');
   const areaPoints = `0,${height} ${points} 100,${height}`;
   
   // Determinar color basado en si el último valor es positivo o negativo
   const lastValue = values[values.length - 1] || 0;
   const lineColor = lastValue >= 0 ? '#10b981' : '#ef4444';
-  const areaColor = lastValue >= 0 ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)';
+  const areaColor = lastValue >= 0 ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)';
+  const pointColor = lastValue >= 0 ? '#10b981' : '#ef4444';
+
+  // Líneas de grilla horizontal
+  const gridLines = [];
+  const step = range / 4;
+  for (let i = 0; i <= 4; i++) {
+    const val = max - (step * i);
+    const y = ((max - val) / range) * chartHeight + padding;
+    gridLines.push({ y, value: val });
+  }
 
   return (
     <div className="relative w-full" style={{ height }}>
       <svg viewBox={`0 0 100 ${height}`} className="w-full h-full" preserveAspectRatio="none">
+        {/* Grilla horizontal */}
+        {gridLines.map((line, i) => (
+          <line
+            key={i}
+            x1="0"
+            y1={line.y}
+            x2="100"
+            y2={line.y}
+            stroke="rgba(255,255,255,0.05)"
+            strokeWidth="0.3"
+          />
+        ))}
+        
         {/* Área bajo la línea */}
         <polygon points={areaPoints} fill={areaColor} />
         
@@ -52,9 +77,24 @@ const LineChart = ({ data, height = 200, color = '#10b981' }) => {
           points={points}
           fill="none"
           stroke={lineColor}
-          strokeWidth="0.5"
+          strokeWidth="0.8"
           vectorEffect="non-scaling-stroke"
+          strokeLinejoin="round"
+          strokeLinecap="round"
         />
+        
+        {/* Puntos de datos (solo si hay pocos puntos) */}
+        {pointsArray.length <= 30 && pointsArray.map((p, i) => (
+          <circle
+            key={i}
+            cx={p.x}
+            cy={p.y}
+            r="0.8"
+            fill={pointColor}
+            stroke="white"
+            strokeWidth="0.3"
+          />
+        ))}
         
         {/* Línea de cero */}
         {min < 0 && max > 0 && (
@@ -63,9 +103,21 @@ const LineChart = ({ data, height = 200, color = '#10b981' }) => {
             y1={((max - 0) / range) * chartHeight + padding}
             x2="100"
             y2={((max - 0) / range) * chartHeight + padding}
-            stroke="rgba(255,255,255,0.2)"
-            strokeWidth="0.3"
+            stroke="rgba(255,255,255,0.3)"
+            strokeWidth="0.4"
             strokeDasharray="2,2"
+          />
+        )}
+        
+        {/* Punto final destacado */}
+        {pointsArray.length > 0 && (
+          <circle
+            cx={pointsArray[pointsArray.length - 1].x}
+            cy={pointsArray[pointsArray.length - 1].y}
+            r="1.5"
+            fill={pointColor}
+            stroke="white"
+            strokeWidth="0.5"
           />
         )}
       </svg>
@@ -73,8 +125,15 @@ const LineChart = ({ data, height = 200, color = '#10b981' }) => {
       {/* Labels */}
       <div className="absolute top-1 left-2 text-xs text-white/40">{max.toFixed(1)}%</div>
       <div className="absolute bottom-1 left-2 text-xs text-white/40">{min.toFixed(1)}%</div>
+      <div className="absolute top-1 right-2 text-xs font-medium" style={{ color: lineColor }}>
+        {lastValue >= 0 ? '+' : ''}{lastValue.toFixed(2)}%
+      </div>
       <div className="absolute bottom-1 right-2 text-xs text-white/40">
         {data.length > 0 ? data[data.length - 1].snapshot_date : ''}
+      </div>
+      {/* Indicador de datos */}
+      <div className="absolute top-1 left-1/2 transform -translate-x-1/2 text-xs text-white/30">
+        {data.length} {data.length === 1 ? 'día' : 'días'}
       </div>
     </div>
   );
@@ -109,7 +168,7 @@ const PERIODS = [
 const DAYS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 
 export default function ReportsSection({ userId, localStats, localSignals }) {
-  const [period, setPeriod] = useState('month');
+  const [period, setPeriod] = useState('week');
   const [report, setReport] = useState(null);
   const [equityCurve, setEquityCurve] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -117,6 +176,22 @@ export default function ReportsSection({ userId, localStats, localSignals }) {
   const [useLocalData, setUseLocalData] = useState(false);
   const [initialLoadDone, setInitialLoadDone] = useState(false);
   const lastFetchRef = React.useRef(null);
+  
+  // Capital inicial personalizable
+  const [initialCapital, setInitialCapital] = useState(() => {
+    const saved = localStorage.getItem('tradingPro_initialCapital');
+    return saved ? parseFloat(saved) : 1000;
+  });
+  const [showCapitalEditor, setShowCapitalEditor] = useState(false);
+  const [tempCapital, setTempCapital] = useState(initialCapital);
+  
+  // Guardar capital cuando cambia
+  const handleSaveCapital = () => {
+    const newCapital = parseFloat(tempCapital) || 1000;
+    setInitialCapital(newCapital);
+    localStorage.setItem('tradingPro_initialCapital', newCapital.toString());
+    setShowCapitalEditor(false);
+  };
 
   // Calcular datos locales desde las señales del backend
   const localData = useMemo(() => {
@@ -128,7 +203,7 @@ export default function ReportsSection({ userId, localStats, localSignals }) {
     
     // Calcular P&L simulado
     let totalPnl = 0;
-    let capital = 1000;
+    let capital = initialCapital;
     const equityData = [];
     
     // Agrupar por día
@@ -154,7 +229,7 @@ export default function ReportsSection({ userId, localStats, localSignals }) {
     let cumulative = 0;
     Object.keys(byDay).sort().forEach(date => {
       cumulative += byDay[date].pnl;
-      capital = 1000 * (1 + cumulative / 100);
+      capital = initialCapital * (1 + cumulative / 100);
       equityData.push({
         snapshot_date: date,
         daily_pnl_percent: byDay[date].pnl.toFixed(2),
@@ -217,7 +292,7 @@ export default function ReportsSection({ userId, localStats, localSignals }) {
         winRate,
         totalPnl: totalPnl.toFixed(2),
         currentCapital: capital.toFixed(2),
-        initialCapital: 1000,
+        initialCapital: initialCapital,
         roi: totalPnl.toFixed(2),
         bestStreak: localStats.bestStreak || 0,
         worstStreak: localStats.worstStreak || 0,
@@ -255,7 +330,7 @@ export default function ReportsSection({ userId, localStats, localSignals }) {
         signal_time: s.timestamp
       }))
     };
-  }, [localStats, localSignals]);
+  }, [localStats, localSignals, initialCapital]);
 
   // Cargar datos
   useEffect(() => {
@@ -347,13 +422,24 @@ export default function ReportsSection({ userId, localStats, localSignals }) {
         </div>
       )}
       
-      {/* Header con capital simulado */}
+      {/* Header con capital simulado EDITABLE */}
       <div className="bg-gradient-to-r from-emerald-500/10 via-cyan-500/10 to-purple-500/10 rounded-xl border border-emerald-500/20 p-4">
         <div className="flex items-center justify-between mb-3">
           <div>
-            <p className="text-white/40 text-xs">Capital Simulado</p>
+            <div className="flex items-center gap-2 mb-1">
+              <p className="text-white/40 text-xs">Capital Simulado</p>
+              <button 
+                onClick={() => {
+                  setTempCapital(initialCapital);
+                  setShowCapitalEditor(true);
+                }}
+                className="text-cyan-400 hover:text-cyan-300 text-xs"
+              >
+                ✏️ Editar
+              </button>
+            </div>
             <p className="text-3xl font-bold text-white">
-              ${parseFloat(summary?.currentCapital || 1000).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+              ${parseFloat(summary?.currentCapital || initialCapital).toLocaleString('en-US', { minimumFractionDigits: 2 })}
             </p>
           </div>
           <div className="text-right">
@@ -364,8 +450,58 @@ export default function ReportsSection({ userId, localStats, localSignals }) {
           </div>
         </div>
         <p className="text-white/40 text-xs">
-          Inicio: $1,000 USD (Simulado con 1% de riesgo por operación)
+          Inicio: ${initialCapital.toLocaleString('en-US')} USD (Simulado con 1% de riesgo por operación)
         </p>
+        
+        {/* Modal para editar capital */}
+        {showCapitalEditor && (
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setShowCapitalEditor(false)}>
+            <div className="bg-[#0d0d12] rounded-xl border border-white/10 p-6 w-80" onClick={e => e.stopPropagation()}>
+              <h3 className="text-white font-bold mb-4">💰 Capital Inicial</h3>
+              <p className="text-white/40 text-xs mb-3">
+                Ingresa tu capital inicial para calcular el rendimiento simulado.
+              </p>
+              <div className="flex items-center gap-2 mb-4">
+                <span className="text-white/60">$</span>
+                <input
+                  type="number"
+                  value={tempCapital}
+                  onChange={(e) => setTempCapital(e.target.value)}
+                  className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500"
+                  placeholder="1000"
+                  min="100"
+                  step="100"
+                />
+                <span className="text-white/60">USD</span>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowCapitalEditor(false)}
+                  className="flex-1 px-4 py-2 bg-white/5 text-white/60 rounded-lg hover:bg-white/10"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleSaveCapital}
+                  className="flex-1 px-4 py-2 bg-emerald-500 text-black font-medium rounded-lg hover:bg-emerald-400"
+                >
+                  Guardar
+                </button>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {[500, 1000, 5000, 10000, 25000].map(amt => (
+                  <button
+                    key={amt}
+                    onClick={() => setTempCapital(amt)}
+                    className={`px-2 py-1 text-xs rounded ${tempCapital == amt ? 'bg-emerald-500 text-black' : 'bg-white/5 text-white/60 hover:bg-white/10'}`}
+                  >
+                    ${amt.toLocaleString()}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Selector de período */}
@@ -487,10 +623,9 @@ export default function ReportsSection({ userId, localStats, localSignals }) {
       {stats.byModel && Object.keys(stats.byModel).length > 0 && (
         <div className="bg-[#0d0d12] rounded-xl border border-white/5 p-4">
           <h3 className="text-white font-medium mb-4">🎯 Por Modelo SMC</h3>
-          <div className="space-y-3">
+          <div className="space-y-3 max-h-[400px] overflow-y-auto">
             {Object.entries(stats.byModel)
               .sort((a, b) => b[1].trades - a[1].trades)
-              .slice(0, 6)
               .map(([model, data]) => {
                 const winRate = data.trades > 0 ? ((data.wins / data.trades) * 100).toFixed(0) : 0;
                 const pnl = parseFloat(data.pnl || 0);
@@ -525,10 +660,9 @@ export default function ReportsSection({ userId, localStats, localSignals }) {
       {stats.byAsset && Object.keys(stats.byAsset).length > 0 && (
         <div className="bg-[#0d0d12] rounded-xl border border-white/5 p-4">
           <h3 className="text-white font-medium mb-4">📊 Por Activo</h3>
-          <div className="space-y-3">
+          <div className="space-y-3 max-h-[400px] overflow-y-auto">
             {Object.entries(stats.byAsset)
               .sort((a, b) => b[1].trades - a[1].trades)
-              .slice(0, 6)
               .map(([symbol, data]) => {
                 const winRate = data.trades > 0 ? ((data.wins / data.trades) * 100).toFixed(0) : 0;
                 const pnl = parseFloat(data.pnl || 0);
@@ -590,9 +724,12 @@ export default function ReportsSection({ userId, localStats, localSignals }) {
       {/* Historial de trades recientes */}
       {report?.trades && report.trades.length > 0 && (
         <div className="bg-[#0d0d12] rounded-xl border border-white/5 p-4">
-          <h3 className="text-white font-medium mb-4">📋 Últimas Operaciones</h3>
-          <div className="space-y-2 max-h-[300px] overflow-y-auto">
-            {report.trades.slice(0, 20).map((trade, i) => (
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-white font-medium">📋 Historial de Operaciones</h3>
+            <span className="text-white/40 text-xs">{report.trades.length} operaciones</span>
+          </div>
+          <div className="space-y-2 max-h-[500px] overflow-y-auto">
+            {report.trades.map((trade, i) => (
               <div 
                 key={trade.id || i}
                 className={`flex items-center justify-between p-3 rounded-lg border ${
@@ -645,7 +782,7 @@ export default function ReportsSection({ userId, localStats, localSignals }) {
       {/* Footer info */}
       <div className="text-center text-white/30 text-xs py-4">
         <p>Los resultados son simulados basados en 1% de riesgo por operación.</p>
-        <p>Capital inicial: $1,000 USD</p>
+        <p>Capital inicial: ${initialCapital.toLocaleString('en-US')} USD (personalizable)</p>
       </div>
     </div>
   );

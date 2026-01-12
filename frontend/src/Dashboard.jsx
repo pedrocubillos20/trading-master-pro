@@ -903,7 +903,7 @@ export default function Dashboard({ user, onLogout }) {
                 <span className="text-[10px] px-1.5 py-0.5 bg-emerald-500/20 text-emerald-400 rounded">IA Trading Expert</span>
               </div>
               <p className="text-white/80 text-sm leading-relaxed">
-                <span className="text-amber-400">⚠️</span> <strong>Recuerda:</strong> No sobreoperes. Máximo <span className="text-emerald-400 font-semibold">2-3 operaciones por día</span>. 
+                <span className="text-amber-400">⚠️</span> <strong>Recuerda:</strong> No sobreoperes. Máximo <span className="text-emerald-400 font-semibold">4-6 operaciones por día</span>. 
                 Sigue las señales con disciplina, usa el <span className="text-cyan-400">1-2% de tu capital</span> por operación, y respeta siempre el Stop Loss. 
                 <span className="text-purple-400">La constancia genera rentabilidad</span>. 🎯
               </p>

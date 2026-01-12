@@ -179,51 +179,40 @@ const LearningSystem = {
 };
 
 // =============================================
-// CONFIGURACIÓN DE FILTROS v14.0
-// Versión sin restricciones de MTF - Operativa flexible
+// CONFIGURACIÓN DE FILTROS v24.0
+// CALIDAD SOBRE CANTIDAD - Menos señales, mejor win rate
 // =============================================
 const SIGNAL_CONFIG = {
   // Score mínimo para generar señal
-  MIN_SCORE: 65, // v14.0: Bajado para más entradas
+  MIN_SCORE: 75, // v24: Aumentado de 65 a 75 para mejor calidad
   
   // Score mínimo específico para Boom/Crash (más estricto)
-  MIN_SCORE_BOOM_CRASH: 82, // v16: Requiere H1 + OB válido para llegar a este score
+  MIN_SCORE_BOOM_CRASH: 80, // v24: Ajustado
   
   // Cooldown entre análisis del mismo activo
-  ANALYSIS_COOLDOWN: 15000, // 15 segundos (reducido)
+  ANALYSIS_COOLDOWN: 30000, // v24: 30 segundos (era 15)
   
   // Cooldown después de cerrar una señal antes de abrir otra
-  POST_SIGNAL_COOLDOWN: 180000, // 3 minutos (reducido)
+  POST_SIGNAL_COOLDOWN: 600000, // v24: 10 minutos (era 3 min) - evita spam
   
-  // Cooldown específico para Boom/Crash (más largo para evitar sobreoperar)
-  POST_SIGNAL_COOLDOWN_BOOM_CRASH: 300000, // 5 minutos
+  // Cooldown específico para Boom/Crash
+  POST_SIGNAL_COOLDOWN_BOOM_CRASH: 600000, // v24: 10 minutos
   
   // ═══════════════════════════════════════════════════════════════
-  // MTF CONFLUENCE - AHORA ES OPCIONAL
-  // false = NO requiere MTF para operar (más señales)
-  // true = Requiere MTF para la mayoría de modelos (señales más seguras)
+  // MTF CONFLUENCE - AHORA REQUERIDO PARA CALIDAD
+  // true = H1 y M5 deben estar alineados (menos señales, mejor calidad)
   // ═══════════════════════════════════════════════════════════════
-  REQUIRE_MTF_CONFLUENCE: false, // ⚠️ DESHABILITADO - Operar sin restricciones
+  REQUIRE_MTF_CONFLUENCE: true, // v24: ¡HABILITADO! Para mejor win rate
   
-  // Modelos que SIEMPRE pueden operar sin MTF (independiente de la config anterior)
-  // v16: 12 Modelos SMC con Zona Válida de Order Block
+  // Modelos que SIEMPRE pueden operar sin MTF (tienen su propia lógica H1)
   MODELS_WITHOUT_MTF: [
-    'MTF_CONFLUENCE',    // Tier S
-    'OTE_ENTRY',         // Tier S
-    'CHOCH_PULLBACK',    // Tier A
-    'INDUCEMENT',        // Tier A
-    'BOOM_SPIKE',        // Tier A
-    'CRASH_SPIKE',       // Tier A
-    'BREAKER_BLOCK',     // Tier B
-    'LIQUIDITY_GRAB',    // Tier B
-    'BOS_CONTINUATION',  // Tier B
-    'SMART_MONEY_TRAP',  // Tier C
-    'FVG_ENTRY',         // Tier C
-    'OB_ENTRY'           // Tier C
+    'MTF_CONFLUENCE',    // Ya incluye MTF
+    'BOOM_SPIKE',        // Tiene lógica H1 propia
+    'CRASH_SPIKE'        // Tiene lógica H1 propia
   ],
   
   // Máximo de señales pendientes simultáneas totales
-  MAX_PENDING_TOTAL: 50, // Sin límite práctico - antes era 8
+  MAX_PENDING_TOTAL: 12, // v24: Reducido de 50 a 12 para mejor gestión
   
   // Horas de operación por plan - en UTC
   // Horario base (todos los planes): 6AM-2PM Colombia = 11:00-19:00 UTC
@@ -1796,32 +1785,34 @@ const SMC = {
       const next2 = candles[i + 2];
       
       const bodySize = Math.abs(curr.close - curr.open);
-      if (bodySize < avgRange * 0.3) continue;
+      if (bodySize < avgRange * 0.2) continue; // Al menos 20% del rango promedio
       
       // ═══════════════════════════════════════════════════════════════
-      // DEMAND ZONE: Vela ROJA + Vela VERDE envolvente + Impulso
-      // Patrón correcto: Vela bajista seguida de vela alcista que envuelve
+      // DEMAND ZONE (Order Block para BUY)
+      // Patrón: Vela ROJA + Vela VERDE envolvente + Impulso alcista
+      // El OB es el CUERPO de la vela ROJA (de open a close)
       // ═══════════════════════════════════════════════════════════════
       if (curr.close < curr.open) { // Vela ROJA (bajista)
-        const isNext1Bullish = next1.close > next1.open; // Siguiente es VERDE
+        const isNext1Bullish = next1.close > next1.open;
         
-        // Verificar si next1 es envolvente (cubre el cuerpo de curr)
+        // Verificar patrón envolvente o impulso fuerte
         const isEngulfing = isNext1Bullish && 
-                           next1.close > curr.open && // Cierre verde > apertura roja
-                           next1.open <= curr.close;  // Apertura verde <= cierre roja
+                           next1.close > curr.open &&
+                           next1.open <= curr.close;
         
-        // También aceptar impulso fuerte aunque no sea envolvente perfecta
         const bullMove = Math.max(next1.close, next2.close) - curr.high;
         const hasStrongMove = bullMove > avgRange * 0.5;
         
         if (isEngulfing || hasStrongMove) {
-          const exists = demandZones.some(z => Math.abs(z.mid - curr.low) < avgRange * 0.5);
+          const exists = demandZones.some(z => Math.abs(z.mid - (curr.open + curr.close) / 2) < avgRange * 0.5);
           if (!exists) {
+            // ✅ El OB es el CUERPO de la vela roja (más preciso)
             demandZones.push({
               type: 'DEMAND',
-              high: Math.max(curr.open, curr.close),
-              low: curr.low,
-              mid: (curr.open + curr.low) / 2,
+              high: curr.open,  // Apertura de la vela roja (parte alta del cuerpo)
+              low: curr.close,  // Cierre de la vela roja (parte baja del cuerpo)
+              mid: (curr.open + curr.close) / 2,
+              wickLow: curr.low, // Guardamos la mecha por si se necesita para el SL
               index: i,
               strength: isEngulfing ? 'STRONG' : (bullMove > avgRange ? 'STRONG' : 'NORMAL'),
               pattern: isEngulfing ? 'ENGULFING' : 'IMPULSE',
@@ -1832,29 +1823,30 @@ const SMC = {
       }
       
       // ═══════════════════════════════════════════════════════════════
-      // SUPPLY ZONE: Vela VERDE + Vela ROJA envolvente + Impulso bajista
-      // Patrón correcto: Vela alcista seguida de vela bajista que envuelve
+      // SUPPLY ZONE (Order Block para SELL)
+      // Patrón: Vela VERDE + Vela ROJA envolvente + Impulso bajista
+      // El OB es el CUERPO de la vela VERDE (de close a open)
       // ═══════════════════════════════════════════════════════════════
       if (curr.close > curr.open) { // Vela VERDE (alcista)
-        const isNext1Bearish = next1.close < next1.open; // Siguiente es ROJA
+        const isNext1Bearish = next1.close < next1.open;
         
-        // Verificar si next1 es envolvente bajista
         const isEngulfing = isNext1Bearish &&
-                           next1.close < curr.open && // Cierre roja < apertura verde
-                           next1.open >= curr.close;  // Apertura roja >= cierre verde
+                           next1.close < curr.open &&
+                           next1.open >= curr.close;
         
-        // También aceptar impulso fuerte aunque no sea envolvente perfecta
         const bearMove = curr.low - Math.min(next1.close, next2.close);
         const hasStrongMove = bearMove > avgRange * 0.5;
         
         if (isEngulfing || hasStrongMove) {
-          const exists = supplyZones.some(z => Math.abs(z.mid - curr.high) < avgRange * 0.5);
+          const exists = supplyZones.some(z => Math.abs(z.mid - (curr.open + curr.close) / 2) < avgRange * 0.5);
           if (!exists) {
+            // ✅ El OB es el CUERPO de la vela verde (más preciso)
             supplyZones.push({
               type: 'SUPPLY',
-              high: curr.high,
-              low: Math.min(curr.open, curr.close),
-              mid: (curr.high + curr.open) / 2,
+              high: curr.close, // Cierre de la vela verde (parte alta del cuerpo)
+              low: curr.open,   // Apertura de la vela verde (parte baja del cuerpo)
+              mid: (curr.open + curr.close) / 2,
+              wickHigh: curr.high, // Guardamos la mecha por si se necesita para el SL
               index: i,
               strength: isEngulfing ? 'STRONG' : (bearMove > avgRange ? 'STRONG' : 'NORMAL'),
               pattern: isEngulfing ? 'ENGULFING' : 'IMPULSE',
@@ -1866,8 +1858,8 @@ const SMC = {
     }
     
     const lastPrice = candles[candles.length - 1].close;
-    const validDemand = demandZones.filter(z => lastPrice > z.low * 0.995).slice(-5);
-    const validSupply = supplyZones.filter(z => lastPrice < z.high * 1.005).slice(-5);
+    const validDemand = demandZones.filter(z => lastPrice > z.low * 0.99).slice(-5);
+    const validSupply = supplyZones.filter(z => lastPrice < z.high * 1.01).slice(-5);
     
     return { demandZones: validDemand, supplyZones: validSupply };
   },
@@ -2081,72 +2073,113 @@ const SMC = {
     
     const last = candles[candles.length - 1];
     const prev = candles[candles.length - 2];
+    const prev2 = candles[candles.length - 3];
     const price = last.close;
     const avgRange = this.getAvgRange(candles);
     
-    // ═══════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════════════════
     // PULLBACK A ZONA DE DEMANDA (para COMPRAS)
-    // ═══════════════════════════════════════════
+    // El precio DEBE TOCAR el Order Block - no solo estar cerca
+    // Entrada: Cuando el precio toca el OB y muestra rechazo alcista
+    // SL: Siempre DEBAJO del Order Block
+    // ═══════════════════════════════════════════════════════════════════════════
     for (const zone of demandZones) {
-      const inZone = price >= zone.low * 0.995 && price <= zone.high * 1.02;
-      const touched = last.low <= zone.high * 1.005;
-      const nearZone = price <= zone.high * 1.03 && price >= zone.low * 0.98;
+      // ✅ CONDICIÓN OBLIGATORIA: El precio DEBE TOCAR el OB
+      // El low de la vela actual o anterior debe tocar la zona del OB
+      const lastTouchedOB = last.low <= zone.high && last.low >= zone.low - avgRange * 0.3;
+      const prevTouchedOB = prev.low <= zone.high && prev.low >= zone.low - avgRange * 0.3;
+      const touched = lastTouchedOB || prevTouchedOB;
       
-      // Confirmaciones más flexibles
+      if (!touched) continue; // Si no tocó el OB, no es pullback válido
+      
+      // ✅ CONFIRMACIÓN: Vela de rechazo alcista
+      // - Vela verde que cierra arriba del OB
+      // - O mecha inferior larga (rechazo)
+      // - O patrón envolvente alcista
+      const closedAboveOB = last.close > zone.high;
       const bullishCandle = last.close > last.open;
+      const wickSize = Math.min(last.open, last.close) - last.low;
+      const bodySize = Math.abs(last.close - last.open);
+      const hasRejectionWick = wickSize > bodySize * 0.5; // Mecha inferior > 50% del cuerpo
       const engulfing = prev.close < prev.open && last.close > last.open && last.close > prev.open;
-      const rejection = (last.low <= zone.high * 1.01) && (last.close > last.low + (last.high - last.low) * 0.4);
-      const wickRejection = (Math.min(last.open, last.close) - last.low) > Math.abs(last.close - last.open) * 0.3;
       
-      if ((inZone || touched || nearZone) && (bullishCandle || engulfing) && (rejection || wickRejection)) {
+      const hasConfirmation = (bullishCandle && closedAboveOB) || 
+                              (hasRejectionWick && last.close > zone.mid) ||
+                              engulfing;
+      
+      if (hasConfirmation) {
         const entry = price;
-        const stop = zone.low - avgRange * 0.5;
+        // ✅ STOP LOSS: Debajo de la mecha del OB si existe, sino debajo del cuerpo
+        const slLevel = zone.wickLow || zone.low;
+        const stop = slLevel - avgRange * 0.2;
         const risk = entry - stop;
         
-        if (risk > 0 && risk < avgRange * 4) {
+        if (risk > 0 && risk < avgRange * 5) {
           return {
-            type: 'PULLBACK_DEMAND',
+            type: 'DEMAND_ZONE',
             side: 'BUY',
             zone,
             entry: +entry.toFixed(config.decimals),
             stop: +stop.toFixed(config.decimals),
             tp1: +(entry + risk * 1.5).toFixed(config.decimals),
             tp2: +(entry + risk * 2.5).toFixed(config.decimals),
-            tp3: +(entry + risk * 3.5).toFixed(config.decimals)
+            tp3: +(entry + risk * 4).toFixed(config.decimals),
+            touchedOB: true,
+            confirmation: engulfing ? 'ENGULFING' : hasRejectionWick ? 'REJECTION_WICK' : 'BULLISH_CLOSE'
           };
         }
       }
     }
     
-    // ═══════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════════════════
     // PULLBACK A ZONA DE SUPPLY (para VENTAS)
-    // ═══════════════════════════════════════════
+    // El precio DEBE TOCAR el Order Block - no solo estar cerca
+    // Entrada: Cuando el precio toca el OB y muestra rechazo bajista
+    // SL: Siempre ARRIBA del Order Block
+    // ═══════════════════════════════════════════════════════════════════════════
     for (const zone of supplyZones) {
-      const inZone = price >= zone.low * 0.98 && price <= zone.high * 1.005;
-      const touched = last.high >= zone.low * 0.995;
-      const nearZone = price >= zone.low * 0.97 && price <= zone.high * 1.02;
+      // ✅ CONDICIÓN OBLIGATORIA: El precio DEBE TOCAR el OB
+      // El high de la vela actual o anterior debe tocar la zona del OB
+      const lastTouchedOB = last.high >= zone.low && last.high <= zone.high + avgRange * 0.3;
+      const prevTouchedOB = prev.high >= zone.low && prev.high <= zone.high + avgRange * 0.3;
+      const touched = lastTouchedOB || prevTouchedOB;
       
-      // Confirmaciones más flexibles
+      if (!touched) continue; // Si no tocó el OB, no es pullback válido
+      
+      // ✅ CONFIRMACIÓN: Vela de rechazo bajista
+      // - Vela roja que cierra debajo del OB
+      // - O mecha superior larga (rechazo)
+      // - O patrón envolvente bajista
+      const closedBelowOB = last.close < zone.low;
       const bearishCandle = last.close < last.open;
+      const wickSize = last.high - Math.max(last.open, last.close);
+      const bodySize = Math.abs(last.close - last.open);
+      const hasRejectionWick = wickSize > bodySize * 0.5; // Mecha superior > 50% del cuerpo
       const engulfing = prev.close > prev.open && last.close < last.open && last.close < prev.open;
-      const rejection = (last.high >= zone.low * 0.99) && (last.close < last.high - (last.high - last.low) * 0.4);
-      const wickRejection = (last.high - Math.max(last.open, last.close)) > Math.abs(last.close - last.open) * 0.3;
       
-      if ((inZone || touched || nearZone) && (bearishCandle || engulfing) && (rejection || wickRejection)) {
+      const hasConfirmation = (bearishCandle && closedBelowOB) || 
+                              (hasRejectionWick && last.close < zone.mid) ||
+                              engulfing;
+      
+      if (hasConfirmation) {
         const entry = price;
-        const stop = zone.high + avgRange * 0.5;
+        // ✅ STOP LOSS: Arriba de la mecha del OB si existe, sino arriba del cuerpo
+        const slLevel = zone.wickHigh || zone.high;
+        const stop = slLevel + avgRange * 0.2;
         const risk = stop - entry;
         
-        if (risk > 0 && risk < avgRange * 4) {
+        if (risk > 0 && risk < avgRange * 5) {
           return {
-            type: 'PULLBACK_SUPPLY',
+            type: 'SUPPLY_ZONE',
             side: 'SELL',
             zone,
             entry: +entry.toFixed(config.decimals),
             stop: +stop.toFixed(config.decimals),
             tp1: +(entry - risk * 1.5).toFixed(config.decimals),
             tp2: +(entry - risk * 2.5).toFixed(config.decimals),
-            tp3: +(entry - risk * 3.5).toFixed(config.decimals)
+            tp3: +(entry - risk * 4).toFixed(config.decimals),
+            touchedOB: true,
+            confirmation: engulfing ? 'ENGULFING' : hasRejectionWick ? 'REJECTION_WICK' : 'BEARISH_CLOSE'
           };
         }
       }
@@ -2320,16 +2353,24 @@ const SMC = {
     }
     */
     
-    // v14.0: BOS_CONTINUATION ahora puede operar sin MTF
+    // v24.0: BOS_CONTINUATION requiere MTF para mejor calidad
     if (bos && pullback && bos.side === pullback.side) {
-      let score = 75; // Score base sin MTF
-      if (mtfConfluence) score = 82; // Bonus con MTF
-      signals.push({
-        model: 'BOS_CONTINUATION',
-        baseScore: score,
-        pullback,
-        reason: `${bos.type} + Pullback${mtfConfluence ? ' + MTF' : ''}`
-      });
+      // Verificar que Premium/Discount sea correcto
+      const pdCorrect = (bos.side === 'BUY' && premiumDiscount === 'DISCOUNT') ||
+                        (bos.side === 'SELL' && premiumDiscount === 'PREMIUM');
+      
+      // Solo operar si tiene MTF o Premium/Discount correcto
+      if (mtfConfluence || pdCorrect) {
+        let score = 78; // Score base aumentado
+        if (mtfConfluence) score += 7; // Bonus con MTF
+        if (pdCorrect) score += 5; // Bonus con P/D correcto
+        signals.push({
+          model: 'BOS_CONTINUATION',
+          baseScore: score,
+          pullback,
+          reason: `${bos.type} + Pullback${mtfConfluence ? ' + MTF' : ''}${pdCorrect ? ' + P/D' : ''}`
+        });
+      }
     }
     
     const price = candlesM5[candlesM5.length - 1].close;
@@ -2403,18 +2444,25 @@ const SMC = {
     }
     */
     
-    // v14.0: FVG_ENTRY ahora puede operar sin MTF
+    // v24.0: FVG_ENTRY con filtros mejorados
     for (const fvg of fvgZones) {
       const inFVG = price >= fvg.low * 0.999 && price <= fvg.high * 1.001;
       if (inFVG && pullback && fvg.side === pullback.side) {
-        let score = 72; // Score base sin MTF
-        if (mtfConfluence) score = 80; // Bonus con MTF
-        signals.push({
-          model: 'FVG_ENTRY',
-          baseScore: score,
-          pullback,
-          reason: `En ${fvg.type}${mtfConfluence ? ' + MTF' : ''}`
-        });
+        const pdCorrect = (fvg.side === 'BUY' && premiumDiscount === 'DISCOUNT') ||
+                          (fvg.side === 'SELL' && premiumDiscount === 'PREMIUM');
+        
+        // v24: Solo operar si tiene MTF o P/D correcto
+        if (mtfConfluence || pdCorrect) {
+          let score = 76; // Score base aumentado
+          if (mtfConfluence) score += 8;
+          if (pdCorrect) score += 5;
+          signals.push({
+            model: 'FVG_ENTRY',
+            baseScore: score,
+            pullback,
+            reason: `En ${fvg.type}${mtfConfluence ? ' + MTF' : ''}${pdCorrect ? ' + P/D' : ''}`
+          });
+        }
       }
     }
     
@@ -2422,20 +2470,24 @@ const SMC = {
     // NUEVOS MODELOS SMC v14.0
     // ═══════════════════════════════════════════
     
-    // OB_ENTRY - Entrada directa en Order Block
+    // OB_ENTRY - Entrada directa en Order Block (v24: más estricto)
     if (pullback && (pullback.type === 'DEMAND_ZONE' || pullback.type === 'SUPPLY_ZONE')) {
-      let score = 72;
       const pdCorrect = (pullback.side === 'BUY' && premiumDiscount === 'DISCOUNT') ||
                         (pullback.side === 'SELL' && premiumDiscount === 'PREMIUM');
-      if (pdCorrect) score += 5;
-      if (mtfConfluence) score += 5;
       
-      signals.push({
-        model: 'OB_ENTRY',
-        baseScore: score,
-        pullback,
-        reason: `Order Block ${pullback.side}${pdCorrect ? ' + P/D' : ''}${mtfConfluence ? ' + MTF' : ''}`
-      });
+      // v24: Solo operar si tiene MTF O Premium/Discount correcto
+      if (mtfConfluence || pdCorrect) {
+        let score = 76; // Score base aumentado
+        if (pdCorrect) score += 6;
+        if (mtfConfluence) score += 8;
+        
+        signals.push({
+          model: 'OB_ENTRY',
+          baseScore: score,
+          pullback,
+          reason: `Order Block ${pullback.side}${pdCorrect ? ' + P/D' : ''}${mtfConfluence ? ' + MTF' : ''}`
+        });
+      }
     }
     
     // ═══════════════════════════════════════════════════════════════
@@ -2556,31 +2608,35 @@ const SMC = {
     // MODELOS SMC AVANZADOS v14.3
     // ═══════════════════════════════════════════
     
-    // 1. BREAKER_BLOCK - Order Block que falla y se convierte en zona opuesta
+    // 1. BREAKER_BLOCK - Order Block que falla y se convierte en zona opuesta (v24)
     // Un OB alcista que es roto se convierte en resistencia (y viceversa)
     if (bos && choch) {
-      // Si hay BOS y CHoCH juntos, el OB anterior falló = Breaker Block
-      const breakerEntry = {
-        side: choch.side,
-        entry: lastCandle.close,
-        stop: choch.side === 'BUY' ? choch.level - avgRange * 1.5 : choch.level + avgRange * 1.5,
-        tp1: choch.side === 'BUY' ? lastCandle.close + avgRange * 2 : lastCandle.close - avgRange * 2,
-        tp2: choch.side === 'BUY' ? lastCandle.close + avgRange * 3.5 : lastCandle.close - avgRange * 3.5,
-        tp3: choch.side === 'BUY' ? lastCandle.close + avgRange * 5 : lastCandle.close - avgRange * 5
-      };
-      
-      let score = 78;
-      if (mtfConfluence) score += 7;
       const pdCorrect = (choch.side === 'BUY' && premiumDiscount === 'DISCOUNT') ||
                         (choch.side === 'SELL' && premiumDiscount === 'PREMIUM');
-      if (pdCorrect) score += 5;
       
-      signals.push({
-        model: 'BREAKER_BLOCK',
-        baseScore: score,
-        pullback: breakerEntry,
-        reason: `Breaker ${choch.side} + ${bos.type}${mtfConfluence ? ' + MTF' : ''}${pdCorrect ? ' + P/D' : ''}`
-      });
+      // v24: Solo si tiene MTF o Premium/Discount correcto
+      if (mtfConfluence || pdCorrect) {
+        // Si hay BOS y CHoCH juntos, el OB anterior falló = Breaker Block
+        const breakerEntry = {
+          side: choch.side,
+          entry: lastCandle.close,
+          stop: choch.side === 'BUY' ? choch.level - avgRange * 1.5 : choch.level + avgRange * 1.5,
+          tp1: choch.side === 'BUY' ? lastCandle.close + avgRange * 2 : lastCandle.close - avgRange * 2,
+          tp2: choch.side === 'BUY' ? lastCandle.close + avgRange * 3.5 : lastCandle.close - avgRange * 3.5,
+          tp3: choch.side === 'BUY' ? lastCandle.close + avgRange * 5 : lastCandle.close - avgRange * 5
+        };
+        
+        let score = 80; // Score base aumentado
+        if (mtfConfluence) score += 8;
+        if (pdCorrect) score += 5;
+        
+        signals.push({
+          model: 'BREAKER_BLOCK',
+          baseScore: score,
+          pullback: breakerEntry,
+          reason: `Breaker ${choch.side} + ${bos.type}${mtfConfluence ? ' + MTF' : ''}${pdCorrect ? ' + P/D' : ''}`
+        });
+      }
     }
     
     // 2. INDUCEMENT - Trampa de liquidez (igual highs/lows que son barridos)
@@ -2677,7 +2733,7 @@ const SMC = {
       }
     }
     
-    // 4. LIQUIDITY_GRAB - Barrido rápido de liquidez con rechazo inmediato
+    // 4. LIQUIDITY_GRAB - Barrido rápido de liquidez con rechazo inmediato (v24)
     const prev2Candle = candlesM5[candlesM5.length - 3];
     const prevCandle = candlesM5[candlesM5.length - 2];
     
@@ -2688,47 +2744,59 @@ const SMC = {
       
       // Confirmación: vela actual continúa la reversión
       if (brokeHigh && lastCandle.close < prevCandle.close) {
-        const lgEntry = {
-          side: 'SELL',
-          entry: lastCandle.close,
-          stop: prevCandle.high + avgRange * 0.3,
-          tp1: lastCandle.close - avgRange * 1.8,
-          tp2: lastCandle.close - avgRange * 3,
-          tp3: lastCandle.close - avgRange * 4.5
-        };
+        // v24: Solo si H1 es BEARISH o NEUTRAL, o si está en PREMIUM
+        const h1Aligned = structureH1.trend === 'BEARISH' || structureH1.trend === 'NEUTRAL';
+        const pdCorrect = premiumDiscount === 'PREMIUM';
         
-        let score = 78;
-        if (structureH1.trend === 'BEARISH') score += 5;
-        if (premiumDiscount === 'PREMIUM') score += 5;
-        
-        signals.push({
-          model: 'LIQUIDITY_GRAB',
-          baseScore: score,
-          pullback: lgEntry,
-          reason: `Grab alcista fallido${structureH1.trend === 'BEARISH' ? ' + H1 BEAR' : ''}`
-        });
+        if (h1Aligned || pdCorrect) {
+          const lgEntry = {
+            side: 'SELL',
+            entry: lastCandle.close,
+            stop: prevCandle.high + avgRange * 0.3,
+            tp1: lastCandle.close - avgRange * 1.8,
+            tp2: lastCandle.close - avgRange * 3,
+            tp3: lastCandle.close - avgRange * 4.5
+          };
+          
+          let score = 80; // Score base aumentado
+          if (structureH1.trend === 'BEARISH') score += 7;
+          if (pdCorrect) score += 5;
+          
+          signals.push({
+            model: 'LIQUIDITY_GRAB',
+            baseScore: score,
+            pullback: lgEntry,
+            reason: `Grab alcista fallido${structureH1.trend === 'BEARISH' ? ' + H1↓' : ''}${pdCorrect ? ' + PREMIUM' : ''}`
+          });
+        }
       }
       
       if (brokeLow && lastCandle.close > prevCandle.close) {
-        const lgEntry = {
-          side: 'BUY',
-          entry: lastCandle.close,
-          stop: prevCandle.low - avgRange * 0.3,
-          tp1: lastCandle.close + avgRange * 1.8,
-          tp2: lastCandle.close + avgRange * 3,
-          tp3: lastCandle.close + avgRange * 4.5
-        };
+        // v24: Solo si H1 es BULLISH o NEUTRAL, o si está en DISCOUNT
+        const h1Aligned = structureH1.trend === 'BULLISH' || structureH1.trend === 'NEUTRAL';
+        const pdCorrect = premiumDiscount === 'DISCOUNT';
         
-        let score = 78;
-        if (structureH1.trend === 'BULLISH') score += 5;
-        if (premiumDiscount === 'DISCOUNT') score += 5;
-        
-        signals.push({
-          model: 'LIQUIDITY_GRAB',
-          baseScore: score,
-          pullback: lgEntry,
-          reason: `Grab bajista fallido${structureH1.trend === 'BULLISH' ? ' + H1 BULL' : ''}`
-        });
+        if (h1Aligned || pdCorrect) {
+          const lgEntry = {
+            side: 'BUY',
+            entry: lastCandle.close,
+            stop: prevCandle.low - avgRange * 0.3,
+            tp1: lastCandle.close + avgRange * 1.8,
+            tp2: lastCandle.close + avgRange * 3,
+            tp3: lastCandle.close + avgRange * 4.5
+          };
+          
+          let score = 80; // Score base aumentado
+          if (structureH1.trend === 'BULLISH') score += 7;
+          if (pdCorrect) score += 5;
+          
+          signals.push({
+            model: 'LIQUIDITY_GRAB',
+            baseScore: score,
+            pullback: lgEntry,
+            reason: `Grab bajista fallido${structureH1.trend === 'BULLISH' ? ' + H1↑' : ''}${pdCorrect ? ' + DISCOUNT' : ''}`
+          });
+        }
       }
     }
     
