@@ -1,6 +1,6 @@
 # Correcciones Aplicadas - Trading Master Pro
 
-## Fecha: 11 de Enero 2026
+## Fecha: 11 de Enero 2026 (v2 - Actualizado)
 
 ---
 
@@ -23,9 +23,13 @@ El Dashboard hacía fetch de datos cada 3 segundos, lo cual actualizaba `localSt
 Los símbolos de la API de Deriv para Boom 300 y Crash 300 estaban incorrectos.
 
 ### Solución (backend/index.js):
-- Cambiado `BOOM300` → `1HZ300V` (símbolo correcto de Deriv)
-- Cambiado `CRASH300` → `1HZ300D` (símbolo correcto de Deriv)
+- Cambiado a `BOOM300N` (símbolo correcto de Deriv WebSocket API)
+- Cambiado a `CRASH300N` (símbolo correcto de Deriv WebSocket API)
 - Actualizada la lista de activos en el plan Elite
+
+**Nota importante**: Estos símbolos (`BOOM300N` y `CRASH300N`) son los correctos según la documentación de la comunidad de Deriv. Si aún no funcionan, puede ser que:
+1. Deriv no expone estos símbolos vía WebSocket API (solo están disponibles en MT5/cTrader)
+2. Requieren un tipo de cuenta específico
 
 ---
 
@@ -45,18 +49,15 @@ No había lógica para detectar mercados cerrados ni para resubscribirse automá
    - Sintéticos: 24/7
    - Forex/Metales: Cerrados viernes 17:00 EST - domingo 17:00 EST
 
-3. **Función `resubscribeToAsset(symbol)`**:
-   - Permite resubscribir a un activo específico
-
-4. **Monitor automático** (`checkAndResubscribeMarkets`):
+3. **Monitor automático** (`checkAndResubscribeMarkets`):
    - Se ejecuta cada 30 segundos
    - Detecta mercados sin datos por más de 1 minuto
    - Resubscribe automáticamente
 
-5. **Nuevos endpoints de API**:
+4. **Nuevos endpoints de API**:
    - `GET /api/markets/status` - Ver estado de todos los mercados
-   - `POST /api/markets/resubscribe/:symbol` - Forzar resubscripción de un mercado
-   - `POST /api/markets/resubscribe-all` - Forzar resubscripción de todos los mercados
+   - `POST /api/markets/resubscribe/:symbol` - Forzar resubscripción
+   - `POST /api/markets/resubscribe-all` - Forzar resubscripción de todos
 
 ---
 
@@ -70,34 +71,39 @@ No había lógica para detectar mercados cerrados ni para resubscribirse automá
 ## 🚀 Despliegue
 
 ### Para el Backend (Railway):
-1. Sube los cambios a tu repositorio de GitHub
-2. Railway detectará los cambios y hará redeploy automáticamente
-3. O ve a Railway y haz clic en "Redeploy"
+```bash
+git add .
+git commit -m "Fix: Boom300N, Crash300N, reconexion automatica"
+git push origin main
+```
 
-### Para el Frontend (Vercel):
-1. Sube los cambios a tu repositorio de GitHub
-2. Vercel detectará los cambios y hará redeploy automáticamente
+Railway hará redeploy automáticamente.
 
 ---
 
 ## 🔍 Verificación
 
-Después del despliegue, puedes verificar:
+Después del despliegue:
 
-1. **Estado de mercados**: 
+1. **Ver estado de mercados**: 
    ```
    GET https://tu-backend.railway.app/api/markets/status
    ```
 
-2. **Forzar reconexión si es necesario**:
+2. **Forzar reconexión**:
    ```
    POST https://tu-backend.railway.app/api/markets/resubscribe-all
    ```
 
 ---
 
-## ⚠️ Nota Importante
+## ⚠️ Nota sobre Boom/Crash 300
 
-Si después del despliegue los mercados Boom/Crash 300 siguen sin funcionar, puede ser que Deriv haya cambiado los símbolos. Puedes verificar los símbolos correctos en:
-- https://developers.deriv.com/playground
-- Busca "Boom 300" y "Crash 300" para ver sus símbolos actuales
+Si después del despliegue siguen sin funcionar, es posible que Deriv **NO exponga Boom 300 y Crash 300 vía WebSocket API pública**. 
+
+En ese caso, estos mercados solo estarían disponibles en:
+- MetaTrader 5 (MT5)
+- Deriv cTrader
+- Deriv Trader (web interface directa)
+
+Y habría que removerlos de la plataforma o buscar otra forma de obtener los datos.
