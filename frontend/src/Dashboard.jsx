@@ -690,12 +690,27 @@ export default function Dashboard({ user, onLogout }) {
       </div>
       
       <div className="flex items-center gap-2 sm:gap-3">
-        {/* Badge de suscripción en header */}
+        {/* Banner de Trial con conteo de días */}
         {subscription?.status === 'trial' && (
           <button onClick={() => setShowPricing(true)}
-            className="flex items-center gap-1.5 px-2 py-1 bg-amber-500/20 hover:bg-amber-500/30 rounded-lg transition-colors">
-            <span className="text-amber-400 text-xs">⏳</span>
-            <span className="text-amber-400 text-xs font-medium">{subscription.days_left} días trial</span>
+            className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-amber-500/20 to-orange-500/20 hover:from-amber-500/30 hover:to-orange-500/30 border border-amber-500/30 rounded-lg transition-all group">
+            <div className="flex items-center gap-1.5">
+              <span className="text-amber-400 text-sm">⏳</span>
+              <div className="flex flex-col items-start">
+                <span className="text-amber-400 text-xs font-bold leading-tight">
+                  {subscription.days_left > 0 ? `${subscription.days_left} días` : 'Último día'}
+                </span>
+                <span className="text-amber-400/60 text-[9px] leading-tight hidden sm:block">Plan Free</span>
+              </div>
+            </div>
+            {/* Barra de progreso */}
+            <div className="w-12 h-1.5 bg-amber-900/50 rounded-full overflow-hidden hidden sm:block">
+              <div 
+                className="h-full bg-gradient-to-r from-amber-400 to-orange-400 rounded-full transition-all"
+                style={{ width: `${Math.max(0, (subscription.days_left / 5) * 100)}%` }}
+              />
+            </div>
+            <span className="text-amber-400 text-xs group-hover:translate-x-0.5 transition-transform">→</span>
           </button>
         )}
         
@@ -766,6 +781,60 @@ export default function Dashboard({ user, onLogout }) {
             <p className="text-2xl font-bold text-red-400">{data?.stats?.losses || 0}</p>
           </div>
         </div>
+
+        {/* Banner de advertencia - Trial por expirar */}
+        {subscription?.status === 'trial' && subscription?.days_left <= 3 && subscription?.days_left > 0 && (
+          <div className="bg-gradient-to-r from-amber-500/20 to-orange-500/20 rounded-xl border border-amber-500/30 p-4">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-amber-500/30 rounded-full flex items-center justify-center flex-shrink-0">
+                  <span className="text-xl">⏰</span>
+                </div>
+                <div>
+                  <p className="text-amber-400 font-bold text-sm">
+                    {subscription.days_left === 1 ? '¡Último día de prueba!' : `¡Solo ${subscription.days_left} días restantes!`}
+                  </p>
+                  <p className="text-white/60 text-xs">
+                    Tu período de prueba termina pronto. Actualiza a un plan para no perder el acceso.
+                  </p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowPricing(true)}
+                className="px-4 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-black font-bold rounded-lg text-sm transition-all whitespace-nowrap"
+              >
+                🚀 Ver Planes
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Banner de advertencia - Plan por expirar (para planes pagados) */}
+        {subscription?.status === 'active' && subscription?.days_left <= 5 && subscription?.days_left > 0 && subscription?.plan !== 'free' && (
+          <div className="bg-gradient-to-r from-purple-500/20 to-pink-500/20 rounded-xl border border-purple-500/30 p-4">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-purple-500/30 rounded-full flex items-center justify-center flex-shrink-0">
+                  <span className="text-xl">📅</span>
+                </div>
+                <div>
+                  <p className="text-purple-400 font-bold text-sm">
+                    Tu plan {subscription.plan_name} vence en {subscription.days_left} {subscription.days_left === 1 ? 'día' : 'días'}
+                  </p>
+                  <p className="text-white/60 text-xs">
+                    Renueva tu suscripción para mantener el acceso a todas las funciones.
+                  </p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowPricing(true)}
+                className="px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-400 hover:to-pink-400 text-white font-bold rounded-lg text-sm transition-all whitespace-nowrap"
+              >
+                🔄 Renovar
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* ELISA Recommendation Banner */}
         <div className="bg-gradient-to-r from-emerald-500/10 via-cyan-500/10 to-purple-500/10 rounded-xl border border-emerald-500/20 p-4">
@@ -1116,27 +1185,87 @@ export default function Dashboard({ user, onLogout }) {
     );
   }
 
-  // Pantalla de bloqueo - Trial expirado
+  // Pantalla de bloqueo - Trial o Plan expirado
   if (isExpired) {
+    const isTrialExpired = subscription?.plan === 'free' || !subscription?.plan;
+    
     return (
       <div className="min-h-screen bg-[#06060a] flex flex-col">
         <Sidebar />
         <main className={`flex-1 transition-all duration-300 ${sidebarOpen && !isMobile ? 'ml-48' : 'ml-0'}`}>
           <Header />
-          <div className="flex-1 flex items-center justify-center p-8">
-            <div className="text-center max-w-md">
-              <div className="w-24 h-24 mx-auto mb-6 rounded-full bg-gradient-to-r from-amber-500/20 to-orange-500/20 flex items-center justify-center">
-                <span className="text-5xl">🔒</span>
+          <div className="flex-1 flex items-center justify-center p-4 sm:p-8">
+            <div className="text-center max-w-lg w-full">
+              {/* Icono animado */}
+              <div className="relative w-28 h-28 mx-auto mb-6">
+                <div className="absolute inset-0 bg-gradient-to-r from-red-500/20 to-orange-500/20 rounded-full animate-pulse" />
+                <div className="absolute inset-2 bg-gradient-to-r from-red-500/30 to-orange-500/30 rounded-full animate-pulse" style={{ animationDelay: '150ms' }} />
+                <div className="absolute inset-4 bg-[#0d0d12] rounded-full flex items-center justify-center">
+                  <span className="text-5xl">🔒</span>
+                </div>
               </div>
-              <h2 className="text-3xl font-bold text-white mb-3">Dashboard bloqueado</h2>
-              <p className="text-white/60 mb-6">Tu período de prueba ha terminado. Actualiza tu plan para continuar accediendo a todas las funciones de Trading Master Pro.</p>
+              
+              <h2 className="text-2xl sm:text-3xl font-bold text-white mb-3">
+                {isTrialExpired ? 'Tu prueba gratuita ha terminado' : 'Tu suscripción ha expirado'}
+              </h2>
+              
+              <p className="text-white/60 mb-6 text-sm sm:text-base">
+                {isTrialExpired 
+                  ? 'Los 5 días de prueba han finalizado. ¡Gracias por probar Trading Master Pro! Elige un plan para seguir operando.'
+                  : `Tu plan ${subscription?.plan_name || ''} ha expirado. Renueva tu suscripción para continuar accediendo a todas las funciones.`
+                }
+              </p>
+              
+              {/* Estadísticas del período */}
+              <div className="bg-white/5 rounded-xl p-4 mb-6 border border-white/10">
+                <p className="text-white/40 text-xs mb-3">Tu progreso durante el período:</p>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="text-center">
+                    <p className="text-xl font-bold text-white">{data?.stats?.total || 0}</p>
+                    <p className="text-white/40 text-[10px]">Señales</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-xl font-bold text-emerald-400">{data?.stats?.wins || 0}</p>
+                    <p className="text-white/40 text-[10px]">Wins</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-xl font-bold text-cyan-400">
+                      {data?.stats?.total ? Math.round((data.stats.wins / data.stats.total) * 100) : 0}%
+                    </p>
+                    <p className="text-white/40 text-[10px]">Win Rate</p>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Beneficios de actualizar */}
+              <div className="bg-gradient-to-r from-emerald-500/10 to-cyan-500/10 rounded-xl p-4 mb-6 border border-emerald-500/20 text-left">
+                <p className="text-white font-semibold mb-3 text-sm">✨ Al activar un plan obtienes:</p>
+                <ul className="space-y-2 text-sm">
+                  <li className="flex items-center gap-2 text-white/70">
+                    <span className="text-emerald-400">✓</span> Señales en tiempo real con 12 modelos SMC
+                  </li>
+                  <li className="flex items-center gap-2 text-white/70">
+                    <span className="text-emerald-400">✓</span> Análisis multi-timeframe (H1 + M5)
+                  </li>
+                  <li className="flex items-center gap-2 text-white/70">
+                    <span className="text-emerald-400">✓</span> ELISA IA - Asistente de trading personal
+                  </li>
+                  <li className="flex items-center gap-2 text-white/70">
+                    <span className="text-emerald-400">✓</span> Reportes y estadísticas detalladas
+                  </li>
+                </ul>
+              </div>
+              
               <button 
                 onClick={() => setShowPricing(true)}
-                className="px-8 py-4 bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-black font-bold rounded-xl transition-all transform hover:scale-105 text-lg"
+                className="w-full sm:w-auto px-8 py-4 bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-black font-bold rounded-xl transition-all transform hover:scale-105 text-lg shadow-lg shadow-emerald-500/25"
               >
-                💎 Ver Planes
+                {isTrialExpired ? '💎 Ver Planes' : '🔄 Renovar Suscripción'}
               </button>
-              <p className="text-white/30 text-sm mt-4">Desde $29.900 COP/mes</p>
+              
+              <p className="text-white/30 text-sm mt-4">
+                {isTrialExpired ? 'Desde $29.900 COP/mes' : 'Mantén tu progreso y estadísticas'}
+              </p>
             </div>
           </div>
         </main>
