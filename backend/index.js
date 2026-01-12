@@ -4092,8 +4092,31 @@ app.get('/api/dashboard/:userId', async (req, res) => {
   
   try {
     // Obtener suscripción del usuario
-    const subscription = await getUserSubscription(userId);
-    const userPlan = subscription?.plan || 'free';
+    const sub = await getSubscription(userId);
+    
+    // Procesar la suscripción
+    let subscription = null;
+    if (sub) {
+      const planKey = sub.plan || 'free';
+      const plan = PLANS[planKey] || PLANS.free;
+      subscription = {
+        plan: planKey,
+        plan_name: plan.name,
+        status: sub.estado || 'trial',
+        days_left: sub.days_left || sub.trial_days_left || 5,
+        hasNightAccess: planKey === 'premium' || planKey === 'elite'
+      };
+    } else {
+      subscription = {
+        plan: 'free',
+        plan_name: 'Free Trial',
+        status: 'trial',
+        days_left: 5,
+        hasNightAccess: false
+      };
+    }
+    
+    const userPlan = subscription.plan;
     const planConfig = PLANS[userPlan] || PLANS.free;
     const allowedAssets = planConfig.assets || PLANS.free.assets;
     
@@ -4240,7 +4263,9 @@ app.put('/api/signals/:id', async (req, res) => {
   if (reportsManager && userId) {
     try {
       // Obtener datos del usuario para el plan
-      const subscription = await getUserSubscription(userId);
+      const sub = await getSubscription(userId);
+      const planKey = sub?.plan || 'free';
+      const plan = PLANS[planKey] || PLANS.free;
       
       await reportsManager.recordTrade(userId, {
         signalId: signal.id.toString(),
@@ -4259,7 +4284,7 @@ app.put('/api/signals/:id', async (req, res) => {
         tpHit: status === 'WIN' ? (tpHit || 1) : null,
         reason: signal.reason,
         timeframe: 'M5',
-        userPlan: subscription?.plan_name || 'free',
+        userPlan: plan.name || 'free',
         signalTime: signal.timestamp
       });
       
