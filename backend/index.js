@@ -816,7 +816,7 @@ const PLANS = {
   elite: {
     name: 'Elite',
     // ELITE: Todo incluido - Boom/Crash completos
-    assets: ['stpRNG', 'R_75', '1HZ100V', 'JD75', 'frxEURUSD', 'frxGBPUSD', 'frxUSDJPY', 'frxXAUUSD', 'frxXAGUSD', 'cryBTCUSD', 'cryETHUSD', 'BOOM1000', 'BOOM500', 'BOOM300', 'CRASH1000', 'CRASH500', 'CRASH300'],
+    assets: ['stpRNG', 'R_75', '1HZ100V', 'JD75', 'frxEURUSD', 'frxGBPUSD', 'frxUSDJPY', 'frxXAUUSD', 'frxXAGUSD', 'cryBTCUSD', 'cryETHUSD', 'BOOM1000', 'BOOM500', '1HZ300V', 'CRASH1000', 'CRASH500', '1HZ300D'],
     price: 99900
   }
 };
@@ -835,14 +835,14 @@ const ASSETS = {
   // ═══════════════════════════════════════════════
   'BOOM1000': { name: 'Boom 1000', shortName: 'Boom1K', emoji: '🚀', decimals: 2, pip: 0.01, plan: 'elite', type: 'boom', onlyDirection: 'BUY', spikeFreq: 1000, category: 'boom' },
   'BOOM500': { name: 'Boom 500', shortName: 'Boom500', emoji: '💥', decimals: 2, pip: 0.01, plan: 'elite', type: 'boom', onlyDirection: 'BUY', spikeFreq: 500, category: 'boom' },
-  'BOOM300': { name: 'Boom 300', shortName: 'Boom300', emoji: '⚡', decimals: 2, pip: 0.01, plan: 'elite', type: 'boom', onlyDirection: 'BUY', spikeFreq: 300, category: 'boom' },
+  '1HZ300V': { name: 'Boom 300', shortName: 'Boom300', emoji: '⚡', decimals: 2, pip: 0.01, plan: 'elite', type: 'boom', onlyDirection: 'BUY', spikeFreq: 300, category: 'boom' },
   
   // ═══════════════════════════════════════════════
   // 📉 SINTÉTICOS - CRASH (Solo VENTAS)
   // ═══════════════════════════════════════════════
   'CRASH1000': { name: 'Crash 1000', shortName: 'Crash1K', emoji: '📉', decimals: 2, pip: 0.01, plan: 'elite', type: 'crash', onlyDirection: 'SELL', spikeFreq: 1000, category: 'crash' },
   'CRASH500': { name: 'Crash 500', shortName: 'Crash500', emoji: '💣', decimals: 2, pip: 0.01, plan: 'elite', type: 'crash', onlyDirection: 'SELL', spikeFreq: 500, category: 'crash' },
-  'CRASH300': { name: 'Crash 300', shortName: 'Crash300', emoji: '🔻', decimals: 2, pip: 0.01, plan: 'elite', type: 'crash', onlyDirection: 'SELL', spikeFreq: 300, category: 'crash' },
+  '1HZ300D': { name: 'Crash 300', shortName: 'Crash300', emoji: '🔻', decimals: 2, pip: 0.01, plan: 'elite', type: 'crash', onlyDirection: 'SELL', spikeFreq: 300, category: 'crash' },
   
   // ═══════════════════════════════════════════════
   // 💱 FOREX - Pares de Divisas
@@ -900,6 +900,105 @@ const BOOM_CRASH_RULES = {
 let derivWs = null;
 let isConnected = false;
 let reconnectAttempts = 0;
+
+// Sistema de seguimiento de mercados activos
+const marketStatus = {};
+for (const symbol of Object.keys(ASSETS)) {
+  marketStatus[symbol] = {
+    lastDataReceived: 0,
+    isActive: false,
+    subscriptionAttempts: 0,
+    lastSubscriptionAttempt: 0
+  };
+}
+
+// Función para detectar si un mercado de Forex/Metales debería estar abierto
+function isMarketOpenNow(symbol) {
+  const config = ASSETS[symbol];
+  if (!config) return true;
+  
+  // Los sintéticos operan 24/7
+  if (['sinteticos', 'boom', 'crash'].includes(config.category)) {
+    return true;
+  }
+  
+  // Forex y Metales: cerrados de viernes 17:00 EST a domingo 17:00 EST
+  const now = new Date();
+  const utcDay = now.getUTCDay();
+  const utcHour = now.getUTCHours();
+  
+  // Convertir a EST (UTC-5)
+  const estHour = (utcHour - 5 + 24) % 24;
+  
+  // Sábado completo = cerrado
+  if (utcDay === 6) return false;
+  
+  // Domingo antes de las 17:00 EST (22:00 UTC) = cerrado
+  if (utcDay === 0 && utcHour < 22) return false;
+  
+  // Viernes después de las 17:00 EST (22:00 UTC) = cerrado
+  if (utcDay === 5 && utcHour >= 22) return false;
+  
+  return true;
+}
+
+// Función para resubscribir a un activo específico
+function resubscribeToAsset(symbol) {
+  if (!derivWs || derivWs.readyState !== WebSocket.OPEN) return;
+  
+  console.log(`🔄 [${ASSETS[symbol]?.shortName}] Resubscribiendo...`);
+  marketStatus[symbol].lastSubscriptionAttempt = Date.now();
+  marketStatus[symbol].subscriptionAttempts++;
+  
+  derivWs.send(JSON.stringify({
+    ticks_history: symbol,
+    adjust_start_time: 1,
+    count: 100,
+    end: 'latest',
+    granularity: 300,
+    style: 'candles',
+    subscribe: 1
+  }));
+  
+  requestH1(symbol);
+  derivWs.send(JSON.stringify({ ticks: symbol, subscribe: 1 }));
+}
+
+// Verificar mercados inactivos y resubscribir
+function checkAndResubscribeMarkets() {
+  if (!isConnected) return;
+  
+  const now = Date.now();
+  const inactivityThreshold = 60000; // 1 minuto sin datos = inactivo
+  
+  for (const symbol of Object.keys(ASSETS)) {
+    const status = marketStatus[symbol];
+    const config = ASSETS[symbol];
+    const shouldBeOpen = isMarketOpenNow(symbol);
+    
+    // Si el mercado debería estar abierto pero no recibimos datos
+    if (shouldBeOpen) {
+      const timeSinceLastData = now - status.lastDataReceived;
+      const timeSinceLastAttempt = now - status.lastSubscriptionAttempt;
+      
+      // Si no hay datos recientes y no intentamos recientemente (cada 30 segundos)
+      if (timeSinceLastData > inactivityThreshold && timeSinceLastAttempt > 30000) {
+        console.log(`⚠️ [${config?.shortName}] Sin datos por ${Math.round(timeSinceLastData/1000)}s - resubscribiendo`);
+        resubscribeToAsset(symbol);
+      }
+    }
+  }
+}
+
+// Iniciar verificación periódica de mercados
+let marketCheckInterval = null;
+function startMarketMonitoring() {
+  if (marketCheckInterval) clearInterval(marketCheckInterval);
+  
+  // Verificar mercados cada 30 segundos
+  marketCheckInterval = setInterval(checkAndResubscribeMarkets, 30000);
+  console.log('✅ Monitor de mercados iniciado (verificación cada 30s)');
+}
 
 const assetData = {};
 for (const symbol of Object.keys(ASSETS)) {
@@ -3526,21 +3625,30 @@ function connectDeriv() {
     isConnected = true;
     reconnectAttempts = 0;
     
+    // Iniciar monitor de mercados
+    startMarketMonitoring();
+    
     console.log('\n📊 Suscribiendo a activos:');
     for (const symbol of Object.keys(ASSETS)) {
-      console.log(`   → ${ASSETS[symbol].shortName} (${symbol})`);
-      derivWs.send(JSON.stringify({
-        ticks_history: symbol,
-        adjust_start_time: 1,
-        count: 100,
-        end: 'latest',
-        granularity: 300,
-        style: 'candles',
-        subscribe: 1
-      }));
-      
-      requestH1(symbol);
-      derivWs.send(JSON.stringify({ ticks: symbol, subscribe: 1 }));
+      // Solo suscribir a mercados que deberían estar abiertos
+      if (isMarketOpenNow(symbol)) {
+        console.log(`   → ${ASSETS[symbol].shortName} (${symbol})`);
+        derivWs.send(JSON.stringify({
+          ticks_history: symbol,
+          adjust_start_time: 1,
+          count: 100,
+          end: 'latest',
+          granularity: 300,
+          style: 'candles',
+          subscribe: 1
+        }));
+        
+        requestH1(symbol);
+        derivWs.send(JSON.stringify({ ticks: symbol, subscribe: 1 }));
+        marketStatus[symbol].lastSubscriptionAttempt = Date.now();
+      } else {
+        console.log(`   ⏸️ ${ASSETS[symbol].shortName} (${symbol}) - Mercado cerrado`);
+      }
     }
     console.log('\n✅ Suscripciones enviadas - Esperando datos...\n');
   });
@@ -3559,6 +3667,9 @@ function connectDeriv() {
             low: +c.low,
             close: +c.close
           }));
+          // Actualizar estado del mercado
+          marketStatus[symbol].lastDataReceived = Date.now();
+          marketStatus[symbol].isActive = true;
           console.log(`📊 [${ASSETS[symbol]?.shortName}] M5: ${assetData[symbol].candles.length} velas cargadas`);
           analyzeAsset(symbol);
         }
@@ -3575,6 +3686,9 @@ function connectDeriv() {
             close: +c.close
           }));
           assetData[symbol].h1Loaded = true;
+          // Actualizar estado del mercado
+          marketStatus[symbol].lastDataReceived = Date.now();
+          marketStatus[symbol].isActive = true;
           console.log(`📊 H1 ${ASSETS[symbol]?.shortName}: ${assetData[symbol].candlesH1.length} velas`);
           analyzeAsset(symbol);
         }
@@ -3604,6 +3718,9 @@ function connectDeriv() {
           }
           
           assetData[symbol].price = newCandle.close;
+          // Actualizar estado del mercado
+          marketStatus[symbol].lastDataReceived = Date.now();
+          marketStatus[symbol].isActive = true;
           checkSignalHits();
         }
       }
@@ -3612,7 +3729,19 @@ function connectDeriv() {
         const symbol = msg.tick.symbol;
         if (assetData[symbol]) {
           assetData[symbol].price = +msg.tick.quote;
+          // Actualizar estado del mercado
+          marketStatus[symbol].lastDataReceived = Date.now();
+          marketStatus[symbol].isActive = true;
           checkSignalHits();
+        }
+      }
+      
+      // Manejar errores de suscripción (mercado cerrado, símbolo inválido, etc.)
+      if (msg.error) {
+        const symbol = msg.echo_req?.ticks_history || msg.echo_req?.ticks;
+        if (symbol && ASSETS[symbol]) {
+          console.log(`⚠️ [${ASSETS[symbol].shortName}] Error: ${msg.error.message}`);
+          marketStatus[symbol].isActive = false;
         }
       }
       
@@ -3622,6 +3751,13 @@ function connectDeriv() {
   derivWs.on('close', () => {
     console.log('❌ Desconectado de Deriv');
     isConnected = false;
+    
+    // Limpiar monitor de mercados
+    if (marketCheckInterval) {
+      clearInterval(marketCheckInterval);
+      marketCheckInterval = null;
+    }
+    
     reconnectAttempts++;
     const delay = Math.min(5000 * reconnectAttempts, 30000);
     console.log(`   🔄 Reconectando en ${delay/1000}s... (intento ${reconnectAttempts})`);
@@ -4472,6 +4608,76 @@ app.post('/api/webhooks/wompi', async (req, res) => {
   }
   
   res.json({ received: true });
+});
+
+// Endpoint para ver estado de mercados
+app.get('/api/markets/status', (req, res) => {
+  const marketsInfo = {};
+  for (const symbol of Object.keys(ASSETS)) {
+    const config = ASSETS[symbol];
+    const status = marketStatus[symbol];
+    const data = assetData[symbol];
+    
+    marketsInfo[symbol] = {
+      name: config.shortName,
+      category: config.category,
+      isOpen: isMarketOpenNow(symbol),
+      isActive: status.isActive,
+      lastDataReceived: status.lastDataReceived ? new Date(status.lastDataReceived).toISOString() : null,
+      hasCandles: data.candles?.length > 0,
+      candleCount: data.candles?.length || 0,
+      currentPrice: data.price,
+      subscriptionAttempts: status.subscriptionAttempts
+    };
+  }
+  
+  res.json({
+    connected: isConnected,
+    timestamp: new Date().toISOString(),
+    markets: marketsInfo
+  });
+});
+
+// Endpoint para forzar resubscripción de un mercado
+app.post('/api/markets/resubscribe/:symbol', (req, res) => {
+  const { symbol } = req.params;
+  
+  if (!ASSETS[symbol]) {
+    return res.status(404).json({ error: 'Mercado no encontrado' });
+  }
+  
+  if (!isConnected) {
+    return res.status(503).json({ error: 'No conectado a Deriv' });
+  }
+  
+  resubscribeToAsset(symbol);
+  
+  res.json({
+    success: true,
+    message: `Resubscripción enviada para ${ASSETS[symbol].shortName}`,
+    symbol
+  });
+});
+
+// Endpoint para forzar resubscripción de todos los mercados
+app.post('/api/markets/resubscribe-all', (req, res) => {
+  if (!isConnected) {
+    return res.status(503).json({ error: 'No conectado a Deriv' });
+  }
+  
+  const resubscribed = [];
+  for (const symbol of Object.keys(ASSETS)) {
+    if (isMarketOpenNow(symbol)) {
+      resubscribeToAsset(symbol);
+      resubscribed.push(ASSETS[symbol].shortName);
+    }
+  }
+  
+  res.json({
+    success: true,
+    message: `Resubscripción enviada para ${resubscribed.length} mercados`,
+    markets: resubscribed
+  });
 });
 
 app.get('/api/health', (req, res) => {

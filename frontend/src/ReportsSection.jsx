@@ -115,6 +115,8 @@ export default function ReportsSection({ userId, localStats, localSignals }) {
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState(null);
   const [useLocalData, setUseLocalData] = useState(false);
+  const [initialLoadDone, setInitialLoadDone] = useState(false);
+  const lastFetchRef = React.useRef(null);
 
   // Calcular datos locales desde las señales del backend
   const localData = useMemo(() => {
@@ -259,11 +261,16 @@ export default function ReportsSection({ userId, localStats, localSignals }) {
   useEffect(() => {
     if (!userId) {
       setLoading(false);
+      setInitialLoadDone(true);
       return;
     }
     
     const fetchData = async () => {
-      setLoading(true);
+      // Solo mostrar loading en la primera carga
+      if (!initialLoadDone) {
+        setLoading(true);
+      }
+      
       try {
         // Obtener resumen
         const summaryRes = await fetch(`${API_URL}/api/reports/summary/${userId}`);
@@ -290,27 +297,27 @@ export default function ReportsSection({ userId, localStats, localSignals }) {
         } else {
           // Usar datos locales como fallback
           setUseLocalData(true);
-          if (localData) {
-            setSummary(localData.summary);
-            setReport({ stats: localData.stats, trades: localData.trades });
-            setEquityCurve(localData.equityCurve);
-          }
         }
       } catch (error) {
         console.error('Error fetching reports:', error);
         // En caso de error, usar datos locales
         setUseLocalData(true);
-        if (localData) {
-          setSummary(localData.summary);
-          setReport({ stats: localData.stats, trades: localData.trades });
-          setEquityCurve(localData.equityCurve);
-        }
       }
       setLoading(false);
+      setInitialLoadDone(true);
     };
 
     fetchData();
-  }, [userId, period, localData]);
+  }, [userId, period]); // Removido localData de las dependencias
+  
+  // Efecto separado para actualizar datos locales cuando cambian
+  useEffect(() => {
+    if (useLocalData && localData) {
+      setSummary(localData.summary);
+      setReport({ stats: localData.stats, trades: localData.trades });
+      setEquityCurve(localData.equityCurve);
+    }
+  }, [useLocalData, localStats?.wins, localStats?.losses]); // Solo actualizar cuando cambian wins/losses reales
 
   if (loading) {
     return (
