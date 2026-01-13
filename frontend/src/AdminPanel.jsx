@@ -410,7 +410,14 @@ export default function AdminPanel() {
                         </span>
                       </td>
                       <td className="p-4 text-white/60 text-sm">
-                        {user.period || user.periodo || 'mensual'}
+                        {(() => {
+                          const p = user.period || user.periodo || 'mensual';
+                          if (p === 'trial' || user.status === 'trial' || user.estado === 'trial') return 'Prueba 5 días';
+                          if (p === 'mensual') return 'mensual';
+                          if (p === 'semestral') return 'semestral';
+                          if (p === 'anual') return 'anual';
+                          return p;
+                        })()}
                       </td>
                       <td className="p-4 text-white/60 text-sm">
                         {formatDate(user.created_at)}

@@ -523,6 +523,7 @@ const memoryStore = {
 
 // Días por periodo
 const PERIOD_DAYS = {
+  trial: 5,
   mensual: 30,
   semestral: 180,
   anual: 365
@@ -4827,7 +4828,7 @@ app.get('/api/subscription/:userId', async (req, res) => {
         email: userId,
         estado: 'trial',
         plan: 'free',
-        periodo: 'mensual',
+        periodo: 'trial',
         created_at: new Date().toISOString()
       };
       await saveSubscription(newSub);
