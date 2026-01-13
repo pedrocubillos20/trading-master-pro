@@ -1,60 +1,123 @@
 // =============================================
 // TRADING MASTER PRO - PUSH NOTIFICATIONS MODULE
-// Sistema de notificaciones push por plan
+// VERSIÓN ACTUALIZADA - Todos los activos por plan
 // =============================================
 
 import webpush from 'web-push';
 
-// Configuración de límites por plan
+// Configuración de límites por plan - ACTUALIZADO con todos los activos
 const PLAN_NOTIFICATION_LIMITS = {
-  trial: {
-    enabled: false,
-    maxPerDay: 0,
-    minScore: 100, // Nunca envía
-    assets: []
+  free: { 
+    enabled: false, 
+    maxPerDay: 0, 
+    minScore: 100, 
+    assets: [] 
+  },
+  trial: { 
+    enabled: false, 
+    maxPerDay: 0, 
+    minScore: 100, 
+    assets: [] 
+  },
+  basico: {
+    enabled: true,
+    maxPerDay: 10,
+    minScore: 70,
+    assets: ['stpRNG', 'R_75', 'frxEURUSD', 'frxUSDJPY', 'frxXAUUSD', 'frxXAGUSD']
   },
   basic: {
     enabled: true,
     maxPerDay: 10,
     minScore: 70,
-    assets: ['stpRNG', 'frxXAUUSD', '1HZ75V']
+    assets: ['stpRNG', 'R_75', 'frxEURUSD', 'frxUSDJPY', 'frxXAUUSD', 'frxXAGUSD']
   },
   premium: {
     enabled: true,
     maxPerDay: 25,
     minScore: 70,
-    assets: ['stpRNG', 'frxXAUUSD', '1HZ75V', 'frxGBPUSD', 'cryBTCUSD']
+    assets: [
+      'stpRNG', 'R_75', '1HZ100V', 'JD75',
+      'frxEURUSD', 'frxGBPUSD', 'frxUSDJPY',
+      'frxXAUUSD', 'frxXAGUSD',
+      'cryBTCUSD', 'cryETHUSD'
+    ]
   },
   elite: {
     enabled: true,
-    maxPerDay: 999, // Sin límite
-    minScore: 0, // Todas
+    maxPerDay: 999,
+    minScore: 0,
     assets: [
-      'stpRNG', 'frxXAUUSD', '1HZ75V', 'frxGBPUSD', 'cryBTCUSD',
-      'BOOM500', 'BOOM1000', 'CRASH500', 'CRASH1000'
+      // Sintéticos
+      'stpRNG', 'R_75', '1HZ100V', 'JD75', 'JD100', 'JD150', 'JD200',
+      // Forex
+      'frxEURUSD', 'frxGBPUSD', 'frxUSDJPY', 'frxAUDUSD', 'frxUSDCAD', 'frxNZDUSD',
+      // Metales
+      'frxXAUUSD', 'frxXAGUSD',
+      // Crypto
+      'cryBTCUSD', 'cryETHUSD',
+      // Boom/Crash
+      'BOOM1000', 'BOOM500', 'BOOM300N', 'BOOM300',
+      'CRASH1000', 'CRASH500', 'CRASH300N', 'CRASH300',
+      // Volatility
+      '1HZ75V', '1HZ150V', '1HZ200V', '1HZ250V',
+      // Step
+      'stpRNG'
     ]
   }
 };
 
-// Info de activos para mostrar nombres bonitos
+// Info de activos para notificaciones
 const ASSETS_INFO = {
+  // Sintéticos - Step
   'stpRNG': { name: 'Step Index', emoji: '📊' },
-  'frxXAUUSD': { name: 'Oro (XAU/USD)', emoji: '🥇' },
-  '1HZ75V': { name: 'Volatility 75', emoji: '📈' },
-  'frxGBPUSD': { name: 'GBP/USD', emoji: '💷' },
-  'cryBTCUSD': { name: 'Bitcoin', emoji: '₿' },
-  'BOOM500': { name: 'Boom 500', emoji: '🚀' },
+  
+  // Sintéticos - Volatility
+  'R_75': { name: 'Volatility 75', emoji: '📈' },
+  '1HZ75V': { name: 'V75 (1s)', emoji: '📈' },
+  '1HZ100V': { name: 'V100 (1s)', emoji: '📈' },
+  '1HZ150V': { name: 'V150 (1s)', emoji: '📈' },
+  '1HZ200V': { name: 'V200 (1s)', emoji: '📈' },
+  '1HZ250V': { name: 'V250 (1s)', emoji: '📈' },
+  
+  // Sintéticos - Jump
+  'JD75': { name: 'Jump 75', emoji: '⚡' },
+  'JD100': { name: 'Jump 100', emoji: '⚡' },
+  'JD150': { name: 'Jump 150', emoji: '⚡' },
+  'JD200': { name: 'Jump 200', emoji: '⚡' },
+  
+  // Boom/Crash
   'BOOM1000': { name: 'Boom 1000', emoji: '🚀' },
+  'BOOM500': { name: 'Boom 500', emoji: '🚀' },
+  'BOOM300': { name: 'Boom 300', emoji: '🚀' },
+  'BOOM300N': { name: 'Boom 300N', emoji: '🚀' },
+  'CRASH1000': { name: 'Crash 1000', emoji: '💥' },
   'CRASH500': { name: 'Crash 500', emoji: '💥' },
-  'CRASH1000': { name: 'Crash 1000', emoji: '💥' }
+  'CRASH300': { name: 'Crash 300', emoji: '💥' },
+  'CRASH300N': { name: 'Crash 300N', emoji: '💥' },
+  
+  // Forex
+  'frxEURUSD': { name: 'EUR/USD', emoji: '💶' },
+  'frxGBPUSD': { name: 'GBP/USD', emoji: '💷' },
+  'frxUSDJPY': { name: 'USD/JPY', emoji: '💴' },
+  'frxAUDUSD': { name: 'AUD/USD', emoji: '🦘' },
+  'frxUSDCAD': { name: 'USD/CAD', emoji: '🍁' },
+  'frxNZDUSD': { name: 'NZD/USD', emoji: '🥝' },
+  
+  // Metales
+  'frxXAUUSD': { name: 'Oro (XAU)', emoji: '🥇' },
+  'frxXAGUSD': { name: 'Plata (XAG)', emoji: '🥈' },
+  
+  // Crypto
+  'cryBTCUSD': { name: 'Bitcoin', emoji: '₿' },
+  'cryETHUSD': { name: 'Ethereum', emoji: 'Ξ' }
 };
 
 class PushNotificationManager {
   constructor(supabase) {
     this.supabase = supabase;
     this.initialized = false;
+    this.userPlanCache = new Map();
     
-    // Configurar VAPID
     if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
       webpush.setVapidDetails(
         process.env.VAPID_EMAIL || 'mailto:admin@tradingmasterpro.com',
@@ -64,20 +127,38 @@ class PushNotificationManager {
       this.initialized = true;
       console.log('✅ Push Notifications configuradas');
     } else {
-      console.log('⚠️ VAPID keys no encontradas - Push notifications deshabilitadas');
+      console.log('⚠️ VAPID keys no encontradas - Push deshabilitadas');
     }
   }
 
-  /**
-   * Obtener VAPID public key para el frontend
-   */
   getPublicKey() {
     return process.env.VAPID_PUBLIC_KEY || null;
   }
 
-  /**
-   * Guardar suscripción de un usuario
-   */
+  // Obtener plan de usuario (con cache de 5 min)
+  async getUserPlan(userId) {
+    const cached = this.userPlanCache.get(userId);
+    if (cached && cached.timestamp > Date.now() - 300000) {
+      return cached.plan;
+    }
+
+    try {
+      const { data, error } = await this.supabase
+        .from('suscripciones')
+        .select('plan, estado')
+        .or(`id_de_usuario.eq.${userId},email.eq.${userId}`)
+        .eq('estado', 'active')
+        .single();
+
+      const plan = (error || !data) ? 'trial' : (data.plan || 'trial');
+      this.userPlanCache.set(userId, { plan, timestamp: Date.now() });
+      return plan;
+    } catch (err) {
+      return 'trial';
+    }
+  }
+
+  // Guardar suscripción
   async saveSubscription(userId, subscription, deviceInfo = {}) {
     try {
       const { endpoint, keys } = subscription;
@@ -89,19 +170,15 @@ class PushNotificationManager {
           endpoint: endpoint,
           p256dh: keys.p256dh,
           auth: keys.auth,
-          user_agent: deviceInfo.userAgent || null,
           device_type: deviceInfo.deviceType || 'unknown',
           notifications_enabled: true,
           updated_at: new Date().toISOString()
-        }, {
-          onConflict: 'endpoint'
-        })
+        }, { onConflict: 'endpoint' })
         .select()
         .single();
 
       if (error) throw error;
-
-      console.log(`✅ Suscripción guardada para usuario ${userId}`);
+      console.log(`✅ Suscripción guardada para ${userId}`);
       return { success: true, subscription: data };
     } catch (error) {
       console.error('Error guardando suscripción:', error);
@@ -109,76 +186,84 @@ class PushNotificationManager {
     }
   }
 
-  /**
-   * Eliminar suscripción
-   */
+  // Eliminar suscripción
   async removeSubscription(userId, endpoint) {
     try {
-      const { error } = await this.supabase
+      await this.supabase
         .from('push_subscriptions')
         .delete()
         .eq('user_id', userId)
         .eq('endpoint', endpoint);
-
-      if (error) throw error;
       return { success: true };
     } catch (error) {
-      console.error('Error eliminando suscripción:', error);
       return { success: false, error: error.message };
     }
   }
 
-  /**
-   * Obtener conteo de notificaciones del día para un usuario
-   */
+  // Conteo diario
   async getDailyCount(userId) {
     try {
-      const { data, error } = await this.supabase
-        .rpc('get_daily_notification_count', { p_user_id: userId });
-      
-      if (error) throw error;
-      return data || 0;
-    } catch (error) {
-      console.error('Error obteniendo conteo diario:', error);
+      const today = new Date().toISOString().split('T')[0];
+      const { data } = await this.supabase
+        .from('daily_notification_counts')
+        .select('count')
+        .eq('user_id', userId)
+        .eq('date', today)
+        .single();
+      return data?.count || 0;
+    } catch {
       return 0;
     }
   }
 
-  /**
-   * Incrementar conteo diario
-   */
   async incrementDailyCount(userId) {
     try {
-      const { data, error } = await this.supabase
-        .rpc('increment_notification_count', { p_user_id: userId });
-      
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      console.error('Error incrementando conteo:', error);
+      const today = new Date().toISOString().split('T')[0];
+      const { data: existing } = await this.supabase
+        .from('daily_notification_counts')
+        .select('id, count')
+        .eq('user_id', userId)
+        .eq('date', today)
+        .single();
+
+      if (existing) {
+        await this.supabase
+          .from('daily_notification_counts')
+          .update({ count: existing.count + 1 })
+          .eq('id', existing.id);
+        return existing.count + 1;
+      } else {
+        await this.supabase
+          .from('daily_notification_counts')
+          .insert({ user_id: userId, date: today, count: 1 });
+        return 1;
+      }
+    } catch {
       return 0;
     }
   }
 
-  /**
-   * Verificar si el usuario puede recibir notificación
-   */
+  // Verificar si puede recibir
   async canReceiveNotification(userId, userPlan, signal) {
     const planConfig = PLAN_NOTIFICATION_LIMITS[userPlan] || PLAN_NOTIFICATION_LIMITS.trial;
     
-    // Plan no tiene notificaciones habilitadas
     if (!planConfig.enabled) {
       return { allowed: false, reason: 'Plan sin notificaciones' };
     }
 
+    // Elite puede recibir TODO
+    if (userPlan === 'elite') {
+      return { allowed: true };
+    }
+
     // Verificar si el activo está en el plan
     if (!planConfig.assets.includes(signal.symbol)) {
-      return { allowed: false, reason: 'Activo no incluido en plan' };
+      return { allowed: false, reason: `Activo ${signal.symbol} no incluido en plan ${userPlan}` };
     }
 
     // Verificar score mínimo
     if (signal.score < planConfig.minScore) {
-      return { allowed: false, reason: 'Score bajo mínimo del plan' };
+      return { allowed: false, reason: 'Score bajo' };
     }
 
     // Verificar límite diario
@@ -190,264 +275,184 @@ class PushNotificationManager {
     return { allowed: true };
   }
 
-  /**
-   * Enviar notificación a un usuario específico
-   */
-  async sendToUser(userId, notification) {
+  // Enviar notificación de prueba
+  async sendTestNotification(userId) {
     if (!this.initialized) {
       return { success: false, error: 'Push not initialized' };
     }
 
     try {
-      // Obtener suscripciones activas del usuario
       const { data: subscriptions, error } = await this.supabase
         .from('push_subscriptions')
-        .select('*')
+        .select('id, endpoint, p256dh, auth')
         .eq('user_id', userId)
         .eq('notifications_enabled', true);
 
       if (error) throw error;
-      if (!subscriptions || subscriptions.length === 0) {
-        return { success: false, error: 'No subscriptions found' };
+      if (!subscriptions?.length) {
+        return { success: false, error: 'No hay suscripciones' };
       }
 
-      const results = [];
+      const notification = {
+        title: '🔔 Notificaciones Activadas',
+        body: 'Recibirás alertas de señales - Trading Master Pro',
+        icon: '/icons/icon-192x192.png',
+        badge: '/icons/icon-72x72.png',
+        tag: 'test',
+        data: { type: 'test', url: '/' }
+      };
+
+      let sent = 0;
       for (const sub of subscriptions) {
         try {
-          const pushSubscription = {
-            endpoint: sub.endpoint,
-            keys: {
-              p256dh: sub.p256dh,
-              auth: sub.auth
-            }
-          };
-
           await webpush.sendNotification(
-            pushSubscription,
+            { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
             JSON.stringify(notification)
           );
-
-          // Registrar en historial
-          await this.supabase.from('notification_history').insert({
-            user_id: userId,
-            subscription_id: sub.id,
-            signal_id: notification.data?.signalId || null,
-            notification_type: notification.data?.type || 'signal',
-            title: notification.title,
-            body: notification.body,
-            data: notification.data,
-            status: 'sent'
-          });
-
-          results.push({ endpoint: sub.endpoint, success: true });
-        } catch (pushError) {
-          console.error(`Error enviando push a ${sub.endpoint}:`, pushError);
-          
-          // Si el endpoint ya no es válido, eliminarlo
-          if (pushError.statusCode === 404 || pushError.statusCode === 410) {
-            await this.supabase
-              .from('push_subscriptions')
-              .delete()
-              .eq('id', sub.id);
+          sent++;
+        } catch (err) {
+          if (err.statusCode === 404 || err.statusCode === 410) {
+            await this.supabase.from('push_subscriptions').delete().eq('id', sub.id);
           }
-
-          results.push({ endpoint: sub.endpoint, success: false, error: pushError.message });
         }
       }
 
-      return { success: true, results };
+      return { success: true, sent };
     } catch (error) {
-      console.error('Error enviando notificación:', error);
+      console.error('Error test notification:', error);
       return { success: false, error: error.message };
     }
   }
 
-  /**
-   * Enviar notificación de señal a todos los usuarios elegibles
-   */
+  // BROADCAST DE SEÑAL
   async broadcastSignal(signal) {
     if (!this.initialized) {
-      console.log('⚠️ Push not initialized, skipping broadcast');
+      console.log('⚠️ Push not initialized');
       return { sent: 0, skipped: 0 };
     }
 
     console.log(`📤 Broadcasting señal ${signal.symbol} (Score: ${signal.score})`);
 
     try {
-      // Obtener todos los usuarios con suscripciones activas
+      // Consulta simple sin JOINs
       const { data: subscriptions, error } = await this.supabase
         .from('push_subscriptions')
-        .select(`
-          *,
-          users:user_id (
-            id,
-            plan_slug
-          )
-        `)
+        .select('id, user_id, endpoint, p256dh, auth')
         .eq('notifications_enabled', true);
 
-      if (error) throw error;
-      if (!subscriptions || subscriptions.length === 0) {
-        console.log('No hay suscripciones activas');
+      if (error) {
+        console.error('Error obteniendo suscripciones:', error);
         return { sent: 0, skipped: 0 };
       }
 
-      // Agrupar por usuario (puede tener múltiples dispositivos)
-      const userSubscriptions = {};
-      for (const sub of subscriptions) {
-        const userId = sub.user_id;
-        if (!userSubscriptions[userId]) {
-          userSubscriptions[userId] = {
-            plan: sub.users?.plan_slug || 'trial',
-            subscriptions: []
-          };
-        }
-        userSubscriptions[userId].subscriptions.push(sub);
+      if (!subscriptions?.length) {
+        console.log('📭 No hay suscripciones activas');
+        return { sent: 0, skipped: 0 };
       }
 
-      let sent = 0;
-      let skipped = 0;
+      console.log(`📋 ${subscriptions.length} suscripciones encontradas`);
 
-      // Procesar cada usuario
-      for (const [userId, userData] of Object.entries(userSubscriptions)) {
-        // Verificar si puede recibir
-        const canReceive = await this.canReceiveNotification(userId, userData.plan, signal);
-        
-        if (!canReceive.allowed) {
-          skipped++;
-          continue;
-        }
+      // Agrupar por usuario
+      const userSubs = {};
+      for (const sub of subscriptions) {
+        if (!userSubs[sub.user_id]) userSubs[sub.user_id] = [];
+        userSubs[sub.user_id].push(sub);
+      }
 
-        // Construir notificación
-        const assetInfo = ASSETS_INFO[signal.symbol] || { name: signal.symbol, emoji: '📊' };
-        const actionEmoji = signal.action === 'BUY' ? '🟢' : '🔴';
-        const actionText = signal.action === 'BUY' ? 'LONG' : 'SHORT';
+      let sent = 0, skipped = 0;
 
-        const notification = {
-          title: `${actionEmoji} SEÑAL ${actionText} - ${assetInfo.name}`,
-          body: `${assetInfo.emoji} Score: ${signal.score}/100 | Entry: ${signal.entry?.toFixed(signal.symbol.includes('JPY') ? 3 : 5)}`,
-          icon: '/icons/icon-192x192.png',
-          badge: '/icons/icon-72x72.png',
-          tag: `signal-${signal.id}`,
-          renotify: true,
-          requireInteraction: false,
-          vibrate: [100, 50, 100],
-          data: {
-            type: 'signal',
-            signalId: signal.id,
-            symbol: signal.symbol,
-            action: signal.action,
-            score: signal.score,
-            url: '/?signal=' + signal.id
-          },
-          actions: [
-            { action: 'view', title: 'Ver Señal' },
-            { action: 'dismiss', title: 'Ignorar' }
-          ]
-        };
+      for (const [userId, subs] of Object.entries(userSubs)) {
+        try {
+          const userPlan = await this.getUserPlan(userId);
+          const canReceive = await this.canReceiveNotification(userId, userPlan, signal);
+          
+          if (!canReceive.allowed) {
+            console.log(`⏭️ ${userId} (${userPlan}): ${canReceive.reason}`);
+            skipped++;
+            continue;
+          }
 
-        // Enviar a todos los dispositivos del usuario
-        for (const sub of userData.subscriptions) {
-          try {
-            const pushSubscription = {
-              endpoint: sub.endpoint,
-              keys: {
-                p256dh: sub.p256dh,
-                auth: sub.auth
+          // Construir notificación
+          const assetInfo = ASSETS_INFO[signal.symbol] || { name: signal.symbol, emoji: '📊' };
+          const actionEmoji = signal.action === 'BUY' ? '🟢' : '🔴';
+          const actionText = signal.action === 'BUY' ? 'LONG' : 'SHORT';
+
+          const notification = {
+            title: `${actionEmoji} ${actionText} - ${assetInfo.name}`,
+            body: `${assetInfo.emoji} Score: ${signal.score}/100 | TF: ${signal.timeframe || 'H1'}`,
+            icon: '/icons/icon-192x192.png',
+            badge: '/icons/icon-72x72.png',
+            tag: `signal-${signal.id}`,
+            renotify: true,
+            vibrate: [100, 50, 100],
+            data: {
+              type: 'signal',
+              signalId: signal.id,
+              symbol: signal.symbol,
+              action: signal.action,
+              score: signal.score,
+              url: '/'
+            }
+          };
+
+          // Enviar a todos los dispositivos del usuario
+          let userSent = false;
+          for (const sub of subs) {
+            try {
+              await webpush.sendNotification(
+                { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+                JSON.stringify(notification)
+              );
+              userSent = true;
+              console.log(`✅ Push enviado a ${userId} (${userPlan})`);
+            } catch (pushErr) {
+              console.error(`❌ Push error ${userId}:`, pushErr.statusCode || pushErr.message);
+              if (pushErr.statusCode === 404 || pushErr.statusCode === 410) {
+                await this.supabase.from('push_subscriptions').delete().eq('id', sub.id);
               }
-            };
-
-            await webpush.sendNotification(pushSubscription, JSON.stringify(notification));
-            
-            // Registrar en historial
-            await this.supabase.from('notification_history').insert({
-              user_id: userId,
-              subscription_id: sub.id,
-              signal_id: signal.id,
-              notification_type: 'signal',
-              title: notification.title,
-              body: notification.body,
-              data: notification.data,
-              status: 'sent'
-            });
-
-          } catch (pushError) {
-            console.error(`Error enviando a ${sub.endpoint}:`, pushError.statusCode);
-            
-            // Limpiar endpoints inválidos
-            if (pushError.statusCode === 404 || pushError.statusCode === 410) {
-              await this.supabase
-                .from('push_subscriptions')
-                .delete()
-                .eq('id', sub.id);
             }
           }
-        }
 
-        // Incrementar conteo diario
-        await this.incrementDailyCount(userId);
-        sent++;
+          if (userSent) {
+            await this.incrementDailyCount(userId);
+            sent++;
+          }
+        } catch (userErr) {
+          console.error(`Error usuario ${userId}:`, userErr);
+          skipped++;
+        }
       }
 
       console.log(`✅ Broadcast completado: ${sent} enviadas, ${skipped} omitidas`);
       return { sent, skipped };
 
     } catch (error) {
-      console.error('Error en broadcast:', error);
+      console.error('Error broadcast:', error);
       return { sent: 0, skipped: 0, error: error.message };
     }
   }
 
-  /**
-   * Enviar notificación de prueba
-   */
-  async sendTestNotification(userId) {
-    const testNotification = {
-      title: '🔔 Notificaciones Activadas',
-      body: 'Recibirás alertas de señales según tu plan. ¡Trading Master Pro!',
-      icon: '/icons/icon-192x192.png',
-      badge: '/icons/icon-72x72.png',
-      tag: 'test-notification',
-      data: {
-        type: 'test',
-        url: '/'
-      }
-    };
-
-    return await this.sendToUser(userId, testNotification);
-  }
-
-  /**
-   * Obtener estadísticas de notificaciones de un usuario
-   */
+  // Stats del usuario
   async getUserStats(userId) {
     try {
-      // Conteo de hoy
       const dailyCount = await this.getDailyCount(userId);
-
-      // Suscripciones activas
-      const { data: subscriptions } = await this.supabase
+      const userPlan = await this.getUserPlan(userId);
+      const planConfig = PLAN_NOTIFICATION_LIMITS[userPlan] || PLAN_NOTIFICATION_LIMITS.trial;
+      
+      const { data: subs } = await this.supabase
         .from('push_subscriptions')
-        .select('id, device_type, created_at')
+        .select('id, device_type')
         .eq('user_id', userId)
         .eq('notifications_enabled', true);
 
-      // Últimas 10 notificaciones
-      const { data: recentNotifications } = await this.supabase
-        .from('notification_history')
-        .select('title, body, sent_at, status')
-        .eq('user_id', userId)
-        .order('sent_at', { ascending: false })
-        .limit(10);
-
       return {
         dailyCount,
-        devicesCount: subscriptions?.length || 0,
-        devices: subscriptions || [],
-        recentNotifications: recentNotifications || []
+        maxPerDay: planConfig.maxPerDay,
+        devicesCount: subs?.length || 0,
+        plan: userPlan,
+        assetsCount: planConfig.assets?.length || 0
       };
-    } catch (error) {
-      console.error('Error obteniendo stats:', error);
+    } catch {
       return null;
     }
   }
