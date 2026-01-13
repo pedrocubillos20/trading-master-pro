@@ -33,6 +33,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import ReportsManager from './reports-manager.js';
+import PushNotificationManager from './push-notifications.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -499,6 +500,15 @@ let reportsManager = null;
 if (supabase) {
   reportsManager = new ReportsManager(supabase);
   console.log('✅ Módulo de Reportes activado');
+}
+
+// Inicializar módulo de push notifications
+let pushManager = null;
+if (supabase && process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+  pushManager = new PushNotificationManager(supabase);
+  console.log('✅ Módulo de Push Notifications activado');
+} else {
+  console.log('⚠️ Push Notifications deshabilitadas (faltan VAPID keys o Supabase)');
 }
 
 // Almacenamiento en memoria (fallback cuando no hay Supabase)
@@ -4154,6 +4164,13 @@ function analyzeAsset(symbol) {
   
   // Enviar a Telegram
   sendTelegramSignal(newSignal);
+  
+  // Enviar Push Notifications a usuarios según su plan
+  if (pushManager) {
+    pushManager.broadcastSignal(newSignal).catch(err => {
+      console.error('Error en push broadcast:', err);
+    });
+  }
 }
 
 // =============================================
@@ -4528,6 +4545,99 @@ app.post('/api/ai/chat', async (req, res) => {
     console.log('⚠️ Error en chat:', error.message);
     // Fallback a respuesta estática
     res.json(Elisa.chat(question || '', symbol || 'stpRNG'));
+  }
+});
+
+// =============================================
+// API ENDPOINTS - PUSH NOTIFICATIONS
+// =============================================
+
+// Obtener VAPID public key
+app.get('/api/push/vapid-key', (req, res) => {
+  if (!pushManager) {
+    return res.status(503).json({ error: 'Push notifications no disponibles' });
+  }
+  res.json({ 
+    publicKey: pushManager.getPublicKey(),
+    enabled: true
+  });
+});
+
+// Guardar suscripción push
+app.post('/api/push/subscribe', async (req, res) => {
+  try {
+    if (!pushManager) {
+      return res.status(503).json({ error: 'Push notifications no disponibles' });
+    }
+
+    const { userId, subscription, deviceInfo } = req.body;
+    
+    if (!userId || !subscription) {
+      return res.status(400).json({ error: 'userId y subscription requeridos' });
+    }
+
+    const result = await pushManager.saveSubscription(userId, subscription, deviceInfo);
+    res.json(result);
+  } catch (error) {
+    console.error('Error en subscribe:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Eliminar suscripción push
+app.post('/api/push/unsubscribe', async (req, res) => {
+  try {
+    if (!pushManager) {
+      return res.status(503).json({ error: 'Push notifications no disponibles' });
+    }
+
+    const { userId, endpoint } = req.body;
+    
+    if (!userId || !endpoint) {
+      return res.status(400).json({ error: 'userId y endpoint requeridos' });
+    }
+
+    const result = await pushManager.removeSubscription(userId, endpoint);
+    res.json(result);
+  } catch (error) {
+    console.error('Error en unsubscribe:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Enviar notificación de prueba
+app.post('/api/push/test', async (req, res) => {
+  try {
+    if (!pushManager) {
+      return res.status(503).json({ error: 'Push notifications no disponibles' });
+    }
+
+    const { userId } = req.body;
+    
+    if (!userId) {
+      return res.status(400).json({ error: 'userId requerido' });
+    }
+
+    const result = await pushManager.sendTestNotification(userId);
+    res.json(result);
+  } catch (error) {
+    console.error('Error en test notification:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Obtener estadísticas de notificaciones
+app.get('/api/push/stats/:userId', async (req, res) => {
+  try {
+    if (!pushManager) {
+      return res.status(503).json({ error: 'Push notifications no disponibles' });
+    }
+
+    const stats = await pushManager.getUserStats(req.params.userId);
+    res.json({ success: true, stats });
+  } catch (error) {
+    console.error('Error obteniendo stats:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 

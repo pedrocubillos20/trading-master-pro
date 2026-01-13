@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import Pricing from './Pricing';
 import ReportsSection from './ReportsSection';
+import PushNotifications from './PushNotifications';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://trading-master-pro-production.up.railway.app';
 
@@ -1590,6 +1591,9 @@ export default function Dashboard({ user, onLogout }) {
                   </ol>
                 </div>
               </div>
+
+              {/* Notificaciones Push */}
+              <PushNotifications userId={userData?.id} userPlan={userData?.plan_slug || 'trial'} />
 
               {/* Ventajas PWA */}
               <div className="bg-[#0d0d12] rounded-xl border border-white/5 p-6">

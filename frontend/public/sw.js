@@ -1,5 +1,5 @@
-// Trading Master Pro - Service Worker v1.0
-const CACHE_NAME = 'trading-master-pro-v1';
+// Trading Master Pro - Service Worker v2.0 con Push Notifications
+const CACHE_NAME = 'trading-master-pro-v2';
 const OFFLINE_URL = '/offline.html';
 
 // Archivos para cachear en instalación
@@ -14,7 +14,7 @@ const PRECACHE_ASSETS = [
 
 // Instalación del Service Worker
 self.addEventListener('install', (event) => {
-  console.log('[SW] Instalando Service Worker...');
+  console.log('[SW] Instalando Service Worker v2.0...');
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then((cache) => {
@@ -28,7 +28,7 @@ self.addEventListener('install', (event) => {
 
 // Activación - Limpiar caches viejos
 self.addEventListener('activate', (event) => {
-  console.log('[SW] Activando Service Worker...');
+  console.log('[SW] Activando Service Worker v2.0...');
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
@@ -88,38 +88,114 @@ self.addEventListener('message', (event) => {
   }
 });
 
-// Notificaciones push (para futuro uso)
+// =============================================
+// PUSH NOTIFICATIONS
+// =============================================
+
+// Recibir notificación push
 self.addEventListener('push', (event) => {
-  if (event.data) {
-    const data = event.data.json();
-    const options = {
-      body: data.body || 'Nueva señal disponible',
-      icon: '/icons/icon-192x192.png',
-      badge: '/icons/icon-72x72.png',
-      vibrate: [100, 50, 100],
-      data: {
-        dateOfArrival: Date.now(),
-        url: data.url || '/'
-      },
-      actions: [
-        { action: 'open', title: 'Ver señal' },
-        { action: 'close', title: 'Cerrar' }
-      ]
-    };
-    event.waitUntil(
-      self.registration.showNotification(data.title || 'Trading Master Pro', options)
-    );
+  console.log('[SW] Push recibido');
+  
+  let data = {
+    title: 'Trading Master Pro',
+    body: 'Nueva notificación',
+    icon: '/icons/icon-192x192.png',
+    badge: '/icons/icon-72x72.png',
+    tag: 'default',
+    data: { url: '/' }
+  };
+
+  try {
+    if (event.data) {
+      const payload = event.data.json();
+      data = { ...data, ...payload };
+    }
+  } catch (e) {
+    console.error('[SW] Error parseando push data:', e);
   }
+
+  const options = {
+    body: data.body,
+    icon: data.icon || '/icons/icon-192x192.png',
+    badge: data.badge || '/icons/icon-72x72.png',
+    tag: data.tag || 'signal-notification',
+    renotify: data.renotify !== false,
+    requireInteraction: data.requireInteraction || false,
+    vibrate: data.vibrate || [100, 50, 100, 50, 100],
+    data: data.data || { url: '/' },
+    actions: data.actions || [
+      { action: 'view', title: '👀 Ver' },
+      { action: 'dismiss', title: '❌ Cerrar' }
+    ],
+    // Estilo visual
+    image: data.image || null,
+    timestamp: data.timestamp || Date.now()
+  };
+
+  event.waitUntil(
+    self.registration.showNotification(data.title, options)
+  );
 });
 
 // Click en notificación
 self.addEventListener('notificationclick', (event) => {
+  console.log('[SW] Notification click:', event.action);
+  
   event.notification.close();
-  if (event.action === 'open' || !event.action) {
-    event.waitUntil(
-      clients.openWindow(event.notification.data.url || '/')
-    );
+
+  // Si el usuario hace click en "dismiss", solo cerrar
+  if (event.action === 'dismiss') {
+    return;
   }
+
+  // Obtener la URL de destino
+  const urlToOpen = event.notification.data?.url || '/';
+
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true })
+      .then((windowClients) => {
+        // Buscar si ya hay una ventana abierta
+        for (const client of windowClients) {
+          if (client.url.includes(self.registration.scope) && 'focus' in client) {
+            // Navegar a la URL y enfocar
+            client.navigate(urlToOpen);
+            return client.focus();
+          }
+        }
+        // Si no hay ventana abierta, abrir una nueva
+        if (clients.openWindow) {
+          return clients.openWindow(urlToOpen);
+        }
+      })
+  );
 });
 
-console.log('[SW] Service Worker cargado');
+// Cerrar notificación
+self.addEventListener('notificationclose', (event) => {
+  console.log('[SW] Notification cerrada');
+});
+
+// Push subscription change (cuando el token cambia)
+self.addEventListener('pushsubscriptionchange', (event) => {
+  console.log('[SW] Push subscription changed');
+  
+  event.waitUntil(
+    self.registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: self.VAPID_PUBLIC_KEY
+    })
+    .then((subscription) => {
+      // Enviar nueva suscripción al servidor
+      return fetch('/api/push/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subscription: subscription.toJSON(),
+          // userId se debe manejar desde el frontend
+        })
+      });
+    })
+  );
+});
+
+console.log('[SW] Service Worker v2.0 con Push Notifications cargado');
