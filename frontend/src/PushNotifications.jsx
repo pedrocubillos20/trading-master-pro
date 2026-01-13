@@ -1,27 +1,29 @@
 // =============================================
 // TRADING MASTER PRO - PUSH NOTIFICATIONS COMPONENT
-// Versión simplificada y segura
 // =============================================
 
 import { useState, useEffect } from 'react';
 
-// URL del backend
 const API_URL = import.meta.env.VITE_API_URL || 'https://trading-master-pro-production.up.railway.app';
 
-// Límites por plan
+// Límites por plan (usando nombres exactos de la API)
 const PLAN_LIMITS = {
+  free: { enabled: false, maxPerDay: 0, description: 'No disponible' },
   trial: { enabled: false, maxPerDay: 0, description: 'No disponible' },
+  basico: { enabled: true, maxPerDay: 10, description: 'Hasta 10/día' },
   basic: { enabled: true, maxPerDay: 10, description: 'Hasta 10/día' },
   premium: { enabled: true, maxPerDay: 25, description: 'Hasta 25/día' },
   elite: { enabled: true, maxPerDay: 999, description: 'Ilimitadas' }
 };
 
 export default function PushNotifications({ userId, userPlan = 'trial' }) {
-  const [status, setStatus] = useState('loading'); // 'loading', 'unsupported', 'ready', 'subscribed', 'error'
+  const [status, setStatus] = useState('loading');
   const [error, setError] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  const planLimits = PLAN_LIMITS[userPlan] || PLAN_LIMITS.trial;
+  // Normalizar plan
+  const normalizedPlan = userPlan?.toLowerCase() || 'trial';
+  const planLimits = PLAN_LIMITS[normalizedPlan] || PLAN_LIMITS.trial;
 
   useEffect(() => {
     checkSupport();
@@ -29,28 +31,19 @@ export default function PushNotifications({ userId, userPlan = 'trial' }) {
 
   const checkSupport = async () => {
     try {
-      // Verificar soporte básico
-      if (typeof window === 'undefined') {
+      if (typeof window === 'undefined' || !('Notification' in window) || !('serviceWorker' in navigator)) {
         setStatus('unsupported');
         return;
       }
 
-      if (!('Notification' in window) || !('serviceWorker' in navigator)) {
-        setStatus('unsupported');
-        return;
-      }
-
-      // Verificar si ya está suscrito
       try {
         const registration = await navigator.serviceWorker.ready;
         const subscription = await registration.pushManager.getSubscription();
         setStatus(subscription ? 'subscribed' : 'ready');
       } catch (e) {
-        console.log('SW not ready yet');
         setStatus('ready');
       }
     } catch (err) {
-      console.error('Error checking support:', err);
       setStatus('ready');
     }
   };
@@ -60,28 +53,22 @@ export default function PushNotifications({ userId, userPlan = 'trial' }) {
     setError(null);
 
     try {
-      // Pedir permiso
       const permission = await Notification.requestPermission();
       if (permission !== 'granted') {
         throw new Error('Permiso denegado');
       }
 
-      // Obtener VAPID key
       const vapidRes = await fetch(`${API_URL}/api/push/vapid-key`);
       if (!vapidRes.ok) throw new Error('Server no disponible');
       const { publicKey } = await vapidRes.json();
 
-      // Convertir key
       const applicationServerKey = urlBase64ToUint8Array(publicKey);
-
-      // Suscribir
       const registration = await navigator.serviceWorker.ready;
       const subscription = await registration.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey
       });
 
-      // Guardar en servidor
       await fetch(`${API_URL}/api/push/subscribe`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -154,7 +141,7 @@ export default function PushNotifications({ userId, userPlan = 'trial' }) {
     );
   }
 
-  // Plan sin notificaciones
+  // Plan sin notificaciones (free o trial)
   if (!planLimits.enabled) {
     return (
       <div className="bg-[#0d0d12] rounded-xl border border-white/5 p-6">
@@ -193,7 +180,7 @@ export default function PushNotifications({ userId, userPlan = 'trial' }) {
     );
   }
 
-  // Componente principal
+  // Componente principal - Plan con notificaciones habilitadas
   return (
     <div className="bg-[#0d0d12] rounded-xl border border-white/5 p-6">
       {/* Header */}
@@ -228,10 +215,10 @@ export default function PushNotifications({ userId, userPlan = 'trial' }) {
       {/* Info del plan */}
       <div className="mb-4 p-3 bg-white/5 rounded-lg">
         <p className="text-white/60 text-sm">
-          📋 <strong className="text-white/80">Tu plan:</strong>{' '}
-          {userPlan === 'basic' && 'Notificaciones de Step, Oro, V75 (máx 10/día)'}
-          {userPlan === 'premium' && 'Notificaciones de 5 activos (máx 25/día)'}
-          {userPlan === 'elite' && 'Todas las señales sin límite'}
+          📋 <strong className="text-white/80">Tu plan ({normalizedPlan}):</strong>{' '}
+          {normalizedPlan === 'basico' && 'Notificaciones de Step, Oro, V75 (máx 10/día)'}
+          {normalizedPlan === 'premium' && 'Notificaciones de 5 activos (máx 25/día)'}
+          {normalizedPlan === 'elite' && '✨ TODAS las señales sin límite'}
         </p>
       </div>
 
@@ -275,7 +262,6 @@ export default function PushNotifications({ userId, userPlan = 'trial' }) {
   );
 }
 
-// Helper para convertir VAPID key
 function urlBase64ToUint8Array(base64String) {
   const padding = '='.repeat((4 - base64String.length % 4) % 4);
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
