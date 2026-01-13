@@ -1,12 +1,13 @@
 // =============================================
 // TRADING MASTER PRO - PUSH NOTIFICATIONS COMPONENT
+// VERSIÓN CORREGIDA - Envía email para identificación
 // =============================================
 
 import { useState, useEffect } from 'react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://trading-master-pro-production.up.railway.app';
 
-// Límites por plan (usando nombres exactos de la API)
+// Límites por plan
 const PLAN_LIMITS = {
   free: { enabled: false, maxPerDay: 0, description: 'No disponible' },
   trial: { enabled: false, maxPerDay: 0, description: 'No disponible' },
@@ -16,7 +17,7 @@ const PLAN_LIMITS = {
   elite: { enabled: true, maxPerDay: 999, description: 'Ilimitadas' }
 };
 
-export default function PushNotifications({ userId, userPlan = 'trial' }) {
+export default function PushNotifications({ userId, userEmail, userPlan = 'trial' }) {
   const [status, setStatus] = useState('loading');
   const [error, setError] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -36,14 +37,10 @@ export default function PushNotifications({ userId, userPlan = 'trial' }) {
         return;
       }
 
-      try {
-        const registration = await navigator.serviceWorker.ready;
-        const subscription = await registration.pushManager.getSubscription();
-        setStatus(subscription ? 'subscribed' : 'ready');
-      } catch (e) {
-        setStatus('ready');
-      }
-    } catch (err) {
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.getSubscription();
+      setStatus(subscription ? 'subscribed' : 'ready');
+    } catch {
       setStatus('ready');
     }
   };
@@ -69,13 +66,15 @@ export default function PushNotifications({ userId, userPlan = 'trial' }) {
         applicationServerKey
       });
 
+      // IMPORTANTE: Enviar TANTO el userId como el email
       await fetch(`${API_URL}/api/push/subscribe`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId,
+          userId: userEmail || userId, // Usar email como identificador principal
+          email: userEmail,
           subscription: subscription.toJSON(),
-          deviceInfo: { deviceType: 'web' }
+          deviceInfo: { deviceType: getDeviceType() }
         })
       });
 
@@ -97,7 +96,10 @@ export default function PushNotifications({ userId, userPlan = 'trial' }) {
         await fetch(`${API_URL}/api/push/unsubscribe`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId, endpoint: subscription.endpoint })
+          body: JSON.stringify({ 
+            userId: userEmail || userId,
+            endpoint: subscription.endpoint 
+          })
         });
       }
       setStatus('ready');
@@ -111,12 +113,17 @@ export default function PushNotifications({ userId, userPlan = 'trial' }) {
   const handleTest = async () => {
     setIsLoading(true);
     try {
-      await fetch(`${API_URL}/api/push/test`, {
+      const res = await fetch(`${API_URL}/api/push/test`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId })
+        body: JSON.stringify({ userId: userEmail || userId })
       });
-      alert('¡Notificación de prueba enviada!');
+      const data = await res.json();
+      if (data.success) {
+        alert('¡Notificación de prueba enviada!');
+      } else {
+        throw new Error(data.error || 'Error enviando');
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -141,7 +148,7 @@ export default function PushNotifications({ userId, userPlan = 'trial' }) {
     );
   }
 
-  // Plan sin notificaciones (free o trial)
+  // Plan sin notificaciones
   if (!planLimits.enabled) {
     return (
       <div className="bg-[#0d0d12] rounded-xl border border-white/5 p-6">
@@ -180,7 +187,7 @@ export default function PushNotifications({ userId, userPlan = 'trial' }) {
     );
   }
 
-  // Componente principal - Plan con notificaciones habilitadas
+  // Componente principal
   return (
     <div className="bg-[#0d0d12] rounded-xl border border-white/5 p-6">
       {/* Header */}
@@ -216,9 +223,13 @@ export default function PushNotifications({ userId, userPlan = 'trial' }) {
       <div className="mb-4 p-3 bg-white/5 rounded-lg">
         <p className="text-white/60 text-sm">
           📋 <strong className="text-white/80">Tu plan ({normalizedPlan}):</strong>{' '}
-          {normalizedPlan === 'basico' && 'Notificaciones de Step, Oro, V75 (máx 10/día)'}
-          {normalizedPlan === 'premium' && 'Notificaciones de 5 activos (máx 25/día)'}
-          {normalizedPlan === 'elite' && '✨ TODAS las señales sin límite'}
+          {normalizedPlan === 'basico' || normalizedPlan === 'basic' 
+            ? '6 activos principales (máx 10/día)'
+            : normalizedPlan === 'premium' 
+              ? '11 activos incluyendo crypto (máx 25/día)'
+              : normalizedPlan === 'elite' 
+                ? '✨ TODOS los activos sin límite'
+                : 'Actualiza para activar'}
         </p>
       </div>
 
@@ -271,4 +282,13 @@ function urlBase64ToUint8Array(base64String) {
     outputArray[i] = rawData.charCodeAt(i);
   }
   return outputArray;
+}
+
+function getDeviceType() {
+  const ua = navigator.userAgent;
+  if (/Android/i.test(ua)) return 'android';
+  if (/iPhone|iPad|iPod/i.test(ua)) return 'ios';
+  if (/Windows/i.test(ua)) return 'windows';
+  if (/Mac/i.test(ua)) return 'mac';
+  return 'web';
 }

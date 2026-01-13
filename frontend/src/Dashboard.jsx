@@ -1593,7 +1593,11 @@ export default function Dashboard({ user, onLogout }) {
               </div>
 
               {/* Notificaciones Push */}
-              <PushNotifications userId={user?.id} userPlan={subscription?.plan || 'trial'} />
+              <PushNotifications 
+                userId={user?.id} 
+                userEmail={user?.email} 
+                userPlan={subscription?.plan || 'trial'} 
+              />
 
               {/* Ventajas PWA */}
               <div className="bg-[#0d0d12] rounded-xl border border-white/5 p-6">
