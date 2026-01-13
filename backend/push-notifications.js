@@ -1,6 +1,6 @@
 // =============================================
 // TRADING MASTER PRO - PUSH NOTIFICATIONS MODULE
-// VERSIÓN FINAL - Usa email como identificador
+// VERSIÓN FINAL - Consulta corregida
 // =============================================
 
 import webpush from 'web-push';
@@ -72,6 +72,17 @@ const ASSETS_INFO = {
   'cryETHUSD': { name: 'Ethereum', emoji: 'Ξ' }
 };
 
+// Helper para verificar si es UUID
+function isUUID(str) {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return uuidRegex.test(str);
+}
+
+// Helper para verificar si es email
+function isEmail(str) {
+  return str && str.includes('@');
+}
+
 class PushNotificationManager {
   constructor(supabase) {
     this.supabase = supabase;
@@ -95,7 +106,7 @@ class PushNotificationManager {
     return process.env.VAPID_PUBLIC_KEY || null;
   }
 
-  // Obtener plan de usuario - BUSCA POR EMAIL
+  // Obtener plan de usuario - CONSULTA CORREGIDA
   async getUserPlan(userId) {
     const cached = this.userPlanCache.get(userId);
     if (cached && cached.timestamp > Date.now() - 300000) {
@@ -103,13 +114,24 @@ class PushNotificationManager {
     }
 
     try {
-      // Buscar por email o id_de_usuario
-      const { data, error } = await this.supabase
+      let query = this.supabase
         .from('suscripciones')
         .select('plan, estado, email')
-        .or(`email.eq.${userId},id_de_usuario.eq.${userId}`)
-        .eq('estado', 'active')
-        .single();
+        .eq('estado', 'active');
+
+      // Determinar el tipo de búsqueda según el formato del userId
+      if (isEmail(userId)) {
+        // Si es email, buscar solo por email
+        query = query.eq('email', userId);
+      } else if (isUUID(userId)) {
+        // Si es UUID, buscar solo por id_de_usuario
+        query = query.eq('id_de_usuario', userId);
+      } else {
+        // Intentar buscar por email como fallback
+        query = query.eq('email', userId);
+      }
+
+      const { data, error } = await query.single();
 
       if (error || !data) {
         console.log(`⚠️ No se encontró plan para ${userId}, usando trial`);
@@ -122,7 +144,7 @@ class PushNotificationManager {
       this.userPlanCache.set(userId, { plan, timestamp: Date.now() });
       return plan;
     } catch (err) {
-      console.error('Error obteniendo plan:', err);
+      console.error('Error obteniendo plan:', err.message);
       return 'trial';
     }
   }
@@ -135,7 +157,7 @@ class PushNotificationManager {
       const { data, error } = await this.supabase
         .from('push_subscriptions')
         .upsert({
-          user_id: userId, // Ahora es el email
+          user_id: userId,
           endpoint: endpoint,
           p256dh: keys.p256dh,
           auth: keys.auth,
@@ -255,15 +277,17 @@ class PushNotificationManager {
 
       if (error) throw error;
       if (!subscriptions?.length) {
-        return { success: false, error: 'No hay suscripciones' };
+        return { success: false, error: 'No hay suscripciones activas' };
       }
+
+      console.log(`📤 Enviando notificación de prueba a ${userId} (${subscriptions.length} dispositivos)`);
 
       const notification = {
         title: '🔔 Trading Master Pro',
         body: '¡Notificaciones activadas! Recibirás alertas de señales.',
         icon: '/icons/icon-192x192.png',
         badge: '/icons/icon-72x72.png',
-        tag: 'test',
+        tag: 'test-' + Date.now(),
         data: { type: 'test', url: '/' }
       };
 
@@ -275,15 +299,16 @@ class PushNotificationManager {
             JSON.stringify(notification)
           );
           sent++;
+          console.log(`✅ Test push enviado a ${userId}`);
         } catch (err) {
-          console.error('Push error:', err.statusCode);
+          console.error('Push error:', err.statusCode || err.message);
           if (err.statusCode === 404 || err.statusCode === 410) {
             await this.supabase.from('push_subscriptions').delete().eq('id', sub.id);
           }
         }
       }
 
-      return { success: true, sent };
+      return { success: sent > 0, sent };
     } catch (error) {
       console.error('Error test notification:', error);
       return { success: false, error: error.message };
