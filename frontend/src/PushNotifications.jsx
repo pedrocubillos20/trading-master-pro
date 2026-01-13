@@ -44,19 +44,33 @@ function getDeviceType() {
   return 'desktop';
 }
 
+// Verificar si las notificaciones están soportadas
+function isPushSupported() {
+  return 'Notification' in window && 'serviceWorker' in navigator && 'PushManager' in window;
+}
+
 export default function PushNotifications({ userId, userPlan = 'trial' }) {
-  const [permission, setPermission] = useState(Notification.permission);
+  const [permission, setPermission] = useState('default');
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [stats, setStats] = useState(null);
   const [vapidKey, setVapidKey] = useState(null);
   const [testSent, setTestSent] = useState(false);
+  const [isSupported, setIsSupported] = useState(true);
 
   const planLimits = PLAN_LIMITS[userPlan] || PLAN_LIMITS.trial;
 
   // Verificar soporte y estado inicial
   useEffect(() => {
+    // Verificar soporte primero
+    if (!isPushSupported()) {
+      setIsSupported(false);
+      setIsLoading(false);
+      return;
+    }
+    
+    setPermission(Notification.permission);
     checkSubscription();
   }, [userId]);
 
@@ -65,15 +79,6 @@ export default function PushNotifications({ userId, userPlan = 'trial' }) {
     setError(null);
 
     try {
-      // Verificar soporte de notificaciones
-      if (!('Notification' in window)) {
-        throw new Error('Tu navegador no soporta notificaciones');
-      }
-
-      if (!('serviceWorker' in navigator)) {
-        throw new Error('Tu navegador no soporta Service Workers');
-      }
-
       // Obtener VAPID key del servidor
       const vapidResponse = await fetch(`${API_URL}/api/push/vapid-key`);
       if (!vapidResponse.ok) {
@@ -89,15 +94,20 @@ export default function PushNotifications({ userId, userPlan = 'trial' }) {
 
       // Obtener estadísticas si está suscrito
       if (subscription && userId) {
-        const statsResponse = await fetch(`${API_URL}/api/push/stats/${userId}`);
-        if (statsResponse.ok) {
-          const statsData = await statsResponse.json();
-          setStats(statsData.stats);
+        try {
+          const statsResponse = await fetch(`${API_URL}/api/push/stats/${userId}`);
+          if (statsResponse.ok) {
+            const statsData = await statsResponse.json();
+            setStats(statsData.stats);
+          }
+        } catch (e) {
+          console.log('No se pudieron obtener estadísticas');
         }
       }
 
       setPermission(Notification.permission);
     } catch (err) {
+      console.error('Error checking subscription:', err);
       setError(err.message);
     } finally {
       setIsLoading(false);
@@ -222,6 +232,29 @@ export default function PushNotifications({ userId, userPlan = 'trial' }) {
     }
   };
 
+  // No soportado
+  if (!isSupported) {
+    return (
+      <div className="bg-[#0d0d12] rounded-xl border border-white/5 p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-12 h-12 bg-white/10 rounded-xl flex items-center justify-center">
+            <span className="text-2xl">🔕</span>
+          </div>
+          <div>
+            <h3 className="text-white font-semibold">Notificaciones Push</h3>
+            <p className="text-white/40 text-sm">No disponible</p>
+          </div>
+        </div>
+        
+        <div className="p-4 bg-white/5 rounded-lg border border-white/10">
+          <p className="text-white/60 text-sm">
+            Tu navegador no soporta notificaciones push. Usa Chrome, Edge o Safari para esta función.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   // Plan no tiene notificaciones
   if (!planLimits.enabled) {
     return (
@@ -241,6 +274,23 @@ export default function PushNotifications({ userId, userPlan = 'trial' }) {
             ⚡ Las notificaciones push están disponibles desde el plan <strong>Básico</strong>.
             Actualiza tu plan para recibir alertas de señales en tu dispositivo.
           </p>
+        </div>
+      </div>
+    );
+  }
+
+  // Loading inicial
+  if (isLoading && !isSubscribed && !error) {
+    return (
+      <div className="bg-[#0d0d12] rounded-xl border border-white/5 p-6">
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 bg-white/10 rounded-xl flex items-center justify-center">
+            <div className="w-6 h-6 border-2 border-white/30 border-t-emerald-400 rounded-full animate-spin"></div>
+          </div>
+          <div>
+            <h3 className="text-white font-semibold">Notificaciones Push</h3>
+            <p className="text-white/40 text-sm">Verificando estado...</p>
+          </div>
         </div>
       </div>
     );
@@ -302,7 +352,7 @@ export default function PushNotifications({ userId, userPlan = 'trial' }) {
             <p className="text-white/40 text-xs">Dispositivos</p>
           </div>
           <div className="bg-white/5 rounded-lg p-3 text-center">
-            <p className="text-2xl font-bold text-white">{planLimits.maxPerDay}</p>
+            <p className="text-2xl font-bold text-white">{planLimits.maxPerDay === 999 ? '∞' : planLimits.maxPerDay}</p>
             <p className="text-white/40 text-xs">Máximo/día</p>
           </div>
         </div>
