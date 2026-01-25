@@ -325,9 +325,6 @@ class PushNotificationManager {
         
         // Payload sincronizado con Telegram
         const payload = JSON.stringify({
-          title: `${directionEmoji} ${directionText}`,
-          body: `${asset.emoji} ${asset.name} | Score: ${signal.score}/100`,
-        const payload = JSON.stringify({
           title: `${signal.action === 'BUY' ? '🟢 LONG' : '🔴 SHORT'} - ${asset.name}`,
           body: `${asset.emoji} Score: ${signal.score}/100`,
           icon: '/icons/icon-192x192.png',
@@ -342,7 +339,6 @@ class PushNotificationManager {
             action: signal.action,
             score: signal.score
           }
-          data: { type: 'signal', url: '/' }
         });
 
         let userSent = false;
