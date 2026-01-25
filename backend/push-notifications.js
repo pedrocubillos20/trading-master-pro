@@ -1,10 +1,6 @@
 // =============================================
 // TRADING MASTER PRO - PUSH NOTIFICATIONS
-<<<<<<< HEAD
 // VERSIÓN SINCRONIZADA - Usa LONG/SHORT correctamente
-=======
-// VERSIÓN FINAL CORREGIDA
->>>>>>> 5d1d23b3a33295f3a9d098e26b2e410b4e5a955a
 // =============================================
 
 import webpush from 'web-push';
@@ -41,11 +37,8 @@ const ASSETS_INFO = {
   'BOOM300N': { name: 'Boom 300', emoji: '🚀' },
   'CRASH1000': { name: 'Crash 1K', emoji: '💥' },
   'CRASH500': { name: 'Crash 500', emoji: '💥' },
-<<<<<<< HEAD
   'CRASH300': { name: 'Crash 300', emoji: '💥' },
   'CRASH300N': { name: 'Crash 300', emoji: '💥' },
-=======
->>>>>>> 5d1d23b3a33295f3a9d098e26b2e410b4e5a955a
   'frxEURUSD': { name: 'EUR/USD', emoji: '💶' },
   'frxGBPUSD': { name: 'GBP/USD', emoji: '💷' },
   'frxUSDJPY': { name: 'USD/JPY', emoji: '💴' },
@@ -78,10 +71,7 @@ class PushNotificationManager {
     return process.env.VAPID_PUBLIC_KEY || null;
   }
 
-<<<<<<< HEAD
-=======
   // Obtener plan por EMAIL
->>>>>>> 5d1d23b3a33295f3a9d098e26b2e410b4e5a955a
   async getUserPlan(email) {
     if (!email) return 'trial';
     
@@ -106,10 +96,7 @@ class PushNotificationManager {
     }
   }
 
-<<<<<<< HEAD
-=======
   // Guardar suscripción (user_id es TEXT/email)
->>>>>>> 5d1d23b3a33295f3a9d098e26b2e410b4e5a955a
   async saveSubscription(userId, subscription, deviceInfo = {}) {
     try {
       const { endpoint, keys } = subscription;
@@ -169,10 +156,7 @@ class PushNotificationManager {
     try {
       const today = new Date().toISOString().split('T')[0];
       
-<<<<<<< HEAD
-=======
       // Intentar actualizar
->>>>>>> 5d1d23b3a33295f3a9d098e26b2e410b4e5a955a
       const { data: existing } = await this.supabase
         .from('daily_notification_counts')
         .select('id, count')
@@ -195,10 +179,7 @@ class PushNotificationManager {
     }
   }
 
-<<<<<<< HEAD
-=======
   // Verificar si puede recibir
->>>>>>> 5d1d23b3a33295f3a9d098e26b2e410b4e5a955a
   canReceive(userPlan, signal) {
     const config = PLAN_LIMITS[userPlan] || PLAN_LIMITS.trial;
     
@@ -210,10 +191,7 @@ class PushNotificationManager {
     return { ok: true };
   }
 
-<<<<<<< HEAD
-=======
   // ENVIAR NOTIFICACIÓN DE PRUEBA
->>>>>>> 5d1d23b3a33295f3a9d098e26b2e410b4e5a955a
   async sendTestNotification(userId) {
     if (!this.initialized) {
       return { success: false, error: 'VAPID no configurado' };
@@ -222,17 +200,13 @@ class PushNotificationManager {
     console.log(`🧪 Enviando prueba a: ${userId}`);
 
     try {
-<<<<<<< HEAD
-=======
       // Buscar suscripciones del usuario
->>>>>>> 5d1d23b3a33295f3a9d098e26b2e410b4e5a955a
       const { data: subs, error } = await this.supabase
         .from('push_subscriptions')
         .select('id, endpoint, p256dh, auth')
         .eq('user_id', userId)
         .eq('notifications_enabled', true);
 
-<<<<<<< HEAD
       if (error) throw error;
 
       if (!subs || subs.length === 0) {
@@ -240,7 +214,6 @@ class PushNotificationManager {
         return { success: false, error: 'No hay dispositivos registrados' };
       }
 
-=======
       if (error) {
         console.error('❌ Error buscando suscripciones:', error);
         throw error;
@@ -251,7 +224,6 @@ class PushNotificationManager {
         return { success: false, error: 'No hay dispositivos registrados' };
       }
 
->>>>>>> 5d1d23b3a33295f3a9d098e26b2e410b4e5a955a
       console.log(`📱 ${subs.length} dispositivo(s) encontrado(s)`);
 
       const payload = JSON.stringify({
@@ -274,10 +246,7 @@ class PushNotificationManager {
           console.log('✅ Push enviado correctamente');
         } catch (pushErr) {
           console.error('❌ Error webpush:', pushErr.statusCode || pushErr.message);
-<<<<<<< HEAD
-=======
           // Eliminar suscripción inválida
->>>>>>> 5d1d23b3a33295f3a9d098e26b2e410b4e5a955a
           if (pushErr.statusCode === 404 || pushErr.statusCode === 410) {
             await this.supabase.from('push_subscriptions').delete().eq('id', sub.id);
             console.log('🗑️ Suscripción inválida eliminada');
@@ -302,7 +271,6 @@ class PushNotificationManager {
       return { sent: 0, skipped: 0 };
     }
 
-<<<<<<< HEAD
     // Determinar dirección correctamente (igual que Telegram)
     // signal.action puede ser: 'LONG', 'SHORT', 'BUY', 'SELL'
     const isLong = signal.action === 'LONG' || signal.action === 'BUY';
@@ -310,9 +278,7 @@ class PushNotificationManager {
     const directionText = isLong ? 'COMPRA (LONG)' : 'VENTA (SHORT)';
 
     console.log(`📤 Broadcast Push: ${signal.symbol} | ${signal.action} -> ${directionText} | Score: ${signal.score}`);
-=======
     console.log(`📤 Broadcast: ${signal.symbol} (Score: ${signal.score})`);
->>>>>>> 5d1d23b3a33295f3a9d098e26b2e410b4e5a955a
 
     try {
       const { data: subs, error } = await this.supabase
@@ -327,10 +293,7 @@ class PushNotificationManager {
 
       console.log(`📋 ${subs.length} suscripciones`);
 
-<<<<<<< HEAD
-=======
       // Agrupar por usuario
->>>>>>> 5d1d23b3a33295f3a9d098e26b2e410b4e5a955a
       const byUser = {};
       subs.forEach(s => {
         if (!byUser[s.user_id]) byUser[s.user_id] = [];
@@ -349,10 +312,7 @@ class PushNotificationManager {
           continue;
         }
 
-<<<<<<< HEAD
-=======
         // Verificar límite diario
->>>>>>> 5d1d23b3a33295f3a9d098e26b2e410b4e5a955a
         const daily = await this.getDailyCount(email);
         const limit = PLAN_LIMITS[plan]?.maxPerDay || 0;
         if (daily >= limit && plan !== 'elite') {
@@ -362,23 +322,19 @@ class PushNotificationManager {
         }
 
         const asset = ASSETS_INFO[signal.symbol] || { name: signal.symbol, emoji: '📊' };
-<<<<<<< HEAD
         
         // Payload sincronizado con Telegram
         const payload = JSON.stringify({
           title: `${directionEmoji} ${directionText}`,
           body: `${asset.emoji} ${asset.name} | Score: ${signal.score}/100`,
-=======
         const payload = JSON.stringify({
           title: `${signal.action === 'BUY' ? '🟢 LONG' : '🔴 SHORT'} - ${asset.name}`,
           body: `${asset.emoji} Score: ${signal.score}/100`,
->>>>>>> 5d1d23b3a33295f3a9d098e26b2e410b4e5a955a
           icon: '/icons/icon-192x192.png',
           badge: '/icons/icon-72x72.png',
           tag: `signal-${signal.id}`,
           renotify: true,
           vibrate: [100, 50, 100],
-<<<<<<< HEAD
           data: { 
             type: 'signal', 
             url: '/',
@@ -386,9 +342,7 @@ class PushNotificationManager {
             action: signal.action,
             score: signal.score
           }
-=======
           data: { type: 'signal', url: '/' }
->>>>>>> 5d1d23b3a33295f3a9d098e26b2e410b4e5a955a
         });
 
         let userSent = false;
@@ -409,11 +363,8 @@ class PushNotificationManager {
         if (userSent) {
           await this.incrementDailyCount(email);
           sent++;
-<<<<<<< HEAD
           console.log(`✅ Push a ${email} (${plan}) - ${directionText}`);
-=======
           console.log(`✅ Push a ${email} (${plan})`);
->>>>>>> 5d1d23b3a33295f3a9d098e26b2e410b4e5a955a
         }
       }
 
