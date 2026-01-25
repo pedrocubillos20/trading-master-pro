@@ -1482,6 +1482,139 @@ export default function Dashboard({ user, onLogout }) {
     );
   }
 
+  // =============================================
+  // PANTALLA DE SUSCRIPCIÓN EXPIRADA
+  // =============================================
+  if (isExpired) {
+    return (
+      <div className="min-h-screen bg-[#06060a] flex items-center justify-center p-4">
+        <div className="max-w-lg w-full">
+          {/* Logo y título */}
+          <div className="text-center mb-8">
+            <div className="w-20 h-20 mx-auto rounded-2xl bg-gradient-to-br from-red-500 to-orange-500 flex items-center justify-center mb-4 shadow-lg shadow-red-500/30">
+              <svg className="w-10 h-10 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+              </svg>
+            </div>
+            <h1 className="text-3xl font-bold text-white mb-2">Suscripción Expirada</h1>
+            <p className="text-white/60">Tu acceso a Trading Master Pro ha finalizado</p>
+          </div>
+
+          {/* Tarjeta principal */}
+          <div className="bg-gradient-to-br from-[#0d0d12] to-[#12121a] rounded-2xl border border-red-500/30 p-6 mb-6">
+            {/* Info del plan expirado */}
+            <div className="flex items-center gap-4 mb-6 pb-6 border-b border-white/10">
+              <div className={`w-14 h-14 rounded-xl flex items-center justify-center ${
+                subscription?.plan === 'elite' ? 'bg-gradient-to-br from-purple-500/30 to-pink-500/30' :
+                subscription?.plan === 'premium' ? 'bg-gradient-to-br from-cyan-500/30 to-blue-500/30' :
+                subscription?.plan === 'basico' ? 'bg-gradient-to-br from-emerald-500/30 to-green-500/30' :
+                'bg-gradient-to-br from-amber-500/30 to-orange-500/30'
+              }`}>
+                <span className="text-2xl">
+                  {subscription?.plan === 'elite' ? '👑' :
+                   subscription?.plan === 'premium' ? '💎' :
+                   subscription?.plan === 'basico' ? '⭐' : '🎯'}
+                </span>
+              </div>
+              <div className="flex-1">
+                <p className="text-white font-semibold">{subscription?.plan_name || 'Free Trial'}</p>
+                <p className="text-white/40 text-sm">
+                  {subscription?.periodo === 'anual' ? 'Plan Anual' :
+                   subscription?.periodo === 'semestral' ? 'Plan Semestral' :
+                   subscription?.periodo === 'trimestral' ? 'Plan Trimestral' :
+                   subscription?.periodo === 'mensual' ? 'Plan Mensual' : 'Prueba Gratuita'}
+                </p>
+              </div>
+              <span className="px-3 py-1 bg-red-500/20 text-red-400 text-sm font-bold rounded-full">
+                EXPIRADO
+              </span>
+            </div>
+
+            {/* Mensaje */}
+            <div className="bg-red-500/10 rounded-xl p-4 mb-6 border border-red-500/20">
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 bg-red-500/20 rounded-lg flex items-center justify-center flex-shrink-0">
+                  <svg className="w-5 h-5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-red-400 font-medium text-sm">Acceso Bloqueado</p>
+                  <p className="text-white/60 text-sm mt-1">
+                    Para continuar usando el Dashboard, las señales de trading y todas las funciones premium, necesitas renovar tu suscripción.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Beneficios que se pierden */}
+            <div className="mb-6">
+              <p className="text-white/40 text-xs font-medium mb-3 uppercase tracking-wider">Lo que estás perdiendo:</p>
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  '📊 Dashboard en tiempo real',
+                  '🔔 Señales SMC automáticas',
+                  '🤖 ELISA IA asistente',
+                  '📈 Análisis técnico',
+                  '🏆 Reportes detallados',
+                  '💰 Modelos avanzados'
+                ].map((feature, i) => (
+                  <div key={i} className="flex items-center gap-2 text-white/50 text-sm">
+                    <span className="text-red-400 opacity-50">✗</span>
+                    <span className="line-through opacity-70">{feature}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Botón de renovar */}
+            <button 
+              onClick={() => setShowPricing(true)}
+              className="w-full py-4 bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-black font-bold rounded-xl transition-all transform hover:scale-[1.02] shadow-lg shadow-emerald-500/25 flex items-center justify-center gap-2"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              Renovar Suscripción
+            </button>
+          </div>
+
+          {/* Info de usuario y logout */}
+          <div className="flex items-center justify-between text-sm">
+            <div className="flex items-center gap-2 text-white/40">
+              <span>👤</span>
+              <span>{user?.email || 'Usuario'}</span>
+            </div>
+            <button 
+              onClick={onLogout}
+              className="flex items-center gap-2 text-white/40 hover:text-red-400 transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+              Cerrar Sesión
+            </button>
+          </div>
+
+          {/* Contacto */}
+          <div className="mt-6 text-center">
+            <p className="text-white/30 text-xs">
+              ¿Tienes problemas? Contacta soporte en Telegram: 
+              <a href="https://t.me/TradingMasterBot" target="_blank" rel="noreferrer" className="text-cyan-400 hover:underline ml-1">
+                @TradingMasterBot
+              </a>
+            </p>
+          </div>
+        </div>
+
+        {/* Modal de Pricing */}
+        {showPricing && (
+          <Pricing user={user} subscription={subscription} onClose={() => setShowPricing(false)} />
+        )}
+      </div>
+    );
+  }
+
   // Dashboard principal
   return (
     <div className="min-h-screen bg-[#06060a]">

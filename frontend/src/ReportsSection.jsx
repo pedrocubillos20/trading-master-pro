@@ -554,6 +554,40 @@ export default function ReportsSection({ userId, localStats, localSignals }) {
         </div>
       </div>
 
+      {/* Pips/Ticks Acumulados - Nueva sección */}
+      <div className="bg-gradient-to-r from-purple-500/10 to-cyan-500/10 rounded-xl border border-purple-500/20 p-4">
+        <h3 className="text-white font-medium mb-4">📊 Pips/Ticks Acumulados</h3>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <div className="text-center">
+            <p className={`text-3xl font-bold ${parseFloat(stats.totalPips || summary?.totalPips || 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+              {parseFloat(stats.totalPips || summary?.totalPips || 0) >= 0 ? '+' : ''}{parseFloat(stats.totalPips || summary?.totalPips || 0).toFixed(1)}
+            </p>
+            <p className="text-white/40 text-xs mt-1">Total Pips</p>
+          </div>
+          <div className="text-center">
+            <p className="text-2xl font-bold text-cyan-400">
+              {parseFloat(stats.avgPips || 0).toFixed(1)}
+            </p>
+            <p className="text-white/40 text-xs mt-1">Promedio/Trade</p>
+          </div>
+          <div className="text-center">
+            <p className="text-2xl font-bold text-emerald-400">
+              +{parseFloat(stats.bestTradePips || summary?.bestTradePips || 0).toFixed(1)}
+            </p>
+            <p className="text-white/40 text-xs mt-1">Mejor Trade</p>
+          </div>
+          <div className="text-center">
+            <p className="text-2xl font-bold text-red-400">
+              {parseFloat(stats.worstTradePips || summary?.worstTradePips || 0).toFixed(1)}
+            </p>
+            <p className="text-white/40 text-xs mt-1">Peor Trade</p>
+          </div>
+        </div>
+        <p className="text-white/30 text-xs mt-3 text-center">
+          💡 Los pips varían según el activo. Cada par/índice tiene su propia configuración de pip value.
+        </p>
+      </div>
+
       {/* Wins/Losses breakdown */}
       <div className="bg-[#0d0d12] rounded-xl border border-white/5 p-4">
         <h3 className="text-white font-medium mb-4">📊 Distribución</h3>
@@ -619,7 +653,7 @@ export default function ReportsSection({ userId, localStats, localSignals }) {
         </div>
       </div>
 
-      {/* Stats por Modelo */}
+      {/* Stats por Modelo - Con pips */}
       {stats.byModel && Object.keys(stats.byModel).length > 0 && (
         <div className="bg-[#0d0d12] rounded-xl border border-white/5 p-4">
           <h3 className="text-white font-medium mb-4">🎯 Por Modelo SMC</h3>
@@ -629,6 +663,7 @@ export default function ReportsSection({ userId, localStats, localSignals }) {
               .map(([model, data]) => {
                 const winRate = data.trades > 0 ? ((data.wins / data.trades) * 100).toFixed(0) : 0;
                 const pnl = parseFloat(data.pnl || 0);
+                const pips = parseFloat(data.pips || 0);
                 return (
                   <div key={model} className="flex items-center justify-between">
                     <div className="flex-1">
@@ -646,9 +681,14 @@ export default function ReportsSection({ userId, localStats, localSignals }) {
                         <span className="text-xs text-white/60 w-12">{winRate}% WR</span>
                       </div>
                     </div>
-                    <span className={`ml-4 text-sm font-medium ${pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                      {pnl >= 0 ? '+' : ''}{pnl.toFixed(1)}%
-                    </span>
+                    <div className="ml-4 text-right">
+                      <span className={`text-sm font-medium ${pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {pnl >= 0 ? '+' : ''}{pnl.toFixed(1)}%
+                      </span>
+                      <p className={`text-xs ${pips >= 0 ? 'text-cyan-400' : 'text-red-300'}`}>
+                        {pips >= 0 ? '+' : ''}{pips.toFixed(1)} pips
+                      </p>
+                    </div>
                   </div>
                 );
               })}
@@ -656,7 +696,7 @@ export default function ReportsSection({ userId, localStats, localSignals }) {
         </div>
       )}
 
-      {/* Stats por Activo */}
+      {/* Stats por Activo - Con pips */}
       {stats.byAsset && Object.keys(stats.byAsset).length > 0 && (
         <div className="bg-[#0d0d12] rounded-xl border border-white/5 p-4">
           <h3 className="text-white font-medium mb-4">📊 Por Activo</h3>
@@ -666,6 +706,7 @@ export default function ReportsSection({ userId, localStats, localSignals }) {
               .map(([symbol, data]) => {
                 const winRate = data.trades > 0 ? ((data.wins / data.trades) * 100).toFixed(0) : 0;
                 const pnl = parseFloat(data.pnl || 0);
+                const pips = parseFloat(data.pips || 0);
                 return (
                   <div key={symbol} className="flex items-center justify-between">
                     <div className="flex-1">
@@ -683,9 +724,14 @@ export default function ReportsSection({ userId, localStats, localSignals }) {
                         <span className="text-xs text-white/60 w-12">{winRate}% WR</span>
                       </div>
                     </div>
-                    <span className={`ml-4 text-sm font-medium ${pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                      {pnl >= 0 ? '+' : ''}{pnl.toFixed(1)}%
-                    </span>
+                    <div className="ml-4 text-right">
+                      <span className={`text-sm font-medium ${pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {pnl >= 0 ? '+' : ''}{pnl.toFixed(1)}%
+                      </span>
+                      <p className={`text-xs ${pips >= 0 ? 'text-purple-400' : 'text-red-300'}`}>
+                        {pips >= 0 ? '+' : ''}{pips.toFixed(1)} pips
+                      </p>
+                    </div>
                   </div>
                 );
               })}
@@ -721,7 +767,7 @@ export default function ReportsSection({ userId, localStats, localSignals }) {
         </div>
       )}
 
-      {/* Historial de trades recientes */}
+      {/* Historial de trades recientes - Con pips */}
       {report?.trades && report.trades.length > 0 && (
         <div className="bg-[#0d0d12] rounded-xl border border-white/5 p-4">
           <div className="flex items-center justify-between mb-4">
@@ -729,41 +775,47 @@ export default function ReportsSection({ userId, localStats, localSignals }) {
             <span className="text-white/40 text-xs">{report.trades.length} operaciones</span>
           </div>
           <div className="space-y-2 max-h-[500px] overflow-y-auto">
-            {report.trades.map((trade, i) => (
-              <div 
-                key={trade.id || i}
-                className={`flex items-center justify-between p-3 rounded-lg border ${
-                  trade.result === 'WIN' 
-                    ? 'bg-emerald-500/10 border-emerald-500/20' 
-                    : trade.result === 'LOSS'
-                    ? 'bg-red-500/10 border-red-500/20'
-                    : 'bg-white/5 border-white/10'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <span className={`px-2 py-0.5 text-xs font-bold rounded ${
-                    trade.action === 'LONG' ? 'bg-emerald-500 text-black' : 'bg-red-500 text-white'
-                  }`}>
-                    {trade.action}
-                  </span>
-                  <div>
-                    <p className="text-white text-sm">{trade.asset_name || trade.symbol}</p>
-                    <p className="text-white/40 text-xs">{trade.model}</p>
+            {report.trades.map((trade, i) => {
+              const pips = parseFloat(trade.profit_pips || 0);
+              return (
+                <div 
+                  key={trade.id || i}
+                  className={`flex items-center justify-between p-3 rounded-lg border ${
+                    trade.result === 'WIN' 
+                      ? 'bg-emerald-500/10 border-emerald-500/20' 
+                      : trade.result === 'LOSS'
+                      ? 'bg-red-500/10 border-red-500/20'
+                      : 'bg-white/5 border-white/10'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className={`px-2 py-0.5 text-xs font-bold rounded ${
+                      trade.action === 'LONG' ? 'bg-emerald-500 text-black' : 'bg-red-500 text-white'
+                    }`}>
+                      {trade.action}
+                    </span>
+                    <div>
+                      <p className="text-white text-sm">{trade.asset_name || trade.symbol}</p>
+                      <p className="text-white/40 text-xs">{trade.model}</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className={`font-bold ${
+                      trade.result === 'WIN' ? 'text-emerald-400' : 
+                      trade.result === 'LOSS' ? 'text-red-400' : 'text-white/40'
+                    }`}>
+                      {parseFloat(trade.pnl_percent || 0) >= 0 ? '+' : ''}{parseFloat(trade.pnl_percent || 0).toFixed(2)}%
+                    </p>
+                    <p className={`text-xs ${pips >= 0 ? 'text-cyan-400' : 'text-red-300'}`}>
+                      {pips >= 0 ? '+' : ''}{pips.toFixed(1)} pips
+                    </p>
+                    <p className="text-white/30 text-xs">
+                      {new Date(trade.signal_time).toLocaleDateString()}
+                    </p>
                   </div>
                 </div>
-                <div className="text-right">
-                  <p className={`font-bold ${
-                    trade.result === 'WIN' ? 'text-emerald-400' : 
-                    trade.result === 'LOSS' ? 'text-red-400' : 'text-white/40'
-                  }`}>
-                    {parseFloat(trade.pnl_percent || 0) >= 0 ? '+' : ''}{parseFloat(trade.pnl_percent || 0).toFixed(2)}%
-                  </p>
-                  <p className="text-white/30 text-xs">
-                    {new Date(trade.signal_time).toLocaleDateString()}
-                  </p>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

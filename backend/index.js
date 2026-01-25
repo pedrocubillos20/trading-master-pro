@@ -1,15 +1,35 @@
 // =============================================
-// TRADING MASTER PRO v16.0 - PLATAFORMA COMPLETA
+// TRADING MASTER PRO v25.1 - PLATAFORMA COMPLETA
 // Motor SMC + ELISA IA + Telegram + Supabase + Admin
-// v16.0: 12 Modelos SMC con Zona Válida de Order Block
+// v25.0: Eliminados modelos de bajo rendimiento + Sistema de Pips
 // =============================================
 // 
-// CAMBIOS v16.0:
+// CAMBIOS v25.0:
+// - OB_ENTRY DESACTIVADO: Bajo rendimiento en backtesting
+// - OTE_ENTRY DESACTIVADO: Menor win rate que MTF_CONFLUENCE
+// - Sistema de Pips/Ticks por activo implementado
+// - Cada activo tiene su propia configuración de pip value y lotaje
+// - Reportes ahora muestran pips acumulados por usuario
+// - 10 Modelos SMC activos restantes
+//
+// CAMBIOS v16.0 (anteriores):
 // - 12 Modelos SMC optimizados con validación de Zona OB
 // - Eliminados: ZONE_TOUCH, LIQUIDITY_SWEEP, STRUCTURE_BREAK, REVERSAL_PATTERN, PREMIUM_DISCOUNT
 // - Todos los modelos requieren zona válida de Order Block
 // - LONG: Vela ROJA + VERDE envolvente (acumulación)
 // - SHORT: Vela VERDE + ROJA envolvente (distribución)
+//
+// MODELOS SMC ACTIVOS v25.0:
+// 1. MTF_CONFLUENCE (95pts) - H1+M5 alineados + OB
+// 2. CHOCH_PULLBACK (85pts) - Cambio de estructura + Pullback
+// 3. BOS_CONTINUATION (78pts) - Continuación de estructura
+// 4. LIQUIDITY_GRAB (80pts) - Barrido de liquidez
+// 5. FVG_ENTRY (78pts) - Fair Value Gap
+// 6. INDUCEMENT (80pts) - Inducción de liquidez
+// 7. BOOM_SPIKE (88pts) - Específico para Boom indices
+// 8. CRASH_SPIKE (88pts) - Específico para Crash indices
+// 9. SESSION_REVERSAL (75pts) - Reversión de sesión
+// 10. MOMENTUM_SURGE (75pts) - Impulso de momentum
 //
 // VARIABLES DE ENTORNO REQUERIDAS:
 // --------------------------------
@@ -525,6 +545,7 @@ const memoryStore = {
 const PERIOD_DAYS = {
   trial: 5,
   mensual: 30,
+  trimestral: 90,
   semestral: 180,
   anual: 365
 };
@@ -2481,7 +2502,12 @@ const SMC = {
     // NUEVOS MODELOS SMC v14.0
     // ═══════════════════════════════════════════
     
-    // OB_ENTRY - Entrada directa en Order Block (v24: más estricto)
+    // ═══════════════════════════════════════════════════════════════
+    // OB_ENTRY - DESACTIVADO v25.0 (Bajo rendimiento en backtesting)
+    // Razón: Genera más pérdidas que ganancias
+    // Alternativa: Usar MTF_CONFLUENCE o CHOCH_PULLBACK
+    // ═══════════════════════════════════════════════════════════════
+    /*
     if (pullback && (pullback.type === 'DEMAND_ZONE' || pullback.type === 'SUPPLY_ZONE')) {
       const pdCorrect = (pullback.side === 'BUY' && premiumDiscount === 'DISCOUNT') ||
                         (pullback.side === 'SELL' && premiumDiscount === 'PREMIUM');
@@ -2500,6 +2526,7 @@ const SMC = {
         });
       }
     }
+    */
     
     // ═══════════════════════════════════════════════════════════════
     // STRUCTURE_BREAK - DESACTIVADO (No está en los 12 modelos oficiales)
@@ -2713,7 +2740,12 @@ const SMC = {
       }
     }
     
-    // 3. OPTIMAL_TRADE_ENTRY (OTE) - Entrada en el 62-79% del movimiento (Fibonacci)
+    // ═══════════════════════════════════════════════════════════════
+    // OTE_ENTRY - DESACTIVADO v25.0 (Bajo rendimiento vs MTF_CONFLUENCE)
+    // Razón: MTF_CONFLUENCE tiene mejor win rate
+    // Alternativa: Usar MTF_CONFLUENCE que ya incluye mejor calidad
+    // ═══════════════════════════════════════════════════════════════
+    /*
     if (choch && pullback) {
       // Calcular el rango del movimiento
       const moveHigh = Math.max(...candlesM5.slice(-10).map(c => c.high));
@@ -2743,6 +2775,7 @@ const SMC = {
         });
       }
     }
+    */
     
     // 4. LIQUIDITY_GRAB - Barrido rápido de liquidez con rechazo inmediato (v24)
     const prev2Candle = candlesM5[candlesM5.length - 3];
@@ -4842,18 +4875,20 @@ app.get('/api/subscription/:userId', async (req, res) => {
       trial_days_left: sub.trial_days_left
     });
     
-    // Si es trial, verificar días restantes
+    // Si es trial o free, verificar días restantes
     if (sub.estado === 'trial' || sub.plan === 'free') {
-      const daysLeft = sub.trial_days_left !== null ? sub.trial_days_left : 5;
+      // Usar days_left calculado en getSubscription
+      const daysLeft = sub.days_left !== undefined ? sub.days_left : 5;
       
-      if (daysLeft <= 0) {
+      if (daysLeft <= 0 || sub.estado === 'expired') {
         // Trial expirado
         return res.json({ 
           subscription: { 
             status: 'expired', 
-            plan: 'none',
+            plan: 'free',
             plan_name: 'Expirado - Adquiere un plan',
             days_left: 0,
+            periodo: 'trial',
             assets: [],
             message: 'Tu período de prueba ha terminado. Adquiere un plan para continuar.'
           } 
@@ -4867,18 +4902,19 @@ app.get('/api/subscription/:userId', async (req, res) => {
           plan_name: 'Free Trial',
           trial_ends_at: sub.trial_ends_at || trialEnd.toISOString(),
           days_left: daysLeft,
+          periodo: 'trial',
           assets: PLANS.free.assets
         }
       });
     }
     
-    // Usuario con plan activo (active, basico, premium, elite)
+    // Usuario con plan pagado (basico, premium, elite)
     const planKey = sub.plan || 'free';
     const plan = PLANS[planKey] || PLANS.free;
     
     // Verificar si el plan está expirado
-    if (!sub.is_active || sub.days_left <= 0) {
-      console.log(`⚠️ Usuario ${userId} plan expirado: ${planKey}`);
+    if (!sub.is_active || sub.days_left <= 0 || sub.estado === 'expired') {
+      console.log(`⚠️ Usuario ${userId} plan expirado: ${planKey} (${sub.periodo})`);
       return res.json({ 
         subscription: {
           status: 'expired',
@@ -4886,7 +4922,7 @@ app.get('/api/subscription/:userId', async (req, res) => {
           plan_name: `${plan.name} - Expirado`,
           days_left: 0,
           assets: [],
-          period: sub.periodo,
+          periodo: sub.periodo,
           email: sub.email,
           message: 'Tu suscripción ha expirado. Renueva para continuar.'
         }
@@ -4901,10 +4937,11 @@ app.get('/api/subscription/:userId', async (req, res) => {
         plan: planKey,
         plan_name: plan.name,
         assets: plan.assets,
-        period: sub.periodo,
+        periodo: sub.periodo,
         days_left: sub.days_left,
         subscription_ends_at: sub.subscription_ends_at,
-        email: sub.email
+        email: sub.email,
+        hasNightAccess: planKey === 'premium' || planKey === 'elite'
       }
     });
     
