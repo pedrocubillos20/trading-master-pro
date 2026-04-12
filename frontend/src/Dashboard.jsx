@@ -1,13 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import Pricing from './Pricing';
-import ReportsSection from './ReportsSection';
 import PushNotifications from './PushNotifications';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://trading-master-pro-production.up.railway.app';
 
 // =============================================
-// ELISA CHAT
-// =============================================
+
 const ElisaChat = ({ selectedAsset, isMobile }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState([]);
@@ -221,10 +219,9 @@ const MiniChart = ({ candles, height = 300, signal = null, smcPatterns = null })
     if (!vis.length) return;
 
     const PAD = { top: 18, right: 70, bottom: 28, left: 4 };
-    const VH  = 25;
-    const CH  = H - PAD.top - PAD.bottom - VH - 4;
+    const CH  = H - PAD.top - PAD.bottom;
     const CW  = W - PAD.left - PAD.right;
-    const VT  = PAD.top + CH + 4;
+    const VT  = PAD.top + CH; // unused but kept for compat
 
     // Rango solo de velas visibles
     let maxP = Math.max(...vis.map(c => parseFloat(c.high)));
@@ -313,9 +310,7 @@ const MiniChart = ({ candles, height = 300, signal = null, smcPatterns = null })
       // Mecha completa → cuerpo encima la cubre en el centro
       h += `<line x1="${x|0}" y1="${Y(hi)|0}" x2="${x|0}" y2="${Y(lo)|0}" stroke="${col}" stroke-width="1"/>`;
       h += `<rect x="${(x-bW/2)|0}" y="${bTop|0}" width="${bW|0}" height="${bH|0}" fill="${col}"/>`;
-      // Volumen
-      const vh = Math.max(1, (Math.abs(hi-lo)/((maxP-minP)||1))*(VH-2));
-      h += `<rect x="${(x-bW/2)|0}" y="${(VT+VH-vh)|0}" width="${bW|0}" height="${vh|0}" fill="${col}" fill-opacity="0.3"/>`;
+      // Volumen eliminado
     });
 
     // Precio actual
@@ -337,7 +332,7 @@ const MiniChart = ({ candles, height = 300, signal = null, smcPatterns = null })
       const d=new Date(ep*1000);
       h+=`<text x="${x|0}" y="${H-PAD.bottom+12}" text-anchor="middle" fill="#374151" font-size="8" font-family="monospace">${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}</text>`;
     });
-    h+=`<line x1="${PAD.left}" y1="${VT}" x2="${W-PAD.right}" y2="${VT}" stroke="#ffffff08" stroke-width="1"/>`;
+    
     svg.innerHTML = h;
   }, [candles, height, signal, smcPatterns]);
 
@@ -678,10 +673,8 @@ export default function Dashboard({ user, onLogout }) {
             {[
               { id: 'dashboard', icon: '📊', label: 'Dashboard' },
               { id: 'signals', icon: isNightBlocked ? '🔒' : '🔔', label: 'Señales', badge: isNightBlocked ? 0 : pendingSignals.length, locked: isNightBlocked },
-              { id: 'chat', icon: '🤖', label: 'ELISA' },
-              { id: 'stats', icon: '📈', label: 'Stats' },
-              { id: 'reports', icon: '🏆', label: 'Reportes' },
-              { id: 'history', icon: '📜', label: 'Historial' },
+                            { id: 'stats', icon: '📈', label: 'Stats' },
+                            { id: 'history', icon: '📜', label: 'Historial' },
             ].map(item => (
               <button key={item.id}
                 onClick={() => { setActiveSection(item.id); if (isMobile) setSidebarOpen(false); }}
@@ -973,26 +966,7 @@ export default function Dashboard({ user, onLogout }) {
           </div>
         )}
 
-        {/* ELISA Recommendation Banner */}
-        <div className="bg-gradient-to-r from-emerald-500/10 via-cyan-500/10 to-purple-500/10 rounded-xl border border-emerald-500/20 p-4">
-          <div className="flex items-start gap-3">
-            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-400 to-cyan-400 flex-shrink-0 flex items-center justify-center">
-              <img src="/elisa.png" alt="ELISA" className="w-full h-full rounded-full object-cover" onError={(e) => { e.target.style.display = 'none'; }} />
-            </div>
-            <div className="flex-1">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-emerald-400 font-semibold text-sm">ELISA</span>
-                <span className="text-[10px] px-1.5 py-0.5 bg-emerald-500/20 text-emerald-400 rounded">IA Trading Expert</span>
-              </div>
-              <p className="text-white/80 text-sm leading-relaxed">
-                <span className="text-amber-400">⚠️</span> <strong>Recuerda:</strong> No sobreoperes. Máximo <span className="text-emerald-400 font-semibold">4-6 operaciones por día</span>. 
-                Sigue las señales con disciplina, usa el <span className="text-cyan-400">1-2% de tu capital</span> por operación, y respeta siempre el Stop Loss. 
-                <span className="text-purple-400">La constancia genera rentabilidad</span>. 🎯
-              </p>
-            </div>
-          </div>
-        </div>
-
+        
         {/* Chart */}
         <div className="bg-[#0d0d12] rounded-xl border border-white/5 overflow-hidden">
           <div className="p-3 border-b border-white/5 flex items-center justify-between">
@@ -1320,7 +1294,7 @@ export default function Dashboard({ user, onLogout }) {
           </div>
           <div className="flex items-center gap-2">
             <span className="text-emerald-400">✓</span>
-            <span className="text-white/70">ELISA IA</span>
+            <span className="text-white/70">IA Análisis</span>
           </div>
         </div>
         {subscription?.plan !== 'elite' && (
@@ -1558,7 +1532,7 @@ export default function Dashboard({ user, onLogout }) {
         {showPricing && (
           <Pricing user={user} subscription={subscription} onClose={() => setShowPricing(false)} />
         )}
-        <ElisaChat selectedAsset={selectedAsset} isMobile={isMobile} />
+        
       </div>
     );
   }
@@ -1728,7 +1702,7 @@ export default function Dashboard({ user, onLogout }) {
           )}
         </div>
       </main>
-      <ElisaChat selectedAsset={selectedAsset} isMobile={isMobile} />
+      
       
       {/* Diálogo de selección de TP */}
       {tpDialog.open && (
