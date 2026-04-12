@@ -197,92 +197,173 @@ const ElisaChat = ({ selectedAsset, isMobile }) => {
 // =============================================
 // MINI CHART CON NIVELES DE SEÑAL
 // =============================================
-const MiniChart = ({ candles, height = 200, signal = null }) => {
-  const svgRef = useRef(null);
-  
-  useEffect(() => {
-    if (!candles?.length || !svgRef.current) return;
+const MiniChart = ({ candles, height = 300, signal = null, smcPatterns = null }) => {
+  const svgRef  = useRef(null);
+  const zoomRef = useRef(60);
+  const offRef  = useRef(0);
+  const isDrag  = useRef(false);
+  const dragX   = useRef(0);
+  const dragOff = useRef(0);
+
+  const draw = useCallback(() => {
     const svg = svgRef.current;
-    const rect = svg.getBoundingClientRect();
-    const w = rect.width || 600;
-    const h = height;
-    const padding = { top: 15, right: 75, bottom: 15, left: 10 };
-    
-    const visibleCandles = candles.slice(-60);
-    
-    // Calcular rango incluyendo niveles de señal
-    let allPrices = visibleCandles.flatMap(c => [c.high, c.low]);
-    if (signal) {
-      if (signal.entry) allPrices.push(signal.entry);
-      if (signal.stop) allPrices.push(signal.stop);
-      if (signal.tp1) allPrices.push(signal.tp1);
-      if (signal.tp2) allPrices.push(signal.tp2);
-      if (signal.tp3) allPrices.push(signal.tp3);
+    if (!svg || !candles?.length) return;
+    const W = svg.parentElement?.clientWidth || 600;
+    const H = height;
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.setAttribute('width', W);
+    svg.setAttribute('height', H);
+
+    const total = candles.length;
+    const zoom  = Math.max(20, Math.min(zoomRef.current, total));
+    const off   = Math.max(0, Math.min(total - zoom, offRef.current));
+    const vis   = candles.slice(Math.max(0, total - zoom - off), total - off).slice(-zoom);
+    if (!vis.length) return;
+
+    const PAD = { top: 18, right: 70, bottom: 28, left: 4 };
+    const VH  = 25;
+    const CH  = H - PAD.top - PAD.bottom - VH - 4;
+    const CW  = W - PAD.left - PAD.right;
+    const VT  = PAD.top + CH + 4;
+
+    // Rango solo de velas visibles
+    let maxP = Math.max(...vis.map(c => parseFloat(c.high)));
+    let minP = Math.min(...vis.map(c => parseFloat(c.low)));
+    const lp = signal?.entry ? parseFloat(signal.entry) : parseFloat(vis[vis.length-1]?.close || 0);
+    if (lp > 0) { maxP = Math.max(maxP, lp); minP = Math.min(minP, lp); }
+    const mg = (maxP - minP) * 0.08; maxP += mg; minP -= mg;
+    const range = maxP - minP || 0.01;
+    const Y = p => PAD.top + CH * (1 - (parseFloat(p) - minP) / range);
+
+    const n   = vis.length;
+    const cW  = CW / n;
+    const bW  = Math.max(2, cW * 0.7);
+
+    let h = '';
+    h += `<rect width="${W}" height="${H}" fill="#0a0f1a"/>`;
+
+    // Grid
+    const gs = range < 2 ? 0.25 : range < 5 ? 0.5 : range < 15 ? 1 : range < 40 ? 2 : 5;
+    for (let p = Math.ceil(minP/gs)*gs; p <= maxP; p = +(p+gs).toFixed(6)) {
+      const y = Y(p); if (y < PAD.top || y > PAD.top+CH) continue;
+      h += `<line x1="${PAD.left}" y1="${y|0}" x2="${W-PAD.right}" y2="${y|0}" stroke="#ffffff08" stroke-width="0.5"/>`;
+      h += `<text x="${W-PAD.right+3}" y="${(y+3.5)|0}" fill="#374151" font-size="9" font-family="monospace">${p.toFixed(2)}</text>`;
     }
-    
-    const minP = Math.min(...allPrices);
-    const maxP = Math.max(...allPrices);
-    const range = maxP - minP || 1;
-    
-    const candleW = (w - padding.left - padding.right) / visibleCandles.length;
-    const scaleY = (p) => padding.top + ((maxP - p) / range) * (h - padding.top - padding.bottom);
-    
-    let html = '';
-    
-    // ═══════════════════════════════════════════════════════════════
-    // DIBUJAR VELAS PRIMERO
-    // ═══════════════════════════════════════════════════════════════
-    
-    visibleCandles.forEach((c, i) => {
-      const x = padding.left + i * candleW + candleW / 2;
-      const isGreen = c.close >= c.open;
-      const color = isGreen ? '#10b981' : '#ef4444';
-      const bodyTop = scaleY(Math.max(c.open, c.close));
-      const bodyBottom = scaleY(Math.min(c.open, c.close));
-      const bodyH = Math.max(1, bodyBottom - bodyTop);
-      
-      html += `<line x1="${x}" y1="${scaleY(c.high)}" x2="${x}" y2="${scaleY(c.low)}" stroke="${color}" stroke-width="1"/>`;
-      html += `<rect x="${x - candleW * 0.35}" y="${bodyTop}" width="${candleW * 0.7}" height="${bodyH}" fill="${color}"/>`;
+
+    // SMC Zones
+    const pats = [...(smcPatterns?.H1||[]),...(smcPatterns?.M15||[]),...(smcPatterns?.M5||[])].filter(Boolean);
+    pats.filter(p=>p.type==='ORDER_BLOCK').slice(0,2).forEach(p=>{
+      const bull=p.direction==='BULLISH',col=bull?'#10b981':'#ef4444';
+      const zh=parseFloat(p.zone_high),zl=parseFloat(p.zone_low);
+      if(!zh||!zl) return;
+      const y1=Y(Math.min(zh,maxP)),y2=Y(Math.max(zl,minP));
+      const top=Math.min(y1,y2),hh=Math.max(2,Math.abs(y2-y1));
+      h+=`<rect x="${PAD.left}" y="${top|0}" width="${CW}" height="${hh|0}" fill="${col}" fill-opacity="0.10"/>`;
+      h+=`<line x1="${PAD.left}" y1="${top|0}" x2="${W-PAD.right}" y2="${top|0}" stroke="${col}" stroke-width="1.5" opacity="0.8"/>`;
+      h+=`<rect x="${W-PAD.right+2}" y="${top|0}" width="56" height="14" rx="2" fill="${col}" fill-opacity="0.9"/>`;
+      h+=`<text x="${W-PAD.right+5}" y="${(top+10)|0}" fill="white" font-size="9" font-weight="bold" font-family="Arial">OB ${bull?'▲':'▼'}</text>`;
     });
-    
-    // ═══════════════════════════════════════════════════════════════
-    // DIBUJAR NIVELES DE SEÑAL
-    // ═══════════════════════════════════════════════════════════════
-    
-    if (signal && signal.entry) {
-      const drawLevel = (price, color, label) => {
-        if (!price || price < minP * 0.99 || price > maxP * 1.01) return '';
-        const y = scaleY(price);
-        let levelHtml = '';
-        
-        const isDashed = label === 'ENTRY';
-        levelHtml += `<line x1="${padding.left}" y1="${y}" x2="${w - padding.right}" y2="${y}" stroke="${color}" stroke-width="1.5" ${isDashed ? 'stroke-dasharray="6,4"' : ''} opacity="0.7"/>`;
-        levelHtml += `<rect x="${w - padding.right + 3}" y="${y - 9}" width="65" height="18" rx="3" fill="${color}"/>`;
-        levelHtml += `<text x="${w - padding.right + 35}" y="${y + 4}" text-anchor="middle" fill="white" font-family="Arial" font-size="9" font-weight="bold">${label}</text>`;
-        
-        return levelHtml;
+    pats.filter(p=>p.type==='CHOCH'||p.type==='BOS').slice(0,2).forEach(p=>{
+      const lv=parseFloat(p.level); if(!lv||lv<minP||lv>maxP) return;
+      const y=Y(lv),col=p.type==='CHOCH'?'#f59e0b':'#a78bfa';
+      h+=`<line x1="${PAD.left}" y1="${y|0}" x2="${W-PAD.right}" y2="${y|0}" stroke="${col}" stroke-width="${p.type==='CHOCH'?2:1.3}" stroke-dasharray="6,3"/>`;
+      h+=`<rect x="${W-PAD.right+2}" y="${(y-7)|0}" width="54" height="14" rx="2" fill="${col}" fill-opacity="0.9"/>`;
+      h+=`<text x="${W-PAD.right+5}" y="${(y+4)|0}" fill="${p.type==='CHOCH'?'#000':'#fff'}" font-size="9" font-weight="bold" font-family="Arial">${p.type}</text>`;
+    });
+
+    // Signal levels
+    if (signal?.entry) {
+      const drawLvl = (price, col, label, lw, dash='') => {
+        const pf = parseFloat(price); if (!pf) return '';
+        const y = Math.max(PAD.top+5, Math.min(PAD.top+CH-5, Y(pf)));
+        const inV = pf >= minP && pf <= maxP;
+        let o = '';
+        if (inV) o += `<line x1="${PAD.left}" y1="${y|0}" x2="${W-PAD.right+1}" y2="${y|0}" stroke="${col}" stroke-width="${lw}" ${dash?`stroke-dasharray="${dash}"`:''}/>`;
+        o += `<rect x="${W-PAD.right+2}" y="${(y-8)|0}" width="${PAD.right-4}" height="16" rx="3" fill="${col}"/>`;
+        o += `<text x="${W-PAD.right+5}" y="${(y+4)|0}" fill="#000" font-size="9" font-weight="bold" font-family="monospace">${label}</text>`;
+        return o;
       };
-      
-      html += drawLevel(signal.stop, '#ef4444', 'SL');
-      html += drawLevel(signal.entry, '#f59e0b', 'ENTRY');
-      html += drawLevel(signal.tp1, '#34d399', 'TP1');
-      html += drawLevel(signal.tp2, '#10b981', 'TP2');
-      html += drawLevel(signal.tp3, '#06b6d4', 'TP3');
+      const tp2 = parseFloat(signal.tp2||signal.take_profit_2||0);
+      const tp3 = parseFloat(signal.tp3||signal.take_profit_3||0);
+      if (tp3) h += drawLvl(tp3,'#059669',`TP3 ${tp3.toFixed(2)}`,1,'4,3');
+      if (tp2) h += drawLvl(tp2,'#10b981',`TP2 ${tp2.toFixed(2)}`,1,'4,3');
+      h += drawLvl(signal.tp1||signal.take_profit_1,'#34d399',`TP1 ${parseFloat(signal.tp1||signal.take_profit_1||0).toFixed(2)}`,2.2);
+      h += drawLvl(signal.stop||signal.stop_loss,'#ef4444',`SL  ${parseFloat(signal.stop||signal.stop_loss||0).toFixed(2)}`,1.5,'5,3');
+      h += drawLvl(signal.entry,'#f59e0b',`ENT ${parseFloat(signal.entry).toFixed(2)}`,2.5);
+
+      const isLong = (signal.direction||signal.tipo)==='BUY'||(signal.direction||signal.tipo)==='LONG';
+      const eY = Y(signal.entry), ax = PAD.left+10;
+      const clamped = Math.max(PAD.top+10, Math.min(PAD.top+CH-10, eY));
+      h += isLong
+        ? `<polygon points="${ax-6},${clamped-7} ${ax+7},${clamped} ${ax-6},${clamped+7}" fill="#10b981"/>`
+        : `<polygon points="${ax+6},${clamped-7} ${ax-7},${clamped} ${ax+6},${clamped+7}" fill="#ef4444"/>`;
     }
-    
+
+    // CANDLES — método original que funciona
+    vis.forEach((c, i) => {
+      const o = parseFloat(c.open), cl = parseFloat(c.close);
+      const hi = parseFloat(c.high), lo = parseFloat(c.low);
+      if (!o||!cl||!hi||!lo||hi<lo) return;
+      const bull = cl >= o;
+      const col  = bull ? '#10b981' : '#ef4444';
+      const x    = PAD.left + i*cW + cW/2;
+      const bTop = Y(Math.max(o, cl));
+      const bBot = Y(Math.min(o, cl));
+      const bH   = Math.max(2, bBot - bTop);
+      // Mecha completa → cuerpo encima la cubre en el centro
+      h += `<line x1="${x|0}" y1="${Y(hi)|0}" x2="${x|0}" y2="${Y(lo)|0}" stroke="${col}" stroke-width="1"/>`;
+      h += `<rect x="${(x-bW/2)|0}" y="${bTop|0}" width="${bW|0}" height="${bH|0}" fill="${col}"/>`;
+      // Volumen
+      const vh = Math.max(1, (Math.abs(hi-lo)/((maxP-minP)||1))*(VH-2));
+      h += `<rect x="${(x-bW/2)|0}" y="${(VT+VH-vh)|0}" width="${bW|0}" height="${vh|0}" fill="${col}" fill-opacity="0.3"/>`;
+    });
+
     // Precio actual
-    const lastPrice = visibleCandles[visibleCandles.length - 1]?.close;
-    if (lastPrice) {
-      const y = scaleY(lastPrice);
-      html += `<line x1="${padding.left}" y1="${y}" x2="${w - padding.right}" y2="${y}" stroke="#3b82f6" stroke-width="1" stroke-dasharray="3,3" opacity="0.5"/>`;
-      html += `<rect x="${w - padding.right + 3}" y="${y - 9}" width="65" height="18" rx="3" fill="#3b82f6"/>`;
-      html += `<text x="${w - padding.right + 35}" y="${y + 4}" text-anchor="middle" fill="white" font-family="Arial" font-size="9" font-weight="bold">${lastPrice.toFixed(2)}</text>`;
+    const lastClose = parseFloat(vis[vis.length-1]?.close || 0);
+    if (lastClose >= minP && lastClose <= maxP) {
+      const py = Y(lastClose);
+      const isUp = lastClose >= parseFloat(vis[vis.length-1]?.open || lastClose);
+      h += `<line x1="${PAD.left}" y1="${py|0}" x2="${W-PAD.right}" y2="${py|0}" stroke="rgba(255,255,255,0.2)" stroke-width="1" stroke-dasharray="3,4"/>`;
+      h += `<rect x="${W-PAD.right+2}" y="${(py-8)|0}" width="${PAD.right-4}" height="16" rx="3" fill="${isUp?'#10b981':'#ef4444'}"/>`;
+      h += `<text x="${W-PAD.right+5}" y="${(py+4)|0}" fill="#fff" font-size="9" font-weight="bold" font-family="monospace">${lastClose.toFixed(2)}</text>`;
     }
-    
-    svg.innerHTML = html;
-  }, [candles, height, signal]);
-  
-  return <svg ref={svgRef} className="w-full" style={{ height }} />;
+
+    // Tiempo
+    const ts = Math.max(1, Math.floor(n/8));
+    vis.forEach((c,i)=>{
+      if(i%ts!==0&&i!==n-1) return;
+      const x=PAD.left+i*cW+cW/2;
+      const ep=parseInt(c.epoch||c.time||0); if(!ep) return;
+      const d=new Date(ep*1000);
+      h+=`<text x="${x|0}" y="${H-PAD.bottom+12}" text-anchor="middle" fill="#374151" font-size="8" font-family="monospace">${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}</text>`;
+    });
+    h+=`<line x1="${PAD.left}" y1="${VT}" x2="${W-PAD.right}" y2="${VT}" stroke="#ffffff08" stroke-width="1"/>`;
+    svg.innerHTML = h;
+  }, [candles, height, signal, smcPatterns]);
+
+  useEffect(()=>{ draw(); },[draw]);
+  useEffect(()=>{
+    const el=svgRef.current?.parentElement; if(!el) return;
+    const ro=new ResizeObserver(()=>draw()); ro.observe(el);
+    return()=>ro.disconnect();
+  },[draw]);
+
+  const onMD=e=>{isDrag.current=true;dragX.current=e.clientX;dragOff.current=offRef.current;};
+  const onMM=e=>{
+    if(!isDrag.current) return;
+    const slot=(svgRef.current?.parentElement?.clientWidth||600)/zoomRef.current;
+    offRef.current=Math.max(0,Math.min((candles?.length||0)-zoomRef.current,dragOff.current+Math.round((dragX.current-e.clientX)/Math.max(2,slot))));
+    draw();
+  };
+  const onMU=()=>{isDrag.current=false;};
+  const onWh=e=>{e.preventDefault();zoomRef.current=Math.max(15,Math.min(200,zoomRef.current+(e.deltaY>0?8:-8)));draw();};
+
+  return (
+    <div className="relative w-full" style={{height, background:'#0a0f1a'}}>
+      <svg ref={svgRef} style={{display:'block',width:'100%',height:'100%',cursor:'crosshair',userSelect:'none'}}
+        onMouseDown={onMD} onMouseMove={onMM} onMouseUp={onMU} onMouseLeave={onMU} onWheel={onWh}/>
+    </div>
+  );
 };
 
 // =============================================
@@ -1482,139 +1563,6 @@ export default function Dashboard({ user, onLogout }) {
     );
   }
 
-  // =============================================
-  // PANTALLA DE SUSCRIPCIÓN EXPIRADA
-  // =============================================
-  if (isExpired) {
-    return (
-      <div className="min-h-screen bg-[#06060a] flex items-center justify-center p-4">
-        <div className="max-w-lg w-full">
-          {/* Logo y título */}
-          <div className="text-center mb-8">
-            <div className="w-20 h-20 mx-auto rounded-2xl bg-gradient-to-br from-red-500 to-orange-500 flex items-center justify-center mb-4 shadow-lg shadow-red-500/30">
-              <svg className="w-10 h-10 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-              </svg>
-            </div>
-            <h1 className="text-3xl font-bold text-white mb-2">Suscripción Expirada</h1>
-            <p className="text-white/60">Tu acceso a Trading Master Pro ha finalizado</p>
-          </div>
-
-          {/* Tarjeta principal */}
-          <div className="bg-gradient-to-br from-[#0d0d12] to-[#12121a] rounded-2xl border border-red-500/30 p-6 mb-6">
-            {/* Info del plan expirado */}
-            <div className="flex items-center gap-4 mb-6 pb-6 border-b border-white/10">
-              <div className={`w-14 h-14 rounded-xl flex items-center justify-center ${
-                subscription?.plan === 'elite' ? 'bg-gradient-to-br from-purple-500/30 to-pink-500/30' :
-                subscription?.plan === 'premium' ? 'bg-gradient-to-br from-cyan-500/30 to-blue-500/30' :
-                subscription?.plan === 'basico' ? 'bg-gradient-to-br from-emerald-500/30 to-green-500/30' :
-                'bg-gradient-to-br from-amber-500/30 to-orange-500/30'
-              }`}>
-                <span className="text-2xl">
-                  {subscription?.plan === 'elite' ? '👑' :
-                   subscription?.plan === 'premium' ? '💎' :
-                   subscription?.plan === 'basico' ? '⭐' : '🎯'}
-                </span>
-              </div>
-              <div className="flex-1">
-                <p className="text-white font-semibold">{subscription?.plan_name || 'Free Trial'}</p>
-                <p className="text-white/40 text-sm">
-                  {subscription?.periodo === 'anual' ? 'Plan Anual' :
-                   subscription?.periodo === 'semestral' ? 'Plan Semestral' :
-                   subscription?.periodo === 'trimestral' ? 'Plan Trimestral' :
-                   subscription?.periodo === 'mensual' ? 'Plan Mensual' : 'Prueba Gratuita'}
-                </p>
-              </div>
-              <span className="px-3 py-1 bg-red-500/20 text-red-400 text-sm font-bold rounded-full">
-                EXPIRADO
-              </span>
-            </div>
-
-            {/* Mensaje */}
-            <div className="bg-red-500/10 rounded-xl p-4 mb-6 border border-red-500/20">
-              <div className="flex items-start gap-3">
-                <div className="w-8 h-8 bg-red-500/20 rounded-lg flex items-center justify-center flex-shrink-0">
-                  <svg className="w-5 h-5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                </div>
-                <div>
-                  <p className="text-red-400 font-medium text-sm">Acceso Bloqueado</p>
-                  <p className="text-white/60 text-sm mt-1">
-                    Para continuar usando el Dashboard, las señales de trading y todas las funciones premium, necesitas renovar tu suscripción.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Beneficios que se pierden */}
-            <div className="mb-6">
-              <p className="text-white/40 text-xs font-medium mb-3 uppercase tracking-wider">Lo que estás perdiendo:</p>
-              <div className="grid grid-cols-2 gap-2">
-                {[
-                  '📊 Dashboard en tiempo real',
-                  '🔔 Señales SMC automáticas',
-                  '🤖 ELISA IA asistente',
-                  '📈 Análisis técnico',
-                  '🏆 Reportes detallados',
-                  '💰 Modelos avanzados'
-                ].map((feature, i) => (
-                  <div key={i} className="flex items-center gap-2 text-white/50 text-sm">
-                    <span className="text-red-400 opacity-50">✗</span>
-                    <span className="line-through opacity-70">{feature}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Botón de renovar */}
-            <button 
-              onClick={() => setShowPricing(true)}
-              className="w-full py-4 bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-black font-bold rounded-xl transition-all transform hover:scale-[1.02] shadow-lg shadow-emerald-500/25 flex items-center justify-center gap-2"
-            >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-              Renovar Suscripción
-            </button>
-          </div>
-
-          {/* Info de usuario y logout */}
-          <div className="flex items-center justify-between text-sm">
-            <div className="flex items-center gap-2 text-white/40">
-              <span>👤</span>
-              <span>{user?.email || 'Usuario'}</span>
-            </div>
-            <button 
-              onClick={onLogout}
-              className="flex items-center gap-2 text-white/40 hover:text-red-400 transition-colors"
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-              </svg>
-              Cerrar Sesión
-            </button>
-          </div>
-
-          {/* Contacto */}
-          <div className="mt-6 text-center">
-            <p className="text-white/30 text-xs">
-              ¿Tienes problemas? Contacta soporte en Telegram: 
-              <a href="https://t.me/TradingMasterBot" target="_blank" rel="noreferrer" className="text-cyan-400 hover:underline ml-1">
-                @TradingMasterBot
-              </a>
-            </p>
-          </div>
-        </div>
-
-        {/* Modal de Pricing */}
-        {showPricing && (
-          <Pricing user={user} subscription={subscription} onClose={() => setShowPricing(false)} />
-        )}
-      </div>
-    );
-  }
-
   // Dashboard principal
   return (
     <div className="min-h-screen bg-[#06060a]">
@@ -1726,11 +1674,7 @@ export default function Dashboard({ user, onLogout }) {
               </div>
 
               {/* Notificaciones Push */}
-              <PushNotifications 
-                userId={user?.id} 
-                userEmail={user?.email} 
-                userPlan={subscription?.plan || 'trial'} 
-              />
+              <PushNotifications userId={user?.id} userPlan={subscription?.plan || 'trial'} />
 
               {/* Ventajas PWA */}
               <div className="bg-[#0d0d12] rounded-xl border border-white/5 p-6">
