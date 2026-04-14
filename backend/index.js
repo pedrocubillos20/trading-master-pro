@@ -2424,7 +2424,6 @@ const SMC = {
         } else {
           console.log(`⚠️ [${config.shortName}] CHoCH_PULLBACK bloqueado: H1=${structureH1.trend} M15=${structureM15.trend} vs ${choch.side}`);
         }
-        }
       } else {
         console.log(`⚠️ [${config.shortName}] CHoCH=${choch.side} pero Pullback=${pullback.side} (no coinciden)`);
       }
