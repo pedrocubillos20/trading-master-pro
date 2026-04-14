@@ -567,63 +567,51 @@ function calculateExpirationDate(periodo) {
 async function getSubscription(userId) {
   if (supabase) {
     try {
-      // Buscar primero por user_id (UUID), luego por email como fallback
-      let data = null, error = null;
-
-      // Intento 1: buscar por user_id
-      const r1 = await supabase
+      // Tabla real: id, user_id(uuid), plan, status, price, start_date, end_date, created_at
+      const { data, error } = await supabase
         .from('suscripciones')
         .select('*')
         .eq('user_id', userId)
         .single();
-      
-      if (r1.data) {
-        data = r1.data;
-      } else {
-        // Intento 2: buscar por email
-        const r2 = await supabase
-          .from('suscripciones')
-          .select('*')
-          .eq('email', userId)
-          .single();
-        if (r2.data) data = r2.data;
-        error = r2.error;
-      }
 
       if (error && error.code !== 'PGRST116') {
         console.log('getSubscription error:', error.message);
       }
-      
+
       if (data) {
-        // Mapear columnas — soporta ambos esquemas
-        const plan   = data.plan || 'free';
-        const status = data.status || data.estado || 'trial';
-        const endDate = data.end_date || data.subscription_ends_at;
-        
-        // Calcular días restantes
+        const plan    = data.plan   || 'free';
+        const status  = data.status || 'trial';
+        const endDate = data.end_date;
         const daysLeft = endDate
           ? Math.max(0, Math.ceil((new Date(endDate) - new Date()) / 86400000))
           : 5;
-        
-        const isActive = status === 'active' || (status === 'trial' && daysLeft > 0);
+        const isActive = status === 'active' || status === 'activo' || (status === 'trial' && daysLeft > 0);
+
+        // Mapear plan a assets según config
+        const planAssets = {
+          free:    ['stpRNG', 'frxEURUSD', 'frxXAUUSD'],
+          basico:  ['stpRNG', 'R_75', 'frxEURUSD', 'frxUSDJPY', 'frxXAUUSD', 'frxXAGUSD'],
+          premium: ['stpRNG', 'R_75', '1HZ100V', 'JD75', 'frxEURUSD', 'frxGBPUSD', 'frxXAUUSD', 'frxXAGUSD'],
+          elite:   ['stpRNG', 'R_75', '1HZ100V', 'JD75', 'frxEURUSD', 'frxGBPUSD', 'frxUSDJPY', 'frxXAUUSD', 'frxXAGUSD', 'cryBTCUSD', 'BOOM1000', 'BOOM500', 'CRASH1000', 'CRASH500'],
+        };
 
         return {
-          id: data.id,
-          email: data.email || userId,
-          plan: data.plan || 'free',
-          plan: plan,
-          estado: status,
-          status: status,
-          periodo: data.periodo || 'mensual',
-          trial_ends_at: data.trial_ends_at || data.end_date,
-          subscription_ends_at: data.end_date || data.subscription_ends_at,
-          days_left: daysLeft,
-          is_active: isActive,
-          created_at: data.created_at,
-          updated_at: data.updated_at
+          id:                  data.id,
+          email:               userId,
+          plan:                plan,
+          estado:              status,
+          status:              status,
+          periodo:             'mensual',
+          trial_ends_at:       endDate,
+          subscription_ends_at: endDate,
+          days_left:           daysLeft,
+          is_active:           isActive,
+          assets:              planAssets[plan] || planAssets.free,
+          plan_name:           { free:'Free Trial', basico:'Básico', premium:'Premium', elite:'Elite' }[plan] || 'Free Trial',
+          created_at:          data.created_at,
+          updated_at:          data.updated_at || data.created_at
         };
       }
-      
       return null;
     } catch (e) {
       console.log('getSubscription error:', e.message);
@@ -636,96 +624,36 @@ async function getSubscription(userId) {
 async function saveSubscription(subData) {
   if (supabase) {
     try {
-      const email = subData.email;
-      
-      // Verificar si existe
-      const { data: existing } = await supabase
+      const userId = subData.userId || subData.user_id;
+      const plan   = subData.plan || 'free';
+      const months = subData.months || 1;
+      const endDate = new Date();
+      endDate.setMonth(endDate.getMonth() + months);
+
+      const { data, error } = await supabase
         .from('suscripciones')
-        .select('*')
-        .eq('email', email)
+        .upsert({
+          user_id:    userId,
+          plan:       plan,
+          status:     'active',
+          price:      0,
+          start_date: new Date().toISOString(),
+          end_date:   endDate.toISOString(),
+        }, { onConflict: 'user_id' })
+        .select()
         .single();
-      
-      if (existing) {
-        // Actualizar existente
-        const updateData = {
-          plan: subData.plan || 'free',
-          estado: subData.estado || 'trial',
-          periodo: subData.periodo || 'mensual',
-          updated_at: new Date().toISOString()
-        };
-        
-        if (subData.trial_ends_at) {
-          updateData.trial_ends_at = subData.trial_ends_at;
-        }
-        
-        // Si es un plan activo (no trial), calcular fecha de vencimiento
-        if (subData.estado === 'active' && subData.plan !== 'free') {
-          // Si ya tiene fecha de vencimiento y aún es válida, no cambiar
-          // Si no tiene o cambió de periodo, calcular nueva
-          if (!existing.subscription_ends_at || subData.periodo !== existing.periodo || subData.renew) {
-            updateData.subscription_ends_at = calculateExpirationDate(subData.periodo);
-            console.log(`📅 Nueva fecha vencimiento: ${updateData.subscription_ends_at} (${subData.periodo})`);
-          }
-        }
-        
-        const result = await supabase
-          .from('suscripciones')
-          .update(updateData)
-          .eq('email', email)
-          .select();
-        
-        if (result.error) {
-          console.log('Supabase update error:', result.error.message);
-        } else {
-          console.log(`✅ Suscripción actualizada: ${email} -> ${subData.plan} (${subData.periodo})`);
-        }
-        return result;
-      } else {
-        // Insertar nuevo
-        const insertData = {
-          email: email,
-          plan: subData.plan || 'free',
-          estado: subData.estado || 'trial',
-          periodo: subData.periodo || 'mensual'
-        };
-        
-        // Si es plan activo, calcular fecha de vencimiento
-        if (subData.estado === 'active' && subData.plan !== 'free') {
-          insertData.subscription_ends_at = calculateExpirationDate(subData.periodo);
-        }
-        
-        // trial_ends_at se establece automáticamente por el trigger
-        
-        const result = await supabase
-          .from('suscripciones')
-          .insert(insertData)
-          .select();
-        
-        if (result.error) {
-          console.log('Supabase insert error:', result.error.message);
-        } else {
-          console.log(`✅ Suscripción creada: ${email} -> ${subData.plan} (${subData.periodo})`);
-        }
-        return result;
+
+      if (error) {
+        console.log('Supabase upsert error:', error.message);
+        return null;
       }
+      return data;
     } catch (e) {
       console.log('saveSubscription error:', e.message);
-      return { data: null, error: e };
+      return null;
     }
   }
-  
-  // Guardar en memoria (fallback)
-  const subscriptionEndsAt = (subData.estado === 'active' && subData.plan !== 'free')
-    ? calculateExpirationDate(subData.periodo)
-    : null;
-    
-  memoryStore.subscriptions.set(subData.email, {
-    ...subData,
-    created_at: subData.created_at || new Date().toISOString(),
-    trial_ends_at: subData.trial_ends_at || new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
-    subscription_ends_at: subscriptionEndsAt
-  });
-  return { data: [subData] };
+  return null;
 }
 
 async function getAllSubscriptions() {
