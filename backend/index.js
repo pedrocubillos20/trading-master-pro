@@ -567,48 +567,56 @@ function calculateExpirationDate(periodo) {
 async function getSubscription(userId) {
   if (supabase) {
     try {
-      // Buscar por email (columna nueva)
-      const { data, error } = await supabase
+      // Buscar primero por user_id (UUID), luego por email como fallback
+      let data = null, error = null;
+
+      // Intento 1: buscar por user_id
+      const r1 = await supabase
         .from('suscripciones')
         .select('*')
-        .eq('email', userId)
+        .eq('user_id', userId)
         .single();
       
+      if (r1.data) {
+        data = r1.data;
+      } else {
+        // Intento 2: buscar por email
+        const r2 = await supabase
+          .from('suscripciones')
+          .select('*')
+          .eq('email', userId)
+          .single();
+        if (r2.data) data = r2.data;
+        error = r2.error;
+      }
+
       if (error && error.code !== 'PGRST116') {
         console.log('getSubscription error:', error.message);
       }
       
       if (data) {
+        // Mapear columnas — soporta ambos esquemas
+        const plan   = data.plan || 'free';
+        const status = data.status || data.estado || 'trial';
+        const endDate = data.end_date || data.subscription_ends_at;
+        
         // Calcular días restantes
-        const daysLeft = calculateDaysLeft(
-          data.subscription_ends_at, 
-          data.trial_ends_at, 
-          data.estado, 
-          data.periodo
-        );
+        const daysLeft = endDate
+          ? Math.max(0, Math.ceil((new Date(endDate) - new Date()) / 86400000))
+          : 5;
         
-        // Verificar si está activa
-        const isActive = isSubscriptionActive(data.estado, daysLeft);
-        
-        // Si expiró, marcar como expired
-        let estado = data.estado;
-        if (!isActive && estado !== 'expired' && daysLeft <= 0) {
-          estado = 'expired';
-          // Actualizar en DB
-          await supabase
-            .from('suscripciones')
-            .update({ estado: 'expired', updated_at: new Date().toISOString() })
-            .eq('email', userId);
-        }
-        
+        const isActive = status === 'active' || (status === 'trial' && daysLeft > 0);
+
         return {
           id: data.id,
-          email: data.email,
+          email: data.email || userId,
           plan: data.plan || 'free',
-          estado: estado,
+          plan: plan,
+          estado: status,
+          status: status,
           periodo: data.periodo || 'mensual',
-          trial_ends_at: data.trial_ends_at,
-          subscription_ends_at: data.subscription_ends_at,
+          trial_ends_at: data.trial_ends_at || data.end_date,
+          subscription_ends_at: data.end_date || data.subscription_ends_at,
           days_left: daysLeft,
           is_active: isActive,
           created_at: data.created_at,
