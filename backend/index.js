@@ -567,11 +567,11 @@ function calculateExpirationDate(periodo) {
 async function getSubscription(userId) {
   if (supabase) {
     try {
-      // Tabla real: id, user_id(uuid), plan, status, price, start_date, end_date, created_at
+      // Leer de tabla 'users' que tiene email + plan
       const { data, error } = await supabase
-        .from('suscripciones')
-        .select('*')
-        .eq('user_id', userId)
+        .from('users')
+        .select('id, email, plan, is_active, created_at')
+        .eq('email', userId)
         .single();
 
       if (error && error.code !== 'PGRST116') {
@@ -579,37 +579,30 @@ async function getSubscription(userId) {
       }
 
       if (data) {
-        const plan    = data.plan   || 'free';
-        const status  = data.status || 'trial';
-        const endDate = data.end_date;
-        const daysLeft = endDate
-          ? Math.max(0, Math.ceil((new Date(endDate) - new Date()) / 86400000))
-          : 5;
-        const isActive = status === 'active' || status === 'activo' || (status === 'trial' && daysLeft > 0);
+        const plan = data.plan || 'free';
 
-        // Mapear plan a assets según config
+        // Assets según plan — SOLO Oro, Step y Volatility 100
         const planAssets = {
-          free:    ['stpRNG', 'frxEURUSD', 'frxXAUUSD'],
-          basico:  ['stpRNG', 'R_75', 'frxEURUSD', 'frxUSDJPY', 'frxXAUUSD', 'frxXAGUSD'],
-          premium: ['stpRNG', 'R_75', '1HZ100V', 'JD75', 'frxEURUSD', 'frxGBPUSD', 'frxXAUUSD', 'frxXAGUSD'],
-          elite:   ['stpRNG', 'R_75', '1HZ100V', 'JD75', 'frxEURUSD', 'frxGBPUSD', 'frxUSDJPY', 'frxXAUUSD', 'frxXAGUSD', 'cryBTCUSD', 'BOOM1000', 'BOOM500', 'CRASH1000', 'CRASH500'],
+          free:    ['stpRNG'],
+          basico:  ['stpRNG', 'frxXAUUSD'],
+          pro:     ['stpRNG', 'frxXAUUSD', '1HZ100V'],
+          premium: ['stpRNG', 'frxXAUUSD', '1HZ100V'],
+          elite:   ['stpRNG', 'frxXAUUSD', '1HZ100V'],
         };
 
         return {
           id:                  data.id,
-          email:               userId,
+          email:               data.email,
           plan:                plan,
-          estado:              status,
-          status:              status,
+          estado:              'activo',
+          status:              'active',
           periodo:             'mensual',
-          trial_ends_at:       endDate,
-          subscription_ends_at: endDate,
-          days_left:           daysLeft,
-          is_active:           isActive,
-          assets:              planAssets[plan] || planAssets.free,
-          plan_name:           { free:'Free Trial', basico:'Básico', premium:'Premium', elite:'Elite' }[plan] || 'Free Trial',
-          created_at:          data.created_at,
-          updated_at:          data.updated_at || data.created_at
+          days_left:           3650,
+          is_active:           true,
+          assets:              planAssets[plan] || ['stpRNG'],
+          plan_name:           { free:'Free Trial', basico:'Básico', pro:'Pro', premium:'Premium', elite:'Elite' }[plan] || 'Free Trial',
+          trial_ends_at:       new Date(Date.now() + 3650*86400000).toISOString(),
+          subscription_ends_at: new Date(Date.now() + 3650*86400000).toISOString(),
         };
       }
       return null;
@@ -5185,6 +5178,17 @@ app.get('/api/health', (req, res) => {
 // =============================================
 // INICIO DEL SERVIDOR
 // =============================================
+// Asegurar que admin tenga plan elite al iniciar
+async function ensureAdminElite() {
+  if (!supabase) return;
+  try {
+    await supabase.from('users')
+      .update({ plan: 'elite', is_active: true })
+      .eq('email', 'admin@tradingpro.com');
+    console.log('✅ Admin actualizado a plan Elite');
+  } catch(e) { console.log('Admin update:', e.message); }
+}
+
 app.listen(PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════╗
@@ -5203,6 +5207,7 @@ app.listen(PORT, () => {
   
   console.log('\n🔌 Conectando a Deriv WebSocket...');
   connectDeriv();
+  ensureAdminElite();
   
   // Actualizar H1 cada 2 minutos
   setInterval(() => {
