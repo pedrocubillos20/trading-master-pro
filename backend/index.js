@@ -564,6 +564,9 @@ function calculateExpirationDate(periodo) {
   return expirationDate.toISOString();
 }
 
+// Activos operados — definido aquí para uso en toda la app
+const MY_ASSETS = ['stpRNG', 'frxXAUUSD', '1HZ100V'];
+
 async function getSubscription(userId) {
   if (supabase) {
     try {
@@ -581,13 +584,13 @@ async function getSubscription(userId) {
       if (data) {
         const plan = data.plan || 'free';
 
-        // Assets según plan — SOLO Oro, Step y Volatility 100
+        // Assets según plan — SOLO Step Index, Oro y Volatility 100
         const planAssets = {
-          free:    ['stpRNG'],
-          basico:  ['stpRNG', 'frxXAUUSD'],
-          pro:     ['stpRNG', 'frxXAUUSD', '1HZ100V'],
-          premium: ['stpRNG', 'frxXAUUSD', '1HZ100V'],
-          elite:   ['stpRNG', 'frxXAUUSD', '1HZ100V'],
+          free:    MY_ASSETS,
+          basico:  MY_ASSETS,
+          pro:     MY_ASSETS,
+          premium: MY_ASSETS,
+          elite:   MY_ASSETS,
         };
 
         return {
@@ -721,30 +724,27 @@ async function deleteSubscription(userId) {
 // =============================================
 // CONFIGURACIÓN DE ACTIVOS Y PLANES
 // =============================================
+
 const PLANS = {
   free: {
     name: 'Free Trial',
-    // FREE: Activos básicos gratuitos (5 días)
-    assets: ['stpRNG', 'frxEURUSD', 'frxXAUUSD'],
-    duration: 5, // días
+    assets: MY_ASSETS,
+    duration: 5,
     price: 0
   },
   basico: {
     name: 'Básico',
-    // BÁSICO: + Volatility, pares adicionales, metales
-    assets: ['stpRNG', 'R_75', 'frxEURUSD', 'frxUSDJPY', 'frxXAUUSD', 'frxXAGUSD'],
+    assets: MY_ASSETS,
     price: 29900
   },
   premium: {
     name: 'Premium',
-    // PREMIUM: + V100, Jump, GBP, Cryptos
-    assets: ['stpRNG', 'R_75', '1HZ100V', 'JD75', 'frxEURUSD', 'frxGBPUSD', 'frxUSDJPY', 'frxXAUUSD', 'frxXAGUSD', 'cryBTCUSD', 'cryETHUSD'],
+    assets: MY_ASSETS,
     price: 59900
   },
   elite: {
     name: 'Elite',
-    // ELITE: Todo incluido - Boom/Crash completos
-    assets: ['stpRNG', 'R_75', '1HZ100V', 'JD75', 'frxEURUSD', 'frxGBPUSD', 'frxUSDJPY', 'frxXAUUSD', 'frxXAGUSD', 'cryBTCUSD', 'cryETHUSD', 'BOOM1000', 'BOOM500', 'BOOM300N', 'CRASH1000', 'CRASH500', 'CRASH300N'],
+    assets: MY_ASSETS,
     price: 99900
   }
 };
@@ -831,7 +831,7 @@ let reconnectAttempts = 0;
 
 // Sistema de seguimiento de mercados activos
 const marketStatus = {};
-for (const symbol of Object.keys(ASSETS)) {
+for (const symbol of MY_ASSETS) {
   marketStatus[symbol] = {
     lastDataReceived: 0,
     isActive: false,
@@ -899,7 +899,7 @@ function checkAndResubscribeMarkets() {
   const now = Date.now();
   const inactivityThreshold = 60000; // 1 minuto sin datos = inactivo
   
-  for (const symbol of Object.keys(ASSETS)) {
+  for (const symbol of MY_ASSETS) {
     const status = marketStatus[symbol];
     const config = ASSETS[symbol];
     const shouldBeOpen = isMarketOpenNow(symbol);
@@ -929,7 +929,7 @@ function startMarketMonitoring() {
 }
 
 const assetData = {};
-for (const symbol of Object.keys(ASSETS)) {
+for (const symbol of MY_ASSETS) {
   assetData[symbol] = {
     candles: [],
     candlesH1: [],
@@ -968,7 +968,7 @@ const stats = {
   learning: { scoreAdjustments: {} }
 };
 
-for (const symbol of Object.keys(ASSETS)) {
+for (const symbol of MY_ASSETS) {
   stats.byAsset[symbol] = { wins: 0, losses: 0, total: 0 };
 }
 
@@ -3778,8 +3778,8 @@ function connectDeriv() {
     // Iniciar monitor de mercados
     startMarketMonitoring();
     
-    console.log('\n📊 Suscribiendo a activos:');
-    for (const symbol of Object.keys(ASSETS)) {
+    console.log('\n📊 Suscribiendo a activos (Step · Oro · V100):');
+    for (const symbol of MY_ASSETS) {
       // Solo suscribir a mercados que deberían estar abiertos
       if (isMarketOpenNow(symbol)) {
         console.log(`   → ${ASSETS[symbol].shortName} (${symbol})`);
@@ -4219,7 +4219,8 @@ app.get('/api/dashboard/:userId', async (req, res) => {
     
     const userPlan = subscription.plan;
     const planConfig = PLANS[userPlan] || PLANS.free;
-    const allowedAssets = planConfig.assets || PLANS.free.assets;
+    // Usar sub.assets si está disponible (ya filtrado por getSubscription), sino MY_ASSETS
+    const allowedAssets = (sub?.assets?.length > 0 ? sub.assets : planConfig.assets) || MY_ASSETS;
     
     // Filtrar activos según el plan del usuario
     const userAssets = Object.entries(assetData)
@@ -4284,19 +4285,8 @@ app.get('/api/dashboard/:userId', async (req, res) => {
       }
     }
     
-    // Combinar estadísticas en tiempo real con las guardadas
-    const finalStats = savedStats?.totalTrades > 0 ? {
-      total: savedStats.totalTrades,
-      wins: savedStats.wins,
-      losses: savedStats.losses,
-      pending: userStats.pending,
-      tp1Hits: savedStats.tp1Hits || 0,
-      tp2Hits: savedStats.tp2Hits || 0,
-      tp3Hits: savedStats.tp3Hits || 0,
-      winRate: savedStats.winRate,
-      profitFactor: savedStats.profitFactor,
-      avgScore: savedStats.avgScore
-    } : userStats;
+    // Calcular estadísticas SOLO de los 3 activos permitidos (siempre fresh)
+    const finalStats = userStats;
     
     res.json({
       connected: isConnected,
@@ -5087,7 +5077,7 @@ app.post('/api/webhooks/wompi', async (req, res) => {
 // Endpoint para ver estado de mercados
 app.get('/api/markets/status', (req, res) => {
   const marketsInfo = {};
-  for (const symbol of Object.keys(ASSETS)) {
+  for (const symbol of MY_ASSETS) {
     const config = ASSETS[symbol];
     const status = marketStatus[symbol];
     const data = assetData[symbol];
@@ -5140,7 +5130,7 @@ app.post('/api/markets/resubscribe-all', (req, res) => {
   }
   
   const resubscribed = [];
-  for (const symbol of Object.keys(ASSETS)) {
+  for (const symbol of MY_ASSETS) {
     if (isMarketOpenNow(symbol)) {
       resubscribeToAsset(symbol);
       resubscribed.push(ASSETS[symbol].shortName);
@@ -5163,7 +5153,7 @@ app.get('/api/health', (req, res) => {
     openai: !!openai,
     supabase: !!supabase,
     telegram: !!(TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID),
-    assets: Object.keys(ASSETS).length,
+    assets: MY_ASSETS.length,
     signals: signalHistory.length,
     learning: {
       active: true,
@@ -5201,7 +5191,7 @@ app.listen(PORT, () => {
 ║  Telegram: ${TELEGRAM_BOT_TOKEN ? '✅ Configurado' : '⚠️ No configurado'}                        ║
 ║  Modelos SMC: ${SMC_MODELS_DATA.models ? Object.keys(SMC_MODELS_DATA.models).length : 0} cargados                          ║
 ║  Aprendizaje: ✅ Activo                               ║
-║  Activos: ${Object.keys(ASSETS).length} (${Object.keys(ASSETS).join(', ')})
+║  Activos: ${MY_ASSETS.length} (${MY_ASSETS.join(', ')})
 ╚═══════════════════════════════════════════════════════╝
   `);
   
@@ -5209,10 +5199,10 @@ app.listen(PORT, () => {
   connectDeriv();
   ensureAdminElite();
   
-  // Actualizar H1 cada 2 minutos
+  // Actualizar H1 cada 2 minutos — solo los 3 activos activos
   setInterval(() => {
     if (derivWs?.readyState === WebSocket.OPEN) {
-      for (const symbol of Object.keys(ASSETS)) {
+      for (const symbol of MY_ASSETS) {
         requestH1(symbol);
       }
     }
