@@ -4275,17 +4275,7 @@ app.get('/api/dashboard/:userId', async (req, res) => {
       ? Math.round((userStats.wins / userStats.total) * 100) 
       : 0;
     
-    // Obtener estadísticas guardadas del usuario si existen
-    let savedStats = null;
-    if (reportsManager) {
-      try {
-        savedStats = await reportsManager.getUserSummary(userId);
-      } catch (e) {
-        console.log('No saved stats for user:', userId);
-      }
-    }
-    
-    // Calcular estadísticas SOLO de los 3 activos permitidos (siempre fresh)
+    // Estadísticas siempre calculadas fresh — solo los 3 activos permitidos
     const finalStats = userStats;
     
     res.json({

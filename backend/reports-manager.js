@@ -142,6 +142,9 @@ class ReportsManager {
         .eq('user_id', userId)
         .single();
 
+      // 22P02 = columna UUID pero userId es email → ignorar silenciosamente
+      if (error && error.code === '22P02') return null;
+
       if (error && error.code === 'PGRST116') {
         // No existe, crear nuevo registro
         stats = {
@@ -236,7 +239,9 @@ class ReportsManager {
 
       return stats;
     } catch (error) {
-      console.error('Error in updateUserStats:', error);
+      if (!error?.message?.includes('uuid')) {
+        console.error('Error in updateUserStats:', error.message);
+      }
     }
   }
 
@@ -584,21 +589,14 @@ class ReportsManager {
         .eq('user_id', userId)
         .single();
 
-      if (error && error.code !== 'PGRST116') {
-        throw error;
+      // 22P02 = invalid UUID syntax (user_id is email, not UUID) → return empty silently
+      if (error) {
+        if (error.code === '22P02' || error.code === 'PGRST116') return null;
+        console.error('Error getting user summary:', error.message);
+        return null;
       }
 
-      if (!stats) {
-        return {
-          totalTrades: 0,
-          winRate: 0,
-          totalPnl: 0,
-          currentCapital: 1000,
-          roi: 0,
-          bestStreak: 0,
-          worstStreak: 0
-        };
-      }
+      if (!stats) return null;
 
       const roi = ((parseFloat(stats.current_capital) - parseFloat(stats.initial_capital)) / parseFloat(stats.initial_capital) * 100).toFixed(2);
 
@@ -622,7 +620,7 @@ class ReportsManager {
         lastTrade: stats.last_trade_at
       };
     } catch (error) {
-      console.error('Error getting user summary:', error);
+      // No loggear errores de tipo UUID — son esperados cuando userId es email
       return null;
     }
   }
