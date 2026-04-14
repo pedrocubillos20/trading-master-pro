@@ -2409,25 +2409,21 @@ const SMC = {
     // NUEVOS MODELOS SMC v14.0
     // ═══════════════════════════════════════════
     
-    // OB_ENTRY - Entrada directa en Order Block (v24: más estricto)
+    // OB_ENTRY - DESACTIVADO (genera falsas señales en contra de la tendencia H1)
+    // Usar MTF_CONFLUENCE o CHOCH_PULLBACK que requieren confluencia completa
+    /*
     if (pullback && (pullback.type === 'DEMAND_ZONE' || pullback.type === 'SUPPLY_ZONE')) {
       const pdCorrect = (pullback.side === 'BUY' && premiumDiscount === 'DISCOUNT') ||
                         (pullback.side === 'SELL' && premiumDiscount === 'PREMIUM');
-      
-      // v24: Solo operar si tiene MTF O Premium/Discount correcto
       if (mtfConfluence || pdCorrect) {
-        let score = 76; // Score base aumentado
+        let score = 76;
         if (pdCorrect) score += 6;
         if (mtfConfluence) score += 8;
-        
-        signals.push({
-          model: 'OB_ENTRY',
-          baseScore: score,
-          pullback,
-          reason: `Order Block ${pullback.side}${pdCorrect ? ' + P/D' : ''}${mtfConfluence ? ' + MTF' : ''}`
-        });
+        signals.push({ model: 'OB_ENTRY', baseScore: score, pullback,
+          reason: `Order Block ${pullback.side}${pdCorrect ? ' + P/D' : ''}${mtfConfluence ? ' + MTF' : ''}` });
       }
     }
+    */
     
     // ═══════════════════════════════════════════════════════════════
     // STRUCTURE_BREAK - DESACTIVADO (No está en los 12 modelos oficiales)
