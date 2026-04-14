@@ -581,7 +581,7 @@ export default function Dashboard({ user, onLogout }) {
                   <div><p className="text-white/70 text-xs font-medium">{a.shortName}</p><p className="text-white/20 text-[9px]">{at} señales</p></div>
                 </div>
                 <div className="text-right">
-                  <p className={`text-sm font-bold font-mono ${wr>=50?'text-emerald-400':'at>0?'text-red-400':'text-white/30'}`}>{at>0?wr+'%':'—'}</p>
+                  <p className={`text-sm font-bold font-mono ${wr>=50?'text-emerald-400':at>0?'text-red-400':'text-white/30'}`}>{at>0?wr+'%':'—'}</p>
                   <p className="text-white/20 text-[9px]">{aw}W · {at-aw}L</p>
                 </div>
               </div>
