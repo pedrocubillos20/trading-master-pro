@@ -185,7 +185,7 @@ const LearningSystem = {
 // =============================================
 const SIGNAL_CONFIG = {
   // Score mínimo para generar señal
-  MIN_SCORE: 78, // Ajustado para alta calidad SMC
+  MIN_SCORE: 82, // v17.0: Alta calidad — solo señales fuertes
   
   // Score mínimo específico para Boom/Crash (más estricto)
   MIN_SCORE_BOOM_CRASH: 80, // v24: Ajustado
@@ -889,6 +889,8 @@ function resubscribeToAsset(symbol) {
   }));
   
   requestH1(symbol);
+  requestM15(symbol);
+  requestM1(symbol);
   derivWs.send(JSON.stringify({ ticks: symbol, subscribe: 1 }));
 }
 
@@ -931,8 +933,10 @@ function startMarketMonitoring() {
 const assetData = {};
 for (const symbol of MY_ASSETS) {
   assetData[symbol] = {
-    candles: [],
-    candlesH1: [],
+    candles: [],       // M5
+    candlesH1: [],     // H1 — tendencia mayor
+    candlesM15: [],    // M15 — tendencia intermedia (NUEVA)
+    candlesM1: [],     // M1 — entrada precisa (NUEVA)
     price: null,
     signal: null,
     lockedSignal: null,
@@ -947,11 +951,13 @@ for (const symbol of MY_ASSETS) {
     bos: null,
     orderFlow: { momentum: 'NEUTRAL', strength: 0 },
     structureH1: { trend: 'LOADING', strength: 0 },
+    structureM15: { trend: 'LOADING', strength: 0 },
     demandZonesH1: [],
     supplyZonesH1: [],
     premiumDiscount: 'EQUILIBRIUM',
     h1Loaded: false,
-    // Campos nuevos v13.2 para control de cooldowns
+    m15Loaded: false,
+    m1Loaded: false,
     lastSignalClosed: 0,
     lastSignalTime: 0,
     mtfConfluence: false
@@ -2127,7 +2133,144 @@ const SMC = {
     return null;
   },
 
-  analyze(candlesM5, candlesH1, config, state) {
+  // ═══════════════════════════════════════════════════════════════
+  // ANÁLISIS M1_PRECISION
+  // Lógica: H1 define tendencia → M15 define zona de interés → M1 da entrada
+  // Requiere triple confluencia + confirmación de vela en M1
+  // ═══════════════════════════════════════════════════════════════
+  analyzeM1Precision(candlesM1, candlesM15, candlesH1, structureH1, structureM15, structureM5, config, avgRange, premiumDiscount) {
+    if (!candlesM1 || candlesM1.length < 20) return null;
+    if (structureH1.trend === 'LOADING' || structureH1.trend === 'NEUTRAL') return null;
+    if (structureM15.trend === 'LOADING' || structureM15.trend === 'NEUTRAL') return null;
+
+    // ── FILTRO 1: Triple confluencia H1 = M15 = M5 ──
+    const tripleAlign = structureH1.trend === structureM15.trend && structureM15.trend === structureM5.trend;
+    if (!tripleAlign) return null;
+
+    const direction = structureH1.trend; // 'BULLISH' o 'BEARISH'
+    const isBuy = direction === 'BULLISH';
+
+    // ── FILTRO 2: Premium/Discount correcto en H1 ──
+    // Compras en zonas Discount, ventas en Premium
+    const pdOk = (isBuy && premiumDiscount === 'DISCOUNT') || (!isBuy && premiumDiscount === 'PREMIUM') || premiumDiscount === 'EQUILIBRIUM';
+    if (!pdOk) return null;
+
+    // ── ANÁLISIS M15: Encontrar zona de interés ──
+    const { demandZones: demM15, supplyZones: supM15 } = this.findZones(candlesM15);
+    const avgM15 = this.getAvgRange(candlesM15);
+    const zonesM15 = isBuy ? demM15 : supM15;
+    if (zonesM15.length === 0) return null;
+
+    // ── ANÁLISIS M1: Confirmación de entrada precisa ──
+    const m1 = candlesM1;
+    const lastM1 = m1[m1.length - 1];
+    const prevM1 = m1[m1.length - 2];
+    const prev2M1 = m1[m1.length - 3];
+    if (!lastM1 || !prevM1 || !prev2M1) return null;
+
+    const price = lastM1.close;
+    const avgM1 = this.getAvgRange(m1.slice(-30));
+
+    // ── PATRÓN M1: CHoCH o Order Block en M1 ──
+    // Para LONG: necesitamos vela roja seguida de verde que la envuelva (micro OB)
+    // Para SHORT: vela verde seguida de roja envolvente
+    const m1BullEngulf = isBuy &&
+      prev2M1.close < prev2M1.open &&  // vela roja (base OB)
+      prevM1.close > prevM1.open &&    // vela verde
+      prevM1.close > prev2M1.open &&   // envuelve
+      prevM1.open <= prev2M1.close;
+
+    const m1BearEngulf = !isBuy &&
+      prev2M1.close > prev2M1.open &&  // vela verde (base OB)
+      prevM1.close < prevM1.open &&    // vela roja
+      prevM1.close < prev2M1.open &&   // envuelve
+      prevM1.open >= prev2M1.close;
+
+    // Rechazo de mecha en M1 (pin bar)
+    const m1BullWick = isBuy &&
+      (lastM1.low < Math.min(lastM1.open, lastM1.close) - avgM1 * 0.5) && // mecha larga abajo
+      lastM1.close > lastM1.open &&  // vela alcista
+      lastM1.close > (lastM1.high + lastM1.low) / 2;
+
+    const m1BearWick = !isBuy &&
+      (lastM1.high > Math.max(lastM1.open, lastM1.close) + avgM1 * 0.5) && // mecha larga arriba
+      lastM1.close < lastM1.open &&  // vela bajista
+      lastM1.close < (lastM1.high + lastM1.low) / 2;
+
+    // CHoCH en M1: dos mínimos/máximos consecutivos rompen la estructura local
+    const swingsM1 = this.findSwings(m1.slice(-20), 1);
+    const m1Choch = this.detectCHoCH(m1.slice(-20), swingsM1);
+    const m1ChochOk = m1Choch && (
+      (isBuy && m1Choch.side === 'BUY') ||
+      (!isBuy && m1Choch.side === 'SELL')
+    );
+
+    const hasM1Confirmation = m1BullEngulf || m1BearEngulf || m1BullWick || m1BearWick || m1ChochOk;
+    if (!hasM1Confirmation) return null;
+
+    // ── VERIFICAR que el precio está en/cerca de zona M15 ──
+    const nearZone = zonesM15.some(z => {
+      const zoneRange = z.high - z.low;
+      const buffer = zoneRange * 0.5 + avgM15 * 1.0;
+      return price >= z.low - buffer && price <= z.high + buffer;
+    });
+    if (!nearZone) return null;
+
+    // ── CALCULAR NIVELES ──
+    // Entry: precio actual
+    // SL: basado en la estructura M1 reciente
+    const recentLows  = m1.slice(-10).map(c => c.low);
+    const recentHighs = m1.slice(-10).map(c => c.high);
+    const structLow   = Math.min(...recentLows);
+    const structHigh  = Math.max(...recentHighs);
+
+    let entry, stop, risk;
+    if (isBuy) {
+      entry = price;
+      stop  = structLow - avgM1 * 0.3;
+      risk  = entry - stop;
+    } else {
+      entry = price;
+      stop  = structHigh + avgM1 * 0.3;
+      risk  = stop - entry;
+    }
+
+    if (risk <= 0 || risk > avgM1 * 8) return null; // Riesgo inválido
+
+    // ── SCORE ──
+    let score = 82; // Base alta porque requiere triple confluencia
+    if (structureH1.strength > 70) score += 5;
+    if (structureM15.strength > 70) score += 4;
+    if (m1ChochOk) score += 5;                       // CHoCH en M1 = confirmación fuerte
+    if (m1BullEngulf || m1BearEngulf) score += 4;    // Engulfing en M1
+    if (premiumDiscount !== 'EQUILIBRIUM') score += 3; // P/D correcto
+    if (m1BullWick || m1BearWick) score += 3;        // Pin bar en M1
+
+    score = Math.min(score, 97);
+
+    const confDetail = [
+      m1ChochOk ? 'CHoCH_M1' : null,
+      m1BullEngulf || m1BearEngulf ? 'OB_M1' : null,
+      m1BullWick || m1BearWick ? 'WICK_M1' : null,
+    ].filter(Boolean).join('+');
+
+    return {
+      model: 'M1_PRECISION',
+      baseScore: score,
+      pullback: {
+        side: isBuy ? 'BUY' : 'SELL',
+        entry: +entry.toFixed(config.decimals),
+        stop:  +stop.toFixed(config.decimals),
+        tp1:   isBuy ? +(entry + risk * 1.5).toFixed(config.decimals) : +(entry - risk * 1.5).toFixed(config.decimals),
+        tp2:   isBuy ? +(entry + risk * 2.5).toFixed(config.decimals) : +(entry - risk * 2.5).toFixed(config.decimals),
+        tp3:   isBuy ? +(entry + risk * 4.0).toFixed(config.decimals) : +(entry - risk * 4.0).toFixed(config.decimals),
+        type: 'M1_ENTRY'
+      },
+      reason: `Triple MTF ${direction} | M15 zona | ${confDetail}`
+    };
+  },
+
+  analyze(candlesM5, candlesH1, config, state, candlesM15 = null, candlesM1 = null) {
     if (candlesM5.length < 30) {
       return { action: 'LOADING', score: 0, model: 'LOADING', reason: 'Cargando datos M5...' };
     }
@@ -2217,9 +2360,28 @@ const SMC = {
                           structureH1.trend !== 'NEUTRAL';
     
     state.mtfConfluence = mtfConfluence;
-    
+
+    // ═══════════════════════════════════════════
+    // ANÁLISIS M15 — Tendencia intermedia
+    // ═══════════════════════════════════════════
+    let structureM15 = { trend: 'LOADING', strength: 0 };
+    let m15Loaded = false;
+    if (candlesM15 && candlesM15.length >= 20) {
+      m15Loaded = true;
+      const swingsM15 = this.findSwings(candlesM15, 2);
+      structureM15 = this.analyzeStructure(swingsM15);
+    }
+    state.structureM15 = structureM15;
+    state.m15Loaded = m15Loaded;
+
+    // Triple confluencia: H1 + M15 + M5 en la misma dirección
+    const tripleConfluence = h1Loaded && m15Loaded &&
+      structureH1.trend === structureM15.trend &&
+      structureM15.trend === structureM5.trend &&
+      structureH1.trend !== 'NEUTRAL';
+
     const signals = [];
-    const minScore = 50; // v14.0: Bajado de 60 a 50 para más señales
+    const minScore = 82; // v17.0: Score mínimo alto — calidad sobre cantidad
     
     if (mtfConfluence && pullback) {
       const sideMatch = (structureH1.trend === 'BULLISH' && pullback.side === 'BUY') ||
@@ -2770,9 +2932,23 @@ const SMC = {
           pullback: trapEntry,
           reason: `Trampa ${bos.type}${orderFlow.strength >= 70 ? ' + Flow fuerte' : ''}${pdCorrect ? ' + P/D' : ''}`
         });
+    }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // MODELO M1_PRECISION — Estrategia H1 tendencia · M15 zona · M1 entrada
+    // Triple confluencia requerida. Señales de muy alta calidad.
+    // ═══════════════════════════════════════════════════════════════
+    if (candlesM1 && candlesM1.length >= 20 && m15Loaded && h1Loaded) {
+      const m1Signal = this.analyzeM1Precision(
+        candlesM1, candlesM15 || [], candlesH1, structureH1, structureM15, structureM5,
+        config, avgRange, premiumDiscount
+      );
+      if (m1Signal) {
+        signals.push(m1Signal);
       }
     }
-    
+
     if (signals.length === 0) {
       let reason = 'Esperando setup';
       if (!pullback) reason = 'Sin pullback a zona';
@@ -3790,13 +3966,15 @@ function connectDeriv() {
         }));
         
         requestH1(symbol);
+        requestM15(symbol);
+        requestM1(symbol);
         derivWs.send(JSON.stringify({ ticks: symbol, subscribe: 1 }));
         marketStatus[symbol].lastSubscriptionAttempt = Date.now();
       } else {
         console.log(`   ⏸️ ${ASSETS[symbol].shortName} (${symbol}) - Mercado cerrado`);
       }
     }
-    console.log('\n✅ Suscripciones enviadas - Esperando datos...\n');
+    console.log('\n✅ Suscripciones enviadas (M1 · M5 · M15 · H1) - Esperando datos...\n');
   });
   
   derivWs.on('message', (rawData) => {
@@ -3837,6 +4015,50 @@ function connectDeriv() {
           marketStatus[symbol].isActive = true;
           console.log(`📊 H1 ${ASSETS[symbol]?.shortName}: ${assetData[symbol].candlesH1.length} velas`);
           analyzeAsset(symbol);
+        }
+      }
+
+      // M15 — Tendencia intermedia
+      if (msg.candles && msg.echo_req?.granularity === 900) {
+        const symbol = msg.echo_req.ticks_history;
+        if (assetData[symbol]) {
+          assetData[symbol].candlesM15 = msg.candles.map(c => ({
+            time: c.epoch * 1000,
+            open: +c.open, high: +c.high, low: +c.low, close: +c.close,
+            epoch: c.epoch
+          }));
+          assetData[symbol].m15Loaded = true;
+          console.log(`📊 M15 ${ASSETS[symbol]?.shortName}: ${assetData[symbol].candlesM15.length} velas`);
+          analyzeAsset(symbol);
+        }
+      }
+
+      // M1 — Entrada precisa (histórico inicial)
+      if (msg.candles && msg.echo_req?.granularity === 60) {
+        const symbol = msg.echo_req.ticks_history;
+        if (assetData[symbol]) {
+          assetData[symbol].candlesM1 = msg.candles.map(c => ({
+            time: c.epoch * 1000,
+            open: +c.open, high: +c.high, low: +c.low, close: +c.close,
+            epoch: c.epoch
+          }));
+          assetData[symbol].m1Loaded = true;
+          console.log(`📊 M1 ${ASSETS[symbol]?.shortName}: ${assetData[symbol].candlesM1.length} velas`);
+          analyzeAsset(symbol);
+        }
+      }
+
+      // M1 — Actualización en tiempo real
+      if (msg.ohlc && msg.ohlc.granularity === 60) {
+        const symbol = msg.ohlc.symbol;
+        if (assetData[symbol]) {
+          const nc = { time: msg.ohlc.open_time * 1000, open: +msg.ohlc.open, high: +msg.ohlc.high, low: +msg.ohlc.low, close: +msg.ohlc.close, epoch: msg.ohlc.open_time };
+          const m1 = assetData[symbol].candlesM1;
+          if (m1.length > 0) {
+            if (m1[m1.length-1].time === nc.time) { m1[m1.length-1] = nc; }
+            else if (nc.time > m1[m1.length-1].time) { m1.push(nc); if (m1.length > 200) m1.shift(); analyzeAsset(symbol); }
+          }
+          assetData[symbol].price = nc.close;
         }
       }
       
@@ -3928,6 +4150,33 @@ function requestH1(symbol) {
   }
 }
 
+function requestM15(symbol) {
+  if (derivWs?.readyState === WebSocket.OPEN) {
+    derivWs.send(JSON.stringify({
+      ticks_history: symbol,
+      adjust_start_time: 1,
+      count: 100,
+      end: 'latest',
+      granularity: 900,   // 15 min
+      style: 'candles'
+    }));
+  }
+}
+
+function requestM1(symbol) {
+  if (derivWs?.readyState === WebSocket.OPEN) {
+    derivWs.send(JSON.stringify({
+      ticks_history: symbol,
+      adjust_start_time: 1,
+      count: 120,
+      end: 'latest',
+      granularity: 60,    // 1 min
+      style: 'candles',
+      subscribe: 1        // suscribir para actualizaciones en tiempo real
+    }));
+  }
+}
+
 // =============================================
 // ANÁLISIS DE ACTIVOS v13.2 (con filtros mejorados)
 // =============================================
@@ -3954,7 +4203,7 @@ function analyzeAsset(symbol) {
   // El frontend filtrará según el plan del usuario
   if (!isInTradingHours('elite')) {
     // Fuera de horario - solo analizar, no generar señales
-    const signal = SMC.analyze(data.candles, data.candlesH1, config, data);
+    const signal = SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
     data.signal = signal;
     return;
   }
@@ -3969,7 +4218,7 @@ function analyzeAsset(symbol) {
   
   if (data.lastSignalClosed && 
       now - data.lastSignalClosed < cooldownTime) {
-    const signal = SMC.analyze(data.candles, data.candlesH1, config, data);
+    const signal = SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
     data.signal = signal;
     return;
   }
@@ -3980,13 +4229,13 @@ function analyzeAsset(symbol) {
   const totalPending = signalHistory.filter(s => s.status === 'PENDING').length;
   if (totalPending >= SIGNAL_CONFIG.MAX_PENDING_TOTAL) {
     console.log(`⏸️ [${config.shortName}] Máximo de señales pendientes (${totalPending}/${SIGNAL_CONFIG.MAX_PENDING_TOTAL})`);
-    const signal = SMC.analyze(data.candles, data.candlesH1, config, data);
+    const signal = SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
     data.signal = signal;
     return;
   }
   
   // Ejecutar análisis SMC
-  const signal = SMC.analyze(data.candles, data.candlesH1, config, data);
+  const signal = SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
   data.signal = signal;
   
   // 🔍 LOG SIEMPRE - Ver qué devuelve el análisis
@@ -4229,6 +4478,7 @@ app.get('/api/dashboard/:userId', async (req, res) => {
         lockedSignal: data.lockedSignal,
         structureM5: data.structure?.trend || 'LOADING',
         structureH1: data.structureH1?.trend || 'LOADING',
+        structureM15: data.structureM15?.trend || 'LOADING',
         h1Loaded: data.h1Loaded || false,
         mtfConfluence: data.mtfConfluence || false,
         premiumDiscount: data.premiumDiscount || 'EQUILIBRIUM',
@@ -4314,13 +4564,18 @@ app.get('/api/analyze/:symbol', (req, res) => {
     lockedSignal: data.lockedSignal,
     candles: data.candles.slice(-100),
     candlesH1: data.candlesH1?.slice(-50) || [],
+    candlesM15: data.candlesM15?.slice(-100) || [],
+    candlesM1: data.candlesM1?.slice(-120) || [],
     demandZones: data.demandZones || [],
     supplyZones: data.supplyZones || [],
     demandZonesH1: data.demandZonesH1 || [],
     supplyZonesH1: data.supplyZonesH1 || [],
     structureM5: data.structure?.trend,
     structureH1: data.structureH1?.trend,
+    structureM15: data.structureM15?.trend || 'LOADING',
     h1Loaded: data.h1Loaded,
+    m15Loaded: data.m15Loaded,
+    m1Loaded: data.m1Loaded,
     mtfConfluence: data.mtfConfluence,
     premiumDiscount: data.premiumDiscount
   });
@@ -5190,6 +5445,7 @@ app.listen(PORT, () => {
     if (derivWs?.readyState === WebSocket.OPEN) {
       for (const symbol of MY_ASSETS) {
         requestH1(symbol);
+        requestM15(symbol);
       }
     }
   }, 120000);

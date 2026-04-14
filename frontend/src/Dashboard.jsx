@@ -5,72 +5,6 @@ import PushNotifications from './PushNotifications';
 const API_URL = import.meta.env.VITE_API_URL || 'https://trading-master-pro-production.up.railway.app';
 const ALLOWED_SYMBOLS = ['stpRNG', 'frxXAUUSD', '1HZ100V'];
 
-// ─── ELISA CHAT ───────────────────────────────────────────────────────────────
-const ElisaChat = ({ selectedAsset, isMobile }) => {
-  const [isOpen, setIsOpen] = useState(false);
-  const [messages, setMessages] = useState([]);
-  const [text, setText] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [initialized, setInitialized] = useState(false);
-  const endRef = useRef(null);
-  const inputRef = useRef(null);
-
-  useEffect(() => { if (messages.length) endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages.length]);
-
-  const send = async (msg) => {
-    const m = msg || text.trim(); if (!m || loading) return;
-    setText(''); setMessages(p => [...p, { role: 'user', content: m }]); setLoading(true);
-    try {
-      const r = await fetch(`${API_URL}/api/ai/chat`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ question: m, symbol: selectedAsset || 'stpRNG' }) });
-      const d = await r.json(); setMessages(p => [...p, { role:'assistant', content: d.answer }]);
-    } catch { setMessages(p => [...p, { role:'assistant', content:'❌ Error de conexión.' }]); }
-    setLoading(false);
-  };
-
-  const open = async () => {
-    setIsOpen(true);
-    if (!initialized) {
-      setLoading(true);
-      try { const r = await fetch(`${API_URL}/api/ai/chat`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ question:'hola', symbol: selectedAsset||'stpRNG' }) }); const d = await r.json(); setMessages([{ role:'assistant', content:d.answer }]); }
-      catch { setMessages([{ role:'assistant', content:'¡Hola! 💜 Soy Elisa.' }]); }
-      setLoading(false); setInitialized(true);
-    }
-    setTimeout(() => inputRef.current?.focus(), 300);
-  };
-
-  if (!isOpen) return (
-    <button onClick={open} className="fixed z-[100] bottom-5 right-5 flex items-center gap-2.5 bg-gradient-to-r from-pink-500 to-purple-600 hover:opacity-90 text-white rounded-2xl shadow-2xl px-3 py-2.5 transition-all hover:scale-105">
-      <div className="relative">
-        <img src="/elisa.png" alt="ELISA" className="w-9 h-9 rounded-full object-cover border-2 border-white/30" onError={e=>{e.target.style.display='none';}} />
-        <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-400 rounded-full border-2 border-purple-600 animate-pulse"/>
-      </div>
-      <div><p className="font-bold text-sm leading-none">ELISA</p><p className="text-[10px] text-white/70">IA Expert</p></div>
-    </button>
-  );
-
-  return (
-    <div className={`fixed z-[100] bg-[#0c0c14] rounded-2xl shadow-2xl border border-white/10 flex flex-col ${isMobile ? 'inset-2' : 'bottom-5 right-5 w-[360px] h-[500px]'}`}>
-      <div className="flex items-center justify-between p-3 bg-gradient-to-r from-pink-500 to-purple-600 rounded-t-2xl flex-shrink-0">
-        <div className="flex items-center gap-2"><img src="/elisa.png" className="w-9 h-9 rounded-full border-2 border-white/30" alt="ELISA" onError={e=>{e.target.src='';}} /><div><p className="font-bold text-white text-sm">ELISA</p><p className="text-[10px] text-white/70">IA Trading Expert</p></div></div>
-        <button onClick={()=>setIsOpen(false)} className="w-7 h-7 rounded-lg bg-white/20 hover:bg-white/30 flex items-center justify-center text-white text-sm">✕</button>
-      </div>
-      <div className="flex-1 overflow-y-auto p-3 space-y-2">
-        {messages.map((m,i)=>(
-          <div key={i} className={`flex ${m.role==='user'?'justify-end':'justify-start'}`}>
-            <div className={`max-w-[82%] rounded-xl px-3 py-2 text-sm ${m.role==='user'?'bg-gradient-to-r from-pink-500 to-purple-600 text-white':'bg-white/8 text-white/90'}`}>{m.content}</div>
-          </div>
-        ))}
-        {loading && <div className="flex gap-1 px-3 py-2 bg-white/8 rounded-xl w-fit">{[0,150,300].map(d=><div key={d} className="w-1.5 h-1.5 bg-pink-400 rounded-full animate-bounce" style={{animationDelay:`${d}ms`}}/>)}</div>}
-        <div ref={endRef}/>
-      </div>
-      <div className="p-2.5 border-t border-white/8 flex-shrink-0 flex gap-2">
-        <input ref={inputRef} value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>e.key==='Enter'&&send()} placeholder="Escribe tu pregunta..." className="flex-1 bg-white/6 border border-white/10 rounded-xl px-3 py-2 text-white text-sm placeholder-white/30 focus:outline-none focus:border-pink-500" style={{fontSize:'16px'}}/>
-        <button onClick={()=>send()} className="px-3 py-2 bg-gradient-to-r from-pink-500 to-purple-600 rounded-xl text-white text-sm font-medium">→</button>
-      </div>
-    </div>
-  );
-};
-
 // ─── MINI CHART ───────────────────────────────────────────────────────────────
 const MiniChart = ({ candles, height = 380, signal = null }) => {
   const svgRef = useRef(null);
@@ -218,6 +152,8 @@ export default function Dashboard({ user, onLogout }) {
   const [timeframe, setTimeframe]         = useState('M5');
   const [candles, setCandles]             = useState([]);
   const [candlesH1, setCandlesH1]         = useState([]);
+  const [candlesM15, setCandlesM15]       = useState([]);
+  const [candlesM1, setCandlesM1]         = useState([]);
   const [isMobile, setIsMobile]           = useState(window.innerWidth < 768);
   const [showUserMenu, setShowUserMenu]   = useState(false);
   const [showPricing, setShowPricing]     = useState(false);
@@ -281,6 +217,8 @@ export default function Dashboard({ user, onLogout }) {
         if (!cancelled&&mountedRef.current){
           if (j.candles?.length) setCandles(j.candles);
           if (j.candlesH1?.length) setCandlesH1(j.candlesH1);
+          if (j.candlesM15?.length) setCandlesM15(j.candlesM15);
+          if (j.candlesM1?.length) setCandlesM1(j.candlesM1);
         }
       } catch {}
     };
@@ -302,7 +240,7 @@ export default function Dashboard({ user, onLogout }) {
   const closedSignals  = useMemo(()=>(data?.recentSignals||[]).filter(s=>s.status!=='PENDING'&&ALLOWED_SYMBOLS.includes(s.symbol)),[data?.recentSignals]);
   const filteredAssets = useMemo(()=>(data?.assets||[]).filter(a=>ALLOWED_SYMBOLS.includes(a.symbol)),[data?.assets]);
   const currentAsset   = useMemo(()=>data?.assets?.find(a=>a.symbol===selectedAsset),[data?.assets,selectedAsset]);
-  const currentCandles = timeframe==='H1'?candlesH1:candles;
+  const currentCandles = timeframe==='H1' ? candlesH1 : timeframe==='M15' ? candlesM15 : timeframe==='M1' ? candlesM1 : candles;
   const lockedSignal   = currentAsset?.lockedSignal;
   const isExpired      = subscription?.status==='expired';
 
@@ -435,9 +373,9 @@ export default function Dashboard({ user, onLogout }) {
           </span>
         )}
         <div className="flex bg-white/6 border border-white/10 rounded-lg p-0.5">
-          {['M5','H1'].map(tf=>(
+          {['M1','M5','M15','H1'].map(tf=>(
             <button key={tf} onClick={()=>setTimeframe(tf)}
-              className={`px-3 py-1 text-[11px] font-bold rounded-md transition-all ${timeframe===tf?'bg-emerald-500 text-black shadow-sm':'text-white/40 hover:text-white/70'}`}>{tf}</button>
+              className={`px-2.5 py-1 text-[10px] font-bold rounded-md transition-all ${timeframe===tf?'bg-emerald-500 text-black shadow-sm':'text-white/40 hover:text-white/70'}`}>{tf}</button>
           ))}
         </div>
         <div className="relative">
@@ -497,7 +435,7 @@ export default function Dashboard({ user, onLogout }) {
                   )}
                 </div>
                 <div className="flex gap-1.5 mt-1">
-                  {[{tf:'M5',s:currentAsset?.structureM5},{tf:'H1',s:currentAsset?.structureH1}].map(({tf,s})=>(
+                  {[{tf:'M5',s:currentAsset?.structureM5},{tf:'M15',s:currentAsset?.structureM15},{tf:'H1',s:currentAsset?.structureH1}].map(({tf,s})=>(
                     <span key={tf} className={`text-[9px] px-1.5 py-0.5 rounded font-medium border ${s==='BULLISH'?'bg-emerald-500/10 text-emerald-400 border-emerald-500/20':s==='BEARISH'?'bg-red-500/10 text-red-400 border-red-500/20':'bg-white/5 text-white/30 border-white/8'}`}>
                       {tf}: {s||'…'}
                     </span>
@@ -767,7 +705,6 @@ export default function Dashboard({ user, onLogout }) {
       )}
 
       {showPricing&&<Pricing user={user} subscription={subscription} onClose={()=>setShowPricing(false)}/>}
-      <ElisaChat selectedAsset={selectedAsset} isMobile={isMobile}/>
     </div>
   );
 }
