@@ -2403,13 +2403,17 @@ const SMC = {
     
     if (choch && pullback) {
       if (choch.side === pullback.side) {
-        // v13.2: H1 no debe estar en contra
-        const h1NotAgainst = (choch.side === 'BUY' && structureH1.trend !== 'BEARISH') ||
-                            (choch.side === 'SELL' && structureH1.trend !== 'BULLISH');
+        // H1 y M15 no deben estar en contra de la dirección del trade
+        const h1NotAgainst  = (choch.side === 'BUY'  && structureH1.trend  !== 'BEARISH') ||
+                              (choch.side === 'SELL' && structureH1.trend  !== 'BULLISH');
+        const m15NotAgainst = (choch.side === 'BUY'  && structureM15.trend !== 'BEARISH') ||
+                              (choch.side === 'SELL' && structureM15.trend !== 'BULLISH') ||
+                              structureM15.trend === 'LOADING';
         
-        if (h1NotAgainst) {
+        if (h1NotAgainst && m15NotAgainst) {
           let score = 85;
-          if (mtfConfluence) score += 5; // Bonus si tiene MTF
+          if (mtfConfluence) score += 5;
+          if (structureM15.trend === choch.side === 'BUY' ? 'BULLISH' : 'BEARISH') score += 3;
           
           signals.push({
             model: 'CHOCH_PULLBACK',
@@ -2418,7 +2422,8 @@ const SMC = {
             reason: `${choch.type} + Pullback${mtfConfluence ? ' + MTF' : ''}`
           });
         } else {
-          console.log(`⚠️ [${config.shortName}] CHoCH_PULLBACK bloqueado: H1=${structureH1.trend} en contra de ${choch.side}`);
+          console.log(`⚠️ [${config.shortName}] CHoCH_PULLBACK bloqueado: H1=${structureH1.trend} M15=${structureM15.trend} vs ${choch.side}`);
+        }
         }
       } else {
         console.log(`⚠️ [${config.shortName}] CHoCH=${choch.side} pero Pullback=${pullback.side} (no coinciden)`);
@@ -2841,11 +2846,13 @@ const SMC = {
       
       // Confirmación: vela actual continúa la reversión
       if (brokeHigh && lastCandle.close < prevCandle.close) {
-        // v24: Solo si H1 es BEARISH o NEUTRAL, o si está en PREMIUM
-        const h1Aligned = structureH1.trend === 'BEARISH' || structureH1.trend === 'NEUTRAL';
-        const pdCorrect = premiumDiscount === 'PREMIUM';
+      // SHORT: Solo si H1 NO es BULLISH (H1 BEARISH o NEUTRAL)
+        // El PREMIUM puede ser bonus pero NO puede permitir ir contra H1 fuerte
+        const h1AllowsShort = structureH1.trend !== 'BULLISH';
+        const m15AllowsShort = !structureM15 || structureM15.trend !== 'BULLISH';
+        const pdBonus = premiumDiscount === 'PREMIUM';
         
-        if (h1Aligned || pdCorrect) {
+        if (h1AllowsShort && m15AllowsShort) {
           const lgEntry = {
             side: 'SELL',
             entry: lastCandle.close,
@@ -2854,26 +2861,25 @@ const SMC = {
             tp2: lastCandle.close - avgRange * 3,
             tp3: lastCandle.close - avgRange * 4.5
           };
-          
-          let score = 80; // Score base aumentado
+          let score = 80;
           if (structureH1.trend === 'BEARISH') score += 7;
-          if (pdCorrect) score += 5;
-          
+          if (pdBonus) score += 5;
           signals.push({
             model: 'LIQUIDITY_GRAB',
             baseScore: score,
             pullback: lgEntry,
-            reason: `Grab alcista fallido${structureH1.trend === 'BEARISH' ? ' + H1↓' : ''}${pdCorrect ? ' + PREMIUM' : ''}`
+            reason: `Grab alcista fallido${structureH1.trend === 'BEARISH' ? ' + H1↓' : ''}${pdBonus ? ' + PREMIUM' : ''}`
           });
         }
       }
       
       if (brokeLow && lastCandle.close > prevCandle.close) {
-        // v24: Solo si H1 es BULLISH o NEUTRAL, o si está en DISCOUNT
-        const h1Aligned = structureH1.trend === 'BULLISH' || structureH1.trend === 'NEUTRAL';
-        const pdCorrect = premiumDiscount === 'DISCOUNT';
+      // LONG: Solo si H1 NO es BEARISH (H1 BULLISH o NEUTRAL)
+        const h1AllowsLong = structureH1.trend !== 'BEARISH';
+        const m15AllowsLong = !structureM15 || structureM15.trend !== 'BEARISH';
+        const pdBonusL = premiumDiscount === 'DISCOUNT';
         
-        if (h1Aligned || pdCorrect) {
+        if (h1AllowsLong && m15AllowsLong) {
           const lgEntry = {
             side: 'BUY',
             entry: lastCandle.close,
@@ -2882,16 +2888,14 @@ const SMC = {
             tp2: lastCandle.close + avgRange * 3,
             tp3: lastCandle.close + avgRange * 4.5
           };
-          
-          let score = 80; // Score base aumentado
+          let score = 80;
           if (structureH1.trend === 'BULLISH') score += 7;
-          if (pdCorrect) score += 5;
-          
+          if (pdBonusL) score += 5;
           signals.push({
             model: 'LIQUIDITY_GRAB',
             baseScore: score,
             pullback: lgEntry,
-            reason: `Grab bajista fallido${structureH1.trend === 'BULLISH' ? ' + H1↑' : ''}${pdCorrect ? ' + DISCOUNT' : ''}`
+            reason: `Grab bajista fallido${structureH1.trend === 'BULLISH' ? ' + H1↑' : ''}${pdBonusL ? ' + DISCOUNT' : ''}`
           });
         }
       }

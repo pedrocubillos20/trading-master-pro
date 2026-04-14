@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import Pricing from './Pricing';
 import PushNotifications from './PushNotifications';
+import ModelosGuia from './ModelosGuia';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://trading-master-pro-production.up.railway.app';
 const ALLOWED = ['stpRNG', 'frxXAUUSD', '1HZ100V'];
@@ -285,7 +286,7 @@ export default function Dashboard({ user, onLogout }) {
 
         {/* Nav */}
         <nav className="p-2.5 space-y-0.5 border-b border-white/[0.05] flex-shrink-0">
-          {[{id:'dashboard',icon:'▦',label:'Dashboard'},{id:'signals',icon:'◎',label:'Señales',badge:pending.length},{id:'stats',icon:'◈',label:'Stats'},{id:'history',icon:'≡',label:'Historial'}].map(it=>(
+          {[{id:'dashboard',icon:'▦',label:'Dashboard'},{id:'signals',icon:'◎',label:'Señales',badge:pending.length},{id:'stats',icon:'◈',label:'Stats'},{id:'history',icon:'≡',label:'Historial'},{id:'modelos',icon:'◉',label:'Modelos'}].map(it=>(
             <button key={it.id} onClick={()=>{setSection(it.id);if(isMobile)setSidebar(false);}}
               className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg transition-all text-xs font-medium ${section===it.id?'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20':'text-white/35 hover:text-white/65 hover:bg-white/5 border border-transparent'}`}>
               <span className="w-4 text-center text-sm leading-none">{it.icon}</span>
@@ -672,6 +673,7 @@ export default function Dashboard({ user, onLogout }) {
           {section==='signals'   && <SigsSection/>}
           {section==='stats'     && <StatsSection/>}
           {section==='history'   && <HistSection/>}
+          {section==='modelos'   && <ModelosGuia/>}
           {section==='download'  && (
             <div className="space-y-3">
               <div className="bg-[#0c0c18] rounded-xl border border-white/[0.05] p-8 text-center">
