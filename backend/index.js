@@ -2413,7 +2413,10 @@ const SMC = {
         if (h1NotAgainst && m15NotAgainst) {
           let score = 85;
           if (mtfConfluence) score += 5;
-          if (structureM15.trend === choch.side === 'BUY' ? 'BULLISH' : 'BEARISH') score += 3;
+          // Bonus si M15 también apoya la dirección
+          const m15Aligned = (choch.side === 'BUY' && structureM15.trend === 'BULLISH') ||
+                             (choch.side === 'SELL' && structureM15.trend === 'BEARISH');
+          if (m15Aligned) score += 3;
           
           signals.push({
             model: 'CHOCH_PULLBACK',
