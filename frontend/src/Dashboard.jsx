@@ -432,6 +432,37 @@ export default function Dashboard({ user, onLogout }) {
         <Chart candles={currentCandles} height={isMobile?240:420} signal={signal}/>
       </div>
 
+      {/* ── STRUCTURE ALERT BANNER ── */}
+      {signal?.structureAlert&&(
+        <div className={`rounded-xl p-3.5 border flex items-start gap-3 ${signal.structureAlert.level==='CRITICAL'?'bg-red-500/10 border-red-500/40':'bg-amber-500/10 border-amber-500/30'}`}>
+          <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 text-lg ${signal.structureAlert.level==='CRITICAL'?'bg-red-500/20':'bg-amber-500/20'}`}>
+            {signal.structureAlert.level==='CRITICAL'?'🚨':'⚠️'}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-1">
+              <span className={`text-xs font-bold ${signal.structureAlert.level==='CRITICAL'?'text-red-400':'text-amber-400'}`}>
+                {signal.structureAlert.level==='CRITICAL'?'CIERRE RECOMENDADO':'VIGILAR POSICIÓN'}
+              </span>
+              <span className="text-white/20 text-[9px]">hace {Math.round((Date.now()-signal.structureAlert.ts)/60000)} min</span>
+            </div>
+            <p className={`text-xs leading-relaxed ${signal.structureAlert.level==='CRITICAL'?'text-red-300':'text-amber-300'}`}>
+              {signal.structureAlert.msg}
+            </p>
+            <div className="flex gap-3 mt-1.5">
+              <span className="text-[9px] text-white/30">M5: <span className={signal.structureAlert.m5==='BULLISH'?'text-emerald-400':signal.structureAlert.m5==='BEARISH'?'text-red-400':'text-white/40'}>{signal.structureAlert.m5||'…'}</span></span>
+              <span className="text-[9px] text-white/30">M15: <span className={signal.structureAlert.m15==='BULLISH'?'text-emerald-400':signal.structureAlert.m15==='BEARISH'?'text-red-400':'text-white/40'}>{signal.structureAlert.m15||'…'}</span></span>
+              {signal.structureAlert.lossUsed>0&&<span className="text-[9px] text-white/30">SL usado: <span className="text-red-400">{signal.structureAlert.lossUsed}%</span></span>}
+            </div>
+          </div>
+          {signal.structureAlert.level==='CRITICAL'&&(
+            <button onClick={()=>markSignal(signal.id,'LOSS')}
+              className="flex-shrink-0 px-3 py-1.5 bg-red-500/20 hover:bg-red-500/35 text-red-400 text-xs font-bold rounded-lg transition-all border border-red-500/30 active:scale-95">
+              Cerrar
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Active signal panel */}
       {signal&&(
         <div className={`rounded-xl overflow-hidden border ${isLong?'border-emerald-500/20':'border-red-500/20'}`}>

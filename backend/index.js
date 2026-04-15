@@ -3753,31 +3753,72 @@ function checkSignalHits() {
     const config = ASSETS[symbol];
     
     // ═══════════════════════════════════════════
-    // DETECCIÓN DE CAMBIO DE DIRECCIÓN
+    // DETECCIÓN DE CAMBIO DE ESTRUCTURA M5 + M15
+    // Si M5 o M15 cambian contra la posición → alerta inmediata
+    // Si AMBOS cambian → alerta crítica de cierre urgente
     // ═══════════════════════════════════════════
-    if (data.structure && !signal.directionAlertSent) {
-      const currentTrend = data.structure.trend;
-      const signalDirection = isLong ? 'BULLISH' : 'BEARISH';
-      
-      // Si la estructura cambió en contra de nuestra posición
-      if ((isLong && currentTrend === 'BEARISH') || (!isLong && currentTrend === 'BULLISH')) {
-        // Calcular % de pérdida actual
-        const entryPrice = signal.entry;
-        const lossPercent = isLong 
-          ? ((entryPrice - price) / entryPrice * 100).toFixed(2)
-          : ((price - entryPrice) / entryPrice * 100).toFixed(2);
-        
-        // Si la pérdida es menor al 50% del SL, alertar para cerrar
-        const slDistance = Math.abs(signal.entry - signal.originalStop || signal.stop);
-        const currentDistance = Math.abs(signal.entry - price);
-        
-        if (currentDistance < slDistance * 0.7 && currentDistance > slDistance * 0.3) {
-          const recommendation = `Cerrar ahora con ${lossPercent}% de pérdida en lugar de esperar al SL`;
-          sendTelegramDirectionChange(signal, price, recommendation);
-          signal.directionAlertSent = true;
-          console.log(`⚠️ Alerta cambio dirección #${signal.id}: ${currentTrend} vs ${signalDirection}`);
-        }
-      }
+    const trendM5  = data.structure?.trend;
+    const trendM15 = data.structureM15?.trend;
+    const oppositeDir = isLong ? 'BEARISH' : 'BULLISH';
+
+    const m5Against  = trendM5  === oppositeDir;
+    const m15Against = trendM15 === oppositeDir;
+    const bothAgainst = m5Against && m15Against;
+    const oneAgainst  = m5Against || m15Against;
+
+    // Calcular distancia al SL y posición actual
+    const slLevel      = signal.stop;
+    const slDistance   = Math.abs(signal.entry - slLevel);
+    const currentDist  = isLong ? signal.entry - price : price - signal.entry;
+    const pnlPct       = (currentDist / signal.entry * 100).toFixed(2);
+    const isInLoss     = currentDist > 0;
+    const lossUsed     = slDistance > 0 ? (currentDist / slDistance * 100).toFixed(0) : 0;
+
+    // --- ALERTA CRÍTICA: ambos timeframes en contra ---
+    if (bothAgainst && !signal.criticalAlertSent) {
+      signal.criticalAlertSent = true;
+      signal.structureAlert = {
+        level: 'CRITICAL',
+        msg: `⛔ M5 + M15 ambos en ${oppositeDir} — Cierre recomendado`,
+        m5: trendM5, m15: trendM15,
+        pnlPct, lossUsed,
+        ts: Date.now()
+      };
+      // Reflejar en lockedSignal para el frontend
+      if (data.lockedSignal) data.lockedSignal.structureAlert = signal.structureAlert;
+
+      const rec = isInLoss
+        ? `🚨 Cerrar ahora: evitas usar ${lossUsed}% del SL restante`
+        : `💡 Estás en ganancia (${Math.abs(pnlPct)}%) — considera asegurar parcial`;
+      sendTelegramDirectionChange(signal, price,
+        `🔴 CRÍTICO: M5 Y M15 cambiaron a ${oppositeDir}\n${rec}`);
+      console.log(`🚨 [${config.shortName}] ALERTA CRÍTICA #${signal.id}: M5+M15 vs ${signal.action}`);
+    }
+    // --- ALERTA MODERADA: solo un timeframe en contra ---
+    else if (oneAgainst && !bothAgainst && !signal.moderateAlertSent && !signal.criticalAlertSent) {
+      const whichTf = m5Against ? 'M5' : 'M15';
+      signal.moderateAlertSent = true;
+      signal.structureAlert = {
+        level: 'WARNING',
+        msg: `⚠️ ${whichTf} cambió a ${oppositeDir} — Mantener vigilancia`,
+        m5: trendM5, m15: trendM15,
+        pnlPct, lossUsed,
+        ts: Date.now()
+      };
+      if (data.lockedSignal) data.lockedSignal.structureAlert = signal.structureAlert;
+
+      sendTelegramDirectionChange(signal, price,
+        `⚠️ ${whichTf} cambió a ${oppositeDir}. Vigilar cierre si M15 también confirma.`);
+      console.log(`⚠️ [${config.shortName}] Alerta moderada #${signal.id}: ${whichTf} vs ${signal.action}`);
+    }
+    // --- Resetear alertas si la estructura vuelve a alinearse ---
+    else if (!oneAgainst && (signal.moderateAlertSent || signal.criticalAlertSent)) {
+      signal.moderateAlertSent = false;
+      signal.criticalAlertSent = false;
+      signal.directionAlertSent = false;
+      signal.structureAlert = null;
+      if (data.lockedSignal) data.lockedSignal.structureAlert = null;
+      console.log(`✅ [${config.shortName}] Estructura recuperada — alertas reseteadas #${signal.id}`);
     }
     
     // ═══════════════════════════════════════════
@@ -4324,6 +4365,11 @@ function analyzeAsset(symbol) {
     status: 'PENDING',
     timestamp: new Date().toISOString(),
     reason: signal.reason,
+    // Alertas de estructura
+    structureAlert: null,
+    moderateAlertSent: false,
+    criticalAlertSent: false,
+    directionAlertSent: false,
     // Campos de contexto v13.2
     mtfConfluence: data.mtfConfluence,
     structureH1: data.structureH1?.trend,
