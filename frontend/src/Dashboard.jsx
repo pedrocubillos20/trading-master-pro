@@ -481,19 +481,56 @@ export default function Dashboard({ user, onLogout }) {
             </div>
           </div>
 
-          {/* Levels */}
-          <div className="grid grid-cols-5 bg-[#0c0c18]">
-            {[{l:'Entry',v:signal.entry,bg:'bg-white/4',tc:'text-white',bc:'border-white/8'},
-              {l:'TP1',  v:signal.tp1||signal.take_profit_1,   bg:'bg-emerald-500/7',  tc:'text-emerald-400',bc:'border-emerald-500/15'},
-              {l:'TP2',  v:signal.tp2||signal.take_profit_2,   bg:'bg-emerald-500/10', tc:'text-emerald-400',bc:'border-emerald-500/20'},
-              {l:'TP3',  v:signal.tp3||signal.take_profit_3,   bg:'bg-emerald-500/13', tc:'text-emerald-400',bc:'border-emerald-500/25'},
-              {l:'SL',   v:signal.stop||signal.stop_loss,      bg:'bg-red-500/7',      tc:'text-red-400',    bc:'border-red-500/15'},
-            ].map((it,i)=>(
-              <div key={i} className={`${it.bg} border-r last:border-r-0 ${it.bc} p-3 text-center`}>
-                <p className={`text-[8px] uppercase tracking-widest mb-1.5 ${it.tc} opacity-50`}>{it.l}</p>
-                <p className={`text-xs font-bold font-mono ${it.tc}`}>{(+(it.v||0)).toFixed(asset?.decimals||2)}</p>
-              </div>
-            ))}
+          {/* Levels + Copy */}
+          <div className="bg-[#0c0c18]">
+            {/* Copy all button */}
+            <div className="flex justify-end px-3 pt-2">
+              <button onClick={()=>{
+                const dec = asset?.decimals||2;
+                const txt = [
+                  `📊 ${asset?.name} ${signal.action} ${signal.score}%`,
+                  `▶ Entry: ${(+(signal.entry||0)).toFixed(dec)}`,
+                  `✅ TP1:   ${(+(signal.tp1||signal.take_profit_1||0)).toFixed(dec)}`,
+                  `✅ TP2:   ${(+(signal.tp2||signal.take_profit_2||0)).toFixed(dec)}`,
+                  `✅ TP3:   ${(+(signal.tp3||signal.take_profit_3||0)).toFixed(dec)}`,
+                  `🛑 SL:    ${(+(signal.stop||signal.stop_loss||0)).toFixed(dec)}`,
+                ].join('\n');
+                navigator.clipboard.writeText(txt).catch(()=>{});
+                const el = document.getElementById('copy-all-btn');
+                if(el){el.textContent='✓ Copiado';setTimeout(()=>{el.textContent='⎘ Copiar todo';},2000);}
+              }}
+                id="copy-all-btn"
+                className="text-[9px] text-white/25 hover:text-white/60 px-2 py-1 bg-white/4 hover:bg-white/8 rounded-md transition-all flex items-center gap-1">
+                ⎘ Copiar todo
+              </button>
+            </div>
+
+            <div className="grid grid-cols-5">
+              {[{l:'Entry',v:signal.entry,                          bg:'bg-white/4',        tc:'text-white',     bc:'border-white/8'},
+                {l:'TP1',  v:signal.tp1||signal.take_profit_1,      bg:'bg-emerald-500/7',  tc:'text-emerald-400',bc:'border-emerald-500/15'},
+                {l:'TP2',  v:signal.tp2||signal.take_profit_2,      bg:'bg-emerald-500/10', tc:'text-emerald-400',bc:'border-emerald-500/20'},
+                {l:'TP3',  v:signal.tp3||signal.take_profit_3,      bg:'bg-emerald-500/13', tc:'text-emerald-400',bc:'border-emerald-500/25'},
+                {l:'SL',   v:signal.stop||signal.stop_loss,         bg:'bg-red-500/7',      tc:'text-red-400',   bc:'border-red-500/15'},
+              ].map((it,i)=>{
+                const val = (+(it.v||0)).toFixed(asset?.decimals||2);
+                const [copied, setCopied] = React.useState(false);
+                const copy = ()=>{
+                  navigator.clipboard.writeText(val).catch(()=>{});
+                  setCopied(true); setTimeout(()=>setCopied(false), 1800);
+                };
+                return (
+                  <div key={i} className={`${it.bg} border-r last:border-r-0 ${it.bc} p-2.5 pb-3 text-center relative group cursor-pointer`} onClick={copy}>
+                    <p className={`text-[8px] uppercase tracking-widest mb-1.5 ${it.tc} opacity-50`}>{it.l}</p>
+                    <p className={`text-xs font-bold font-mono ${it.tc}`}>{val}</p>
+                    <div className={`absolute inset-0 flex items-center justify-center rounded transition-all ${copied?'opacity-100':'opacity-0 group-hover:opacity-100'}`}>
+                      <span className={`text-[9px] font-bold px-2 py-1 rounded-md ${copied?'bg-emerald-500 text-black':'bg-black/60 text-white/60'}`}>
+                        {copied?'✓':'⎘'}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
           {/* Win/Loss */}

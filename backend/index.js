@@ -2381,54 +2381,87 @@ const SMC = {
       structureH1.trend !== 'NEUTRAL';
 
     const signals = [];
-    const minScore = 82; // v17.0: Score mínimo alto — calidad sobre cantidad
+    const minScore = 86; // v18.0: Solo señales con muy alta probabilidad
+
+    // ── FILTRO GLOBAL: H1 y M15 deben estar alineados para cualquier señal ──
+    // Si H1 y M15 no están en la misma dirección → no operar
+    const h1m15Aligned = h1Loaded && m15Loaded &&
+      structureH1.trend === structureM15.trend &&
+      structureH1.trend !== 'NEUTRAL' &&
+      structureH1.trend !== 'LOADING';
+
+    // ── FILTRO GLOBAL: necesitamos también confirmación de fuerza ──
+    const h1Strong  = structureH1.strength  >= 55;
+    const m15Strong = structureM15.strength >= 45;
+    const marketReady = h1m15Aligned && h1Strong;
+
+    if (!marketReady) {
+      // Mercado no está claro: H1 y M15 no alineados → solo WAIT
+      return {
+        action: 'WAIT',
+        score: 0,
+        model: 'WAIT',
+        reason: `Esperando alineación H1(${structureH1.trend})+M15(${structureM15.trend})`,
+        analysis: {
+          structureM5: structureM5.trend,
+          structureH1: structureH1.trend,
+          structureM15: structureM15.trend,
+          mtfConfluence,
+          premiumDiscount,
+          orderFlow: orderFlow.momentum
+        }
+      };
+    }
+
+    // La dirección operativa está definida por H1 (tendencia mayor)
+    const opDir = structureH1.trend; // 'BULLISH' o 'BEARISH'
     
     if (mtfConfluence && pullback) {
-      const sideMatch = (structureH1.trend === 'BULLISH' && pullback.side === 'BUY') ||
-                        (structureH1.trend === 'BEARISH' && pullback.side === 'SELL');
-      
-      let pdBonus = 0;
-      if (pullback.side === 'BUY' && premiumDiscount === 'DISCOUNT') pdBonus = 5;
-      if (pullback.side === 'SELL' && premiumDiscount === 'PREMIUM') pdBonus = 5;
-      
+      // pullback.side debe coincidir con la dirección operativa H1+M15
+      const sideMatch = pullback.side === (opDir === 'BULLISH' ? 'BUY' : 'SELL');
+
       if (sideMatch) {
+        let score = 92; // Base más alta — ya pasó el filtro H1+M15
+        // Bonificaciones por escenarios adicionales confirmados
+        if (pullback.side === 'BUY'  && premiumDiscount === 'DISCOUNT') score += 4; // P/D correcto
+        if (pullback.side === 'SELL' && premiumDiscount === 'PREMIUM')  score += 4;
+        if (m15Strong) score += 3;           // M15 con fuerza estructural
+        if (tripleConfluence) score += 3;    // M5 también alineado
+        if (choch) score += 2;               // CHoCH adicional como confirmación
+        score = Math.min(score, 100);
+
         signals.push({
           model: 'MTF_CONFLUENCE',
-          baseScore: 95 + pdBonus,
+          baseScore: score,
           pullback,
-          reason: `H1+M5 ${structureH1.trend} + Pullback${pdBonus ? ' + ' + premiumDiscount : ''}`
+          reason: `H1+M15+M5 ${opDir} + OB ${pullback.confirmation||''} ${premiumDiscount !== 'EQUILIBRIUM' ? '+ '+premiumDiscount : ''}`
         });
       }
     }
     
     if (choch && pullback) {
-      if (choch.side === pullback.side) {
-        // H1 y M15 no deben estar en contra de la dirección del trade
-        const h1NotAgainst  = (choch.side === 'BUY'  && structureH1.trend  !== 'BEARISH') ||
-                              (choch.side === 'SELL' && structureH1.trend  !== 'BULLISH');
-        const m15NotAgainst = (choch.side === 'BUY'  && structureM15.trend !== 'BEARISH') ||
-                              (choch.side === 'SELL' && structureM15.trend !== 'BULLISH') ||
-                              structureM15.trend === 'LOADING';
-        
-        if (h1NotAgainst && m15NotAgainst) {
-          let score = 85;
-          if (mtfConfluence) score += 5;
-          // Bonus si M15 también apoya la dirección
-          const m15Aligned = (choch.side === 'BUY' && structureM15.trend === 'BULLISH') ||
-                             (choch.side === 'SELL' && structureM15.trend === 'BEARISH');
-          if (m15Aligned) score += 3;
-          
-          signals.push({
-            model: 'CHOCH_PULLBACK',
-            baseScore: score,
-            pullback,
-            reason: `${choch.type} + Pullback${mtfConfluence ? ' + MTF' : ''}`
-          });
-        } else {
-          console.log(`⚠️ [${config.shortName}] CHoCH_PULLBACK bloqueado: H1=${structureH1.trend} M15=${structureM15.trend} vs ${choch.side}`);
-        }
+      const chochDir = choch.side === 'BUY' ? 'BULLISH' : 'BEARISH';
+      // CHoCH debe ir EN la misma dirección operativa H1+M15
+      if (choch.side === pullback.side && chochDir === opDir) {
+        let score = 86;
+        if (mtfConfluence)  score += 5;
+        if (tripleConfluence) score += 4;
+        const m15Aligned = (choch.side === 'BUY'  && structureM15.trend === 'BULLISH') ||
+                           (choch.side === 'SELL' && structureM15.trend === 'BEARISH');
+        if (m15Aligned && m15Strong) score += 3;
+        if (pullback.confirmation === 'ENGULFING') score += 3;
+        score = Math.min(score, 98);
+
+        signals.push({
+          model: 'CHOCH_PULLBACK',
+          baseScore: score,
+          pullback,
+          reason: `${choch.type} + OB ${pullback.confirmation||''} + H1/M15 ${opDir}`
+        });
+      } else if (choch.side !== pullback.side) {
+        console.log(`⚠️ [${config.shortName}] CHoCH=${choch.side} ≠ Pullback=${pullback.side}`);
       } else {
-        console.log(`⚠️ [${config.shortName}] CHoCH=${choch.side} pero Pullback=${pullback.side} (no coinciden)`);
+        console.log(`⚠️ [${config.shortName}] CHoCH bloqueado: CHoCH=${chochDir} vs opDir=${opDir}`);
       }
     }
     
@@ -4386,7 +4419,8 @@ function analyzeAsset(symbol) {
   if (signalHistory.length > 100) signalHistory.pop();
   
   console.log(`💎 SEÑAL #${newSignal.id} | ${config.shortName} | ${signal.action} | ${signal.model} | ${signal.score}%`);
-  console.log(`   MTF: ${data.mtfConfluence ? '✅' : '❌'} | H1: ${data.structureH1?.trend} | PD: ${data.premiumDiscount}`);
+  console.log(`   H1: ${data.structureH1?.trend} | M15: ${data.structureM15?.trend} | M5: ${data.structure?.trend} | PD: ${data.premiumDiscount}`);
+  console.log(`   Escenario: ${signal.reason}`);
   
   // Enviar a Telegram
   sendTelegramSignal(newSignal);
