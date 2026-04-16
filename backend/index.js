@@ -1008,37 +1008,70 @@ const SMC = {
   },
 
   analyzeStructure(swings) {
-    if (swings.length < 4) return { trend: 'NEUTRAL', strength: 0 };
-    
-    const recent = swings.slice(-8);
+    if (swings.length < 4) return { trend: 'NEUTRAL', strength: 0, labels: [] };
+
+    const recent = swings.slice(-10); // más historia
     const highs = recent.filter(s => s.type === 'high');
-    const lows = recent.filter(s => s.type === 'low');
-    
-    if (highs.length < 2 || lows.length < 2) return { trend: 'NEUTRAL', strength: 0 };
-    
+    const lows  = recent.filter(s => s.type === 'low');
+
+    if (highs.length < 2 || lows.length < 2) return { trend: 'NEUTRAL', strength: 0, labels: [] };
+
     let hh = 0, hl = 0, lh = 0, ll = 0;
-    
+    const labels = []; // para visualización en el gráfico
+
+    // Etiquetar highs: HH o LH
     for (let i = 1; i < highs.length; i++) {
-      if (highs[i].price > highs[i-1].price) hh++;
-      else if (highs[i].price < highs[i-1].price) lh++;
+      if (highs[i].price > highs[i-1].price) {
+        hh++;
+        labels.push({ type: 'HH', price: highs[i].price, index: highs[i].index, time: highs[i].time });
+      } else {
+        lh++;
+        labels.push({ type: 'LH', price: highs[i].price, index: highs[i].index, time: highs[i].time });
+      }
     }
-    
+
+    // Etiquetar lows: HL o LL
     for (let i = 1; i < lows.length; i++) {
-      if (lows[i].price > lows[i-1].price) hl++;
-      else if (lows[i].price < lows[i-1].price) ll++;
+      if (lows[i].price > lows[i-1].price) {
+        hl++;
+        labels.push({ type: 'HL', price: lows[i].price, index: lows[i].index, time: lows[i].time });
+      } else {
+        ll++;
+        labels.push({ type: 'LL', price: lows[i].price, index: lows[i].index, time: lows[i].time });
+      }
     }
-    
+
+    // Última etiqueta del primer high/low (referencia inicial)
+    if (highs.length >= 1) labels.push({ type: highs[0].price > (highs[1]?.price||0) ? 'HH' : 'LH', price: highs[0].price, index: highs[0].index, time: highs[0].time, ref: true });
+    if (lows.length >= 1)  labels.push({ type: lows[0].price < (lows[1]?.price||Infinity) ? 'LL' : 'HL', price: lows[0].price, index: lows[0].index, time: lows[0].time, ref: true });
+
     const bullScore = hh + hl;
     const bearScore = lh + ll;
-    
-    if (bullScore >= 2 && bullScore > bearScore) {
-      return { trend: 'BULLISH', strength: Math.min(100, bullScore * 25), hh, hl };
+
+    // Más flexible: mayoría de puntos define la tendencia
+    const total = bullScore + bearScore;
+    if (total === 0) return { trend: 'NEUTRAL', strength: 0, labels };
+
+    const bullPct = bullScore / total;
+    const bearPct = bearScore / total;
+
+    if (bullPct >= 0.55) {
+      return { trend: 'BULLISH', strength: Math.min(100, Math.round(bullPct * 120)), hh, hl, lh, ll, labels };
     }
-    if (bearScore >= 2 && bearScore > bullScore) {
-      return { trend: 'BEARISH', strength: Math.min(100, bearScore * 25), lh, ll };
+    if (bearPct >= 0.55) {
+      return { trend: 'BEARISH', strength: Math.min(100, Math.round(bearPct * 120)), hh, hl, lh, ll, labels };
     }
-    
-    return { trend: 'NEUTRAL', strength: 0 };
+
+    // Empate → mirar las últimas 2 etiquetas
+    const lastLabels = labels.filter(l => !l.ref).slice(-2);
+    if (lastLabels.length === 2) {
+      const lastBull = lastLabels.filter(l => l.type === 'HH' || l.type === 'HL').length;
+      const lastBear = lastLabels.filter(l => l.type === 'LH' || l.type === 'LL').length;
+      if (lastBull > lastBear) return { trend: 'BULLISH', strength: 45, hh, hl, lh, ll, labels };
+      if (lastBear > lastBull) return { trend: 'BEARISH', strength: 45, hh, hl, lh, ll, labels };
+    }
+
+    return { trend: 'NEUTRAL', strength: 25, labels };
   },
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -4317,6 +4350,36 @@ function analyzeAsset(symbol) {
   // Ejecutar análisis SMC
   const signal = SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
   data.signal = signal;
+
+  // ── Calcular pasos de M1_PRECISION para visualización en tiempo real ──
+  // Esto muestra en el gráfico M1 qué condiciones están cumplidas ahora mismo
+  {
+    const tH1  = data.structureH1?.trend;
+    const tM15 = data.structureM15?.trend;
+    const tM5  = data.structure?.trend;
+    const h1ok  = tH1  !== 'NEUTRAL' && tH1  !== 'LOADING';
+    const m15ok = tM15 !== 'NEUTRAL' && tM15 !== 'LOADING' && tM15 === tH1;
+    const m5ok  = tM5  !== 'NEUTRAL' && tM5  !== 'LOADING' && tM5  === tH1;
+    // Zona M15: hay demand/supply zones presentes
+    const zoneok = (data.demandZones?.length > 0 || data.supplyZones?.length > 0);
+    // M1 confirmación: última vela M1 muestra patrón de entrada
+    let m1conf = false;
+    const m1 = data.candlesM1 || [];
+    if (m1.length >= 3) {
+      const last  = m1[m1.length-1];
+      const prev  = m1[m1.length-2];
+      const prev2 = m1[m1.length-3];
+      const isBuy = tH1 === 'BULLISH';
+      const engulfBull = isBuy  && prev2.close < prev2.open && prev.close > prev.open && prev.close > prev2.open;
+      const engulfBear = !isBuy && prev2.close > prev2.open && prev.close < prev.open && prev.close < prev2.open;
+      const avgM1 = SMC.getAvgRange(m1.slice(-20));
+      const wickBull = isBuy  && (last.low < Math.min(last.open,last.close) - avgM1*0.5) && last.close > last.open;
+      const wickBear = !isBuy && (last.high > Math.max(last.open,last.close) + avgM1*0.5) && last.close < last.open;
+      m1conf = engulfBull || engulfBear || wickBull || wickBear;
+    }
+    data.m1Steps = { h1ok, m15ok, m5ok, zoneok, m1conf,
+      direction: tH1, readyCount: [h1ok,m15ok,m5ok,zoneok,m1conf].filter(Boolean).length };
+  }
   
   // 🔍 LOG SIEMPRE - Ver qué devuelve el análisis
   console.log(`🔎 [${config.shortName}] Resultado: ${signal.action} | ${signal.model} | Score: ${signal.score}`);
@@ -4652,13 +4715,22 @@ app.get('/api/analyze/:symbol', (req, res) => {
     candlesH1: data.candlesH1?.slice(-50) || [],
     candlesM15: data.candlesM15?.slice(-100) || [],
     candlesM1: data.candlesM1?.slice(-120) || [],
+    // Zones
     demandZones: data.demandZones || [],
     supplyZones: data.supplyZones || [],
     demandZonesH1: data.demandZonesH1 || [],
     supplyZonesH1: data.supplyZonesH1 || [],
-    structureM5: data.structure?.trend,
-    structureH1: data.structureH1?.trend,
-    structureM15: data.structureM15?.trend || 'LOADING',
+    // Structure with swing labels for visualization
+    structureM5:     data.structure?.trend,
+    structureM5Data: data.structure || {},
+    structureH1:     data.structureH1?.trend,
+    structureH1Data: data.structureH1 || {},
+    structureM15:    data.structureM15?.trend || 'LOADING',
+    structureM15Data: data.structureM15 || {},
+    // Swings for drawing HH/HL/LH/LL
+    swingsM5:  data.swings || [],
+    // M1 precision steps
+    m1Steps: data.m1Steps || null,
     h1Loaded: data.h1Loaded,
     m15Loaded: data.m15Loaded,
     m1Loaded: data.m1Loaded,

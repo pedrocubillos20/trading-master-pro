@@ -6,8 +6,8 @@ import ModelosGuia from './ModelosGuia';
 const API_URL = import.meta.env.VITE_API_URL || 'https://trading-master-pro-production.up.railway.app';
 const ALLOWED = ['stpRNG', 'frxXAUUSD', '1HZ100V'];
 
-// ─── CHART ────────────────────────────────────────────────────────────────────
-const Chart = ({ candles, height, signal }) => {
+// ─── CHART — with OBs, HH/HL/LH/LL labels, M1 steps ─────────────────────────
+const Chart = ({ candles, height, signal, demandZones=[], supplyZones=[], structureData=null, m1Steps=null }) => {
   const svgRef = useRef(null);
   const zoom   = useRef(60);
   const off    = useRef(0);
@@ -30,28 +30,87 @@ const Chart = ({ candles, height, signal }) => {
     const P = { t:14, r:88, b:24, l:6 };
     const CH = H - P.t - P.b, CW = W - P.l - P.r;
 
+    // Price range including signal levels and OB zones
     let hi = Math.max(...vis.map(c=>+c.high));
     let lo = Math.min(...vis.map(c=>+c.low));
     if (signal?.entry) {
       const lvs = [signal.entry,signal.tp1,signal.tp2,signal.tp3,signal.stop].map(v=>+v||0).filter(v=>v>0);
       if (lvs.length) { hi = Math.max(hi,...lvs); lo = Math.min(lo,...lvs); }
     }
+    // Include OB zones in range
+    [...demandZones,...supplyZones].forEach(z=>{ hi=Math.max(hi,z.high||0); lo=Math.min(lo,z.low||Infinity); });
     const mg = (hi-lo)*0.1; hi+=mg; lo-=mg;
     const rng = hi-lo || 0.01;
     const Y = p => P.t + CH*(1-(+p-lo)/rng);
+
+    // Candle index map for label positioning
+    const visStartIndex = Math.max(0, total-z-o);
+    const getX = candleOrigIdx => {
+      const relIdx = candleOrigIdx - visStartIndex;
+      const n = vis.length, cW_ = CW/n;
+      return P.l + relIdx * cW_ + cW_/2;
+    };
 
     const n = vis.length, cW = CW/n, bW = Math.max(1.5, cW*0.62);
 
     let h = `<rect width="${W}" height="${H}" fill="#07080f"/>`;
 
     // Grid
-    for (let i=0;i<=5;i++) {
+    for (let i=0; i<=5; i++) {
       const p = lo+(rng*i)/5, y = Y(p);
-      h += `<line x1="${P.l}" y1="${y|0}" x2="${W-P.r}" y2="${y|0}" stroke="#ffffff05" stroke-width="1"/>`;
+      h += `<line x1="${P.l}" y1="${y|0}" x2="${W-P.r}" y2="${y|0}" stroke="#ffffff04" stroke-width="1"/>`;
       h += `<text x="${W-P.r+4}" y="${(y+3.5)|0}" fill="#1e2d3d" font-size="8" font-family="'Courier New',monospace">${p.toFixed(2)}</text>`;
     }
 
-    // Candles
+    // ── ORDER BLOCKS ──
+    const drawOB = (zones, col, lbl) => zones.slice(-3).forEach(z => {
+      if (!z.high || !z.low) return;
+      const y1 = Y(Math.min(z.high, hi)), y2 = Y(Math.max(z.low, lo));
+      const top = Math.min(y1,y2), hh = Math.max(3, Math.abs(y2-y1));
+      h += `<rect x="${P.l}" y="${top|0}" width="${CW}" height="${hh|0}" fill="${col}" fill-opacity="0.12" rx="1"/>`;
+      h += `<line x1="${P.l}" y1="${Y(z.high)|0}" x2="${W-P.r}" y2="${Y(z.high)|0}" stroke="${col}" stroke-width="1" opacity="0.6"/>`;
+      h += `<line x1="${P.l}" y1="${Y(z.low)|0}"  x2="${W-P.r}" y2="${Y(z.low)|0}"  stroke="${col}" stroke-width="0.7" stroke-dasharray="3,4" opacity="0.4"/>`;
+      const midY = Y((z.high+z.low)/2);
+      h += `<rect x="${P.l+3}" y="${(midY-7)|0}" width="22" height="13" rx="2" fill="${col}" fill-opacity="0.85"/>`;
+      h += `<text x="${P.l+14}" y="${(midY+4)|0}" text-anchor="middle" fill="#000" font-size="7.5" font-weight="700" font-family="'Courier New',monospace">${lbl}</text>`;
+    });
+    drawOB(demandZones, '#22c55e', 'OB+');
+    drawOB(supplyZones, '#ef4444', 'OB-');
+
+    // ── HH/HL/LH/LL STRUCTURE LABELS ──
+    const labels = structureData?.labels || [];
+    labels.filter(lb => !lb.ref).forEach(lb => {
+      const relIdx = lb.index !== undefined ? (lb.index - visStartIndex) : -1;
+      if (relIdx < 0 || relIdx >= vis.length) return;
+      const x = P.l + relIdx * cW + cW/2;
+      const isBull = lb.type === 'HH' || lb.type === 'HL';
+      const col = isBull ? '#22c55e' : '#ef4444';
+      const y = lb.type === 'HH' || lb.type === 'LH' ? Y(lb.price) - 12 : Y(lb.price) + 20;
+      const yClamp = Math.max(P.t+4, Math.min(P.t+CH-4, y));
+      h += `<rect x="${(x-10)|0}" y="${(yClamp-9)|0}" width="20" height="12" rx="2" fill="${col}" fill-opacity="0.9"/>`;
+      h += `<text x="${x|0}" y="${(yClamp)|0}" text-anchor="middle" fill="#000" font-size="7.5" font-weight="800" font-family="monospace">${lb.type}</text>`;
+      // Dot on the candle
+      const dotY = lb.type === 'HH' || lb.type === 'LH' ? Y(lb.price) - 3 : Y(lb.price) + 3;
+      h += `<circle cx="${x|0}" cy="${dotY|0}" r="2" fill="${col}" opacity="0.8"/>`;
+    });
+
+    // ── M1 PRECISION STEPS ──
+    if (m1Steps) {
+      const steps = [
+        { cond: m1Steps.h1ok,    label:'H1✓',  col:'#f59e0b', x: W-P.r-120 },
+        { cond: m1Steps.m15ok,   label:'M15✓', col:'#f59e0b', x: W-P.r-92 },
+        { cond: m1Steps.m5ok,    label:'M5✓',  col:'#f59e0b', x: W-P.r-64 },
+        { cond: m1Steps.zoneok,  label:'Zona✓',col:'#3b82f6', x: W-P.r-36 },
+        { cond: m1Steps.m1conf,  label:'M1✓',  col:'#22c55e', x: W-P.r-8  },
+      ];
+      let stepsH = `<rect x="${W-P.r-126}" y="${P.t+2}" width="120" height="16" rx="4" fill="#0c0c18" fill-opacity="0.85"/>`;
+      steps.forEach(s => {
+        stepsH += `<text x="${s.x}" y="${P.t+13}" text-anchor="end" fill="${s.cond?s.col:'#374151'}" font-size="7.5" font-weight="700" font-family="monospace">${s.label}</text>`;
+      });
+      h += stepsH;
+    }
+
+    // ── CANDLES ──
     vis.forEach((c,i) => {
       const o_=+c.open,cl=+c.close,hi_=+c.high,lo_=+c.low;
       if (!o_||!cl||hi_<lo_) return;
@@ -62,7 +121,7 @@ const Chart = ({ candles, height, signal }) => {
       h += `<rect x="${(x-bW/2)|0}" y="${bTop|0}" width="${bW|0}" height="${bH|0}" fill="${col}"/>`;
     });
 
-    // Signal levels
+    // ── SIGNAL LEVELS ──
     if (signal?.entry) {
       const drawL = (price, col, lbl, lw=1.5, dash='') => {
         if (!price || +price<=0) return;
@@ -84,7 +143,7 @@ const Chart = ({ candles, height, signal }) => {
         : `<polygon points="${P.l+20},${eY+8} ${P.l+8},${eY} ${P.l+20},${eY-8}" fill="#ef4444" opacity="0.95"/>`;
     }
 
-    // Current price
+    // ── CURRENT PRICE ──
     const lc = +vis[vis.length-1]?.close||0;
     if (lc>0) {
       const py = Math.max(P.t+5,Math.min(P.t+CH-5,Y(lc)));
@@ -95,7 +154,7 @@ const Chart = ({ candles, height, signal }) => {
       h += `<text x="${W-P.r+5}" y="${(py+4)|0}" fill="#fff" font-size="7.5" font-weight="700" font-family="'Courier New',monospace">${lc.toFixed(2)}</text>`;
     }
 
-    // Timestamps
+    // ── TIMESTAMPS ──
     const step = Math.max(1,Math.floor(n/6));
     vis.forEach((c,i) => {
       if (i%step!==0&&i!==n-1) return;
@@ -105,7 +164,7 @@ const Chart = ({ candles, height, signal }) => {
     });
 
     svg.innerHTML = h;
-  }, [candles, height, signal]);
+  }, [candles, height, signal, demandZones, supplyZones, structureData, m1Steps]);
 
   useEffect(()=>{ draw(); },[draw]);
   useEffect(()=>{
@@ -138,7 +197,6 @@ const Chart = ({ candles, height, signal }) => {
     </div>
   );
 };
-
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
 export default function Dashboard({ user, onLogout }) {
   const [data, setData]                 = useState(null);
@@ -150,6 +208,10 @@ export default function Dashboard({ user, onLogout }) {
   const [candlesH1, setCandlesH1]       = useState([]);
   const [candlesM15, setCandlesM15]     = useState([]);
   const [candlesM1, setCandlesM1]       = useState([]);
+  const [demandZones, setDemandZones]   = useState([]);
+  const [supplyZones, setSupplyZones]   = useState([]);
+  const [structureData, setStructData]  = useState(null);
+  const [m1Steps, setM1Steps]           = useState(null);
   const [isMobile, setMobile]           = useState(window.innerWidth < 768);
   const [showMenu, setShowMenu]         = useState(false);
   const [showPricing, setShowPricing]   = useState(false);
@@ -214,6 +276,16 @@ export default function Dashboard({ user, onLogout }) {
           if(j.candlesH1?.length)  setCandlesH1(j.candlesH1);
           if(j.candlesM15?.length) setCandlesM15(j.candlesM15);
           if(j.candlesM1?.length)  setCandlesM1(j.candlesM1);
+          // Structure labels and zones for chart visualization
+          if(j.demandZones)  setDemandZones(j.demandZones);
+          if(j.supplyZones)  setSupplyZones(j.supplyZones);
+          // Pick structure data based on current timeframe
+          const sData = tf==='H1'  ? j.structureH1Data :
+                        tf==='M15' ? j.structureM15Data :
+                        tf==='M1'  ? null : j.structureM5Data;
+          setStructData(sData || null);
+          // M1 precision steps
+          if(j.m1Steps) setM1Steps(j.m1Steps);
         }
       } catch {}
     };
@@ -429,7 +501,11 @@ export default function Dashboard({ user, onLogout }) {
         </div>
 
         {/* Chart — tall */}
-        <Chart candles={currentCandles} height={isMobile?240:420} signal={signal}/>
+        <Chart candles={currentCandles} height={isMobile?240:420} signal={signal}
+          demandZones={tf==='H1'?[]:demandZones}
+          supplyZones={tf==='H1'?[]:supplyZones}
+          structureData={structureData}
+          m1Steps={tf==='M1'?m1Steps:null}/>
       </div>
 
       {/* ── STRUCTURE ALERT BANNER ── */}
