@@ -62,20 +62,56 @@ const Chart = ({ candles, height, signal, demandZones=[], supplyZones=[], struct
       h += `<text x="${W-P.r+4}" y="${(y+3.5)|0}" fill="#1e2d3d" font-size="8" font-family="'Courier New',monospace">${p.toFixed(2)}</text>`;
     }
 
-    // ── ORDER BLOCKS ──
-    const drawOB = (zones, col, lbl) => zones.slice(-3).forEach(z => {
-      if (!z.high || !z.low) return;
-      const y1 = Y(Math.min(z.high, hi)), y2 = Y(Math.max(z.low, lo));
-      const top = Math.min(y1,y2), hh = Math.max(3, Math.abs(y2-y1));
-      h += `<rect x="${P.l}" y="${top|0}" width="${CW}" height="${hh|0}" fill="${col}" fill-opacity="0.12" rx="1"/>`;
-      h += `<line x1="${P.l}" y1="${Y(z.high)|0}" x2="${W-P.r}" y2="${Y(z.high)|0}" stroke="${col}" stroke-width="1" opacity="0.6"/>`;
-      h += `<line x1="${P.l}" y1="${Y(z.low)|0}"  x2="${W-P.r}" y2="${Y(z.low)|0}"  stroke="${col}" stroke-width="0.7" stroke-dasharray="3,4" opacity="0.4"/>`;
-      const midY = Y((z.high+z.low)/2);
-      h += `<rect x="${P.l+3}" y="${(midY-7)|0}" width="22" height="13" rx="2" fill="${col}" fill-opacity="0.85"/>`;
-      h += `<text x="${P.l+14}" y="${(midY+4)|0}" text-anchor="middle" fill="#000" font-size="7.5" font-weight="700" font-family="'Courier New',monospace">${lbl}</text>`;
-    });
-    drawOB(demandZones, '#22c55e', 'OB+');
-    drawOB(supplyZones, '#ef4444', 'OB-');
+    // ── ORDER BLOCKS — anchored to their candle, extend to right edge ──
+    const drawOBs = (zones, isBull) => {
+      zones.forEach(z => {
+        if (!z.high || !z.low || z.high <= z.low) return;
+
+        // Map candle index to X position
+        const relIdx = z.index !== undefined ? (z.index - visStartIndex) : -1;
+        if (relIdx < 0 || relIdx >= vis.length) return; // OB candle not in visible range? Still draw from edge
+        const startX = Math.max(P.l, P.l + relIdx * cW);
+
+        const yTop = Math.max(P.t+1, Math.min(P.t+CH-1, Y(z.high)));
+        const yBot = Math.max(P.t+1, Math.min(P.t+CH-1, Y(z.low)));
+        const boxH  = Math.max(4, Math.abs(yBot - yTop));
+
+        const col      = isBull ? '#22c55e' : '#ef4444';
+        const fillOpac = z.mitigated ? '0.05' : z.strength === 'STRONG' ? '0.18' : '0.11';
+        const lineOpac = z.mitigated ? '0.25' : '0.85';
+        const endX     = W - P.r;
+
+        // OB box — from its candle position to right edge
+        h += `<rect x="${startX|0}" y="${yTop|0}" width="${(endX-startX)|0}" height="${boxH|0}" fill="${col}" fill-opacity="${fillOpac}" rx="1"/>`;
+
+        // Top border line (solid — the OB level to watch)
+        h += `<line x1="${startX|0}" y1="${yTop|0}" x2="${endX}" y2="${yTop|0}" stroke="${col}" stroke-width="${z.strength==='STRONG'?1.5:1}" opacity="${lineOpac}"/>`;
+
+        // Bottom border (dashed — the wick level / SL reference)
+        const slY = Y(isBull ? (z.wickLow||z.low) : (z.wickHigh||z.high));
+        h += `<line x1="${startX|0}" y1="${slY|0}" x2="${endX}" y2="${slY|0}" stroke="${col}" stroke-width="0.8" stroke-dasharray="4,4" opacity="${z.mitigated?'0.15':'0.45'}"/>`;
+
+        // Label on the OB candle (left side of the box)
+        const midY = (yTop + yTop + boxH) / 2;
+        const lblText = isBull ? (z.mitigated ? 'OB↑✗' : 'OB↑') : (z.mitigated ? 'OB↓✗' : 'OB↓');
+        const lblW = z.mitigated ? 30 : 22;
+        h += `<rect x="${(startX-1)|0}" y="${(midY-8)|0}" width="${lblW}" height="14" rx="2" fill="${col}" fill-opacity="${z.mitigated?'0.45':'0.9'}"/>`;
+        h += `<text x="${(startX+lblW/2-1)|0}" y="${(midY+4)|0}" text-anchor="middle" fill="${z.mitigated?'#fff':'#000'}" font-size="7" font-weight="700" font-family="monospace">${lblText}</text>`;
+
+        // Pattern label (ENGULFING or IMPULSE)
+        if (!z.mitigated) {
+          h += `<text x="${(startX+3)|0}" y="${(yTop-3)|0}" fill="${col}" font-size="6.5" font-family="monospace" opacity="0.7">${z.pattern||''}</text>`;
+        }
+
+        // Vertical marker on the base OB candle
+        if (relIdx >= 0 && relIdx < vis.length) {
+          const cx = P.l + relIdx * cW + cW/2;
+          h += `<circle cx="${cx|0}" cy="${(isBull?yBot+4:yTop-4)|0}" r="2.5" fill="${col}" opacity="0.8"/>`;
+        }
+      });
+    };
+    drawOBs(demandZones, true);
+    drawOBs(supplyZones, false);
 
     // ── HH/HL/LH/LL STRUCTURE LABELS ──
     const labels = structureData?.labels || [];

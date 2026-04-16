@@ -1752,94 +1752,127 @@ const SMC = {
   findZones(candles) {
     const demandZones = [];
     const supplyZones = [];
-    
+
     if (candles.length < 10) return { demandZones, supplyZones };
-    
+
     const avgRange = this.getAvgRange(candles);
-    
-    for (let i = 2; i < candles.length - 2; i++) {
-      const curr = candles[i];
-      const next1 = candles[i + 1];
-      const next2 = candles[i + 2];
-      
-      const bodySize = Math.abs(curr.close - curr.open);
-      if (bodySize < avgRange * 0.2) continue; // Al menos 20% del rango promedio
-      
-      // ═══════════════════════════════════════════════════════════════
-      // DEMAND ZONE (Order Block para BUY)
-      // Patrón: Vela ROJA + Vela VERDE envolvente + Impulso alcista
-      // El OB es el CUERPO de la vela ROJA (de open a close)
-      // ═══════════════════════════════════════════════════════════════
-      if (curr.close < curr.open) { // Vela ROJA (bajista)
-        const isNext1Bullish = next1.close > next1.open;
-        
-        // Verificar patrón envolvente o impulso fuerte
-        const isEngulfing = isNext1Bullish && 
-                           next1.close > curr.open &&
-                           next1.open <= curr.close;
-        
-        const bullMove = Math.max(next1.close, next2.close) - curr.high;
-        const hasStrongMove = bullMove > avgRange * 0.5;
-        
-        if (isEngulfing || hasStrongMove) {
-          const exists = demandZones.some(z => Math.abs(z.mid - (curr.open + curr.close) / 2) < avgRange * 0.5);
-          if (!exists) {
-            // ✅ El OB es el CUERPO de la vela roja (más preciso)
-            demandZones.push({
-              type: 'DEMAND',
-              high: curr.open,  // Apertura de la vela roja (parte alta del cuerpo)
-              low: curr.close,  // Cierre de la vela roja (parte baja del cuerpo)
-              mid: (curr.open + curr.close) / 2,
-              wickLow: curr.low, // Guardamos la mecha por si se necesita para el SL
-              index: i,
-              strength: isEngulfing ? 'STRONG' : (bullMove > avgRange ? 'STRONG' : 'NORMAL'),
-              pattern: isEngulfing ? 'ENGULFING' : 'IMPULSE',
-              tested: false
-            });
-          }
+    const lastPrice = candles[candles.length - 1].close;
+    const lastIndex = candles.length - 1;
+
+    for (let i = 2; i < candles.length - 3; i++) {
+      const base  = candles[i];       // The OB candle
+      const next1 = candles[i + 1];   // The impulse candle
+      const next2 = candles[i + 2];   // Continuation
+      const bodySize = Math.abs(base.close - base.open);
+      if (bodySize < avgRange * 0.15) continue; // Too small = doji, skip
+
+      // ═════════════════════════════════════════════════════════════
+      // DEMAND ORDER BLOCK (BULLISH OB)
+      // Pattern: RED candle (base OB) → GREEN engulfing OR strong bullish impulse
+      // The OB zone is the BODY of the red candle (open → close)
+      // Price should return to this zone FROM ABOVE to give a BUY entry
+      // ═════════════════════════════════════════════════════════════
+      if (base.close < base.open) { // Red (bearish) base candle
+        const impulseUp    = next1.close > next1.open && next1.close > base.open; // bullish engulf
+        const strongImpulse = (next2.close - base.low) > avgRange * 1.5;         // strong move up
+        if (!impulseUp && !strongImpulse) continue;
+
+        const obHigh = base.open;  // Top of OB body
+        const obLow  = base.close; // Bottom of OB body (= candle close)
+        const obMid  = (obHigh + obLow) / 2;
+
+        // Skip if too close to an existing demand OB
+        if (demandZones.some(z => Math.abs(z.mid - obMid) < avgRange * 0.8)) continue;
+
+        // Check if already MITIGATED: price passed through the bottom of the OB
+        // (price closed below obLow on a later candle after the OB was formed)
+        let mitigated = false;
+        let mitigatedAt = null;
+        for (let j = i + 2; j <= lastIndex; j++) {
+          if (candles[j].close < obLow) { mitigated = true; mitigatedAt = j; break; }
         }
+
+        // Calculate impulse size (how strong the move was after the OB)
+        const impulseEnd = Math.max(...candles.slice(i+1, Math.min(i+8, lastIndex)).map(c=>c.high));
+        const impulseSize = impulseEnd - obHigh;
+
+        demandZones.push({
+          type:         'DEMAND',
+          side:         'BUY',
+          high:         obHigh,
+          low:          obLow,
+          mid:          obMid,
+          wickLow:      base.low,  // For SL positioning
+          index:        i,         // Candle index for X positioning on chart
+          epoch:        base.epoch || base.time, // For time-based X
+          impulseSize,
+          pattern:      impulseUp ? 'ENGULFING' : 'IMPULSE',
+          strength:     impulseUp ? 'STRONG' : (strongImpulse ? 'STRONG' : 'NORMAL'),
+          mitigated,
+          mitigatedAt,
+          tested:       false,
+        });
       }
-      
-      // ═══════════════════════════════════════════════════════════════
-      // SUPPLY ZONE (Order Block para SELL)
-      // Patrón: Vela VERDE + Vela ROJA envolvente + Impulso bajista
-      // El OB es el CUERPO de la vela VERDE (de close a open)
-      // ═══════════════════════════════════════════════════════════════
-      if (curr.close > curr.open) { // Vela VERDE (alcista)
-        const isNext1Bearish = next1.close < next1.open;
-        
-        const isEngulfing = isNext1Bearish &&
-                           next1.close < curr.open &&
-                           next1.open >= curr.close;
-        
-        const bearMove = curr.low - Math.min(next1.close, next2.close);
-        const hasStrongMove = bearMove > avgRange * 0.5;
-        
-        if (isEngulfing || hasStrongMove) {
-          const exists = supplyZones.some(z => Math.abs(z.mid - (curr.open + curr.close) / 2) < avgRange * 0.5);
-          if (!exists) {
-            // ✅ El OB es el CUERPO de la vela verde (más preciso)
-            supplyZones.push({
-              type: 'SUPPLY',
-              high: curr.close, // Cierre de la vela verde (parte alta del cuerpo)
-              low: curr.open,   // Apertura de la vela verde (parte baja del cuerpo)
-              mid: (curr.open + curr.close) / 2,
-              wickHigh: curr.high, // Guardamos la mecha por si se necesita para el SL
-              index: i,
-              strength: isEngulfing ? 'STRONG' : (bearMove > avgRange ? 'STRONG' : 'NORMAL'),
-              pattern: isEngulfing ? 'ENGULFING' : 'IMPULSE',
-              tested: false
-            });
-          }
+
+      // ═════════════════════════════════════════════════════════════
+      // SUPPLY ORDER BLOCK (BEARISH OB)
+      // Pattern: GREEN candle (base OB) → RED engulfing OR strong bearish impulse
+      // The OB zone is the BODY of the green candle (open → close)
+      // Price should return to this zone FROM BELOW to give a SELL entry
+      // ═════════════════════════════════════════════════════════════
+      if (base.close > base.open) { // Green (bullish) base candle
+        const impulseDown   = next1.close < next1.open && next1.close < base.open; // bearish engulf
+        const strongImpulse = (base.high - next2.close) > avgRange * 1.5;         // strong move down
+        if (!impulseDown && !strongImpulse) continue;
+
+        const obHigh = base.close; // Top of OB body (= candle close)
+        const obLow  = base.open;  // Bottom of OB body
+        const obMid  = (obHigh + obLow) / 2;
+
+        if (supplyZones.some(z => Math.abs(z.mid - obMid) < avgRange * 0.8)) continue;
+
+        // Check mitigation: price closed above obHigh after the OB
+        let mitigated = false;
+        let mitigatedAt = null;
+        for (let j = i + 2; j <= lastIndex; j++) {
+          if (candles[j].close > obHigh) { mitigated = true; mitigatedAt = j; break; }
         }
+
+        const impulseEnd = Math.min(...candles.slice(i+1, Math.min(i+8, lastIndex)).map(c=>c.low));
+        const impulseSize = obLow - impulseEnd;
+
+        supplyZones.push({
+          type:         'SUPPLY',
+          side:         'SELL',
+          high:         obHigh,
+          low:          obLow,
+          mid:          obMid,
+          wickHigh:     base.high, // For SL positioning
+          index:        i,
+          epoch:        base.epoch || base.time,
+          impulseSize,
+          pattern:      impulseDown ? 'ENGULFING' : 'IMPULSE',
+          strength:     impulseDown ? 'STRONG' : (strongImpulse ? 'STRONG' : 'NORMAL'),
+          mitigated,
+          mitigatedAt,
+          tested:       false,
+        });
       }
     }
-    
-    const lastPrice = candles[candles.length - 1].close;
-    const validDemand = demandZones.filter(z => lastPrice > z.low * 0.99).slice(-5);
-    const validSupply = supplyZones.filter(z => lastPrice < z.high * 1.01).slice(-5);
-    
-    return { demandZones: validDemand, supplyZones: validSupply };
+
+    // Sort by index descending → keep only the 3 most recent UNMITIGATED
+    // Plus up to 1 mitigated (for reference)
+    const filterOBs = (zones) => {
+      const sorted = zones.sort((a,b) => b.index - a.index);
+      const fresh     = sorted.filter(z => !z.mitigated).slice(0, 3);
+      const mitigated = sorted.filter(z => z.mitigated).slice(0, 1);
+      return [...fresh, ...mitigated];
+    };
+
+    return {
+      demandZones: filterOBs(demandZones),
+      supplyZones: filterOBs(supplyZones)
+    };
   },
 
   findFVGs(candles) {
