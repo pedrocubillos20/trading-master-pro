@@ -2081,121 +2081,96 @@ const SMC = {
 
   detectPullback(candles, demandZones, supplyZones, config) {
     if (candles.length < 5) return null;
-    
-    const last = candles[candles.length - 1];
-    const prev = candles[candles.length - 2];
+
+    const last  = candles[candles.length - 1];
+    const prev  = candles[candles.length - 2];
     const prev2 = candles[candles.length - 3];
     const price = last.close;
     const avgRange = this.getAvgRange(candles);
-    
+
     // ═══════════════════════════════════════════════════════════════════════════
-    // PULLBACK A ZONA DE DEMANDA (para COMPRAS)
-    // El precio DEBE TOCAR el Order Block - no solo estar cerca
-    // Entrada: Cuando el precio toca el OB y muestra rechazo alcista
-    // SL: Siempre DEBAJO del Order Block
+    // PULLBACK A ZONA DE DEMANDA (COMPRAS)
+    // Regla: precio TOCA el OB Y muestra rechazo → entrada en el OB, SL bajo mecha
     // ═══════════════════════════════════════════════════════════════════════════
     for (const zone of demandZones) {
-      // ✅ CONDICIÓN OBLIGATORIA: El precio DEBE TOCAR el OB
-      // El low de la vela actual o anterior debe tocar la zona del OB
-      const lastTouchedOB = last.low <= zone.high && last.low >= zone.low - avgRange * 0.3;
-      const prevTouchedOB = prev.low <= zone.high && prev.low >= zone.low - avgRange * 0.3;
-      const touched = lastTouchedOB || prevTouchedOB;
-      
-      if (!touched) continue; // Si no tocó el OB, no es pullback válido
-      
-      // ✅ CONFIRMACIÓN: Vela de rechazo alcista
-      // - Vela verde que cierra arriba del OB
-      // - O mecha inferior larga (rechazo)
-      // - O patrón envolvente alcista
-      const closedAboveOB = last.close > zone.high;
-      const bullishCandle = last.close > last.open;
-      const wickSize = Math.min(last.open, last.close) - last.low;
-      const bodySize = Math.abs(last.close - last.open);
-      const hasRejectionWick = wickSize > bodySize * 0.5; // Mecha inferior > 50% del cuerpo
-      const engulfing = prev.close < prev.open && last.close > last.open && last.close > prev.open;
-      
-      const hasConfirmation = (bullishCandle && closedAboveOB) || 
-                              (hasRejectionWick && last.close > zone.mid) ||
-                              engulfing;
-      
-      if (hasConfirmation) {
-        const entry = price;
-        // ✅ STOP LOSS: Debajo de la mecha del OB si existe, sino debajo del cuerpo
-        const slLevel = zone.wickLow || zone.low;
-        const stop = slLevel - avgRange * 0.2;
-        const risk = entry - stop;
-        
-        if (risk > 0 && risk < avgRange * 5) {
-          return {
-            type: 'DEMAND_ZONE',
-            side: 'BUY',
-            zone,
-            entry: +entry.toFixed(config.decimals),
-            stop: +stop.toFixed(config.decimals),
-            tp1: +(entry + risk * 1.5).toFixed(config.decimals),
-            tp2: +(entry + risk * 2.5).toFixed(config.decimals),
-            tp3: +(entry + risk * 4).toFixed(config.decimals),
-            touchedOB: true,
-            confirmation: engulfing ? 'ENGULFING' : hasRejectionWick ? 'REJECTION_WICK' : 'BULLISH_CLOSE'
-          };
-        }
-      }
+      if (zone.mitigated) continue; // OB ya mitigado — no operar
+
+      // Precio debe tocar el OB (low de la vela actual o anterior dentro del OB)
+      const lastInOB = last.low <= zone.high && last.low >= zone.low - avgRange * 0.4;
+      const prevInOB = prev.low <= zone.high && prev.low >= zone.low - avgRange * 0.4;
+      const touched  = lastInOB || prevInOB;
+      if (!touched) continue;
+
+      // Confirmaciones de rechazo alcista
+      const bullishClose   = last.close > last.open;
+      const closedAboveOB  = last.close > zone.high;
+      const wickBull       = (Math.min(last.open,last.close) - last.low) > Math.abs(last.close-last.open)*0.5;
+      const engulfingBull  = prev.close<prev.open && last.close>last.open && last.close>prev.open;
+      const hasConfirmation = (bullishClose && closedAboveOB) || (wickBull && last.close>zone.mid) || engulfingBull;
+      if (!hasConfirmation) continue;
+
+      // ── ENTRY: at the OB high (top of the demand zone body) ──
+      // This ensures we enter AT the zone, not wherever price currently is
+      const entry = zone.high; // Top of the OB body = entry level
+      const slLevel = zone.wickLow || zone.low;
+      const stop = +(slLevel - avgRange * 0.15).toFixed(config.decimals);
+      const risk = entry - stop;
+      if (risk <= 0 || risk > avgRange * 6) continue;
+
+      return {
+        type:         'DEMAND_ZONE',
+        side:         'BUY',
+        zone,
+        entry:        +entry.toFixed(config.decimals),
+        stop,
+        tp1:          +(entry + risk * 1.5).toFixed(config.decimals),
+        tp2:          +(entry + risk * 2.5).toFixed(config.decimals),
+        tp3:          +(entry + risk * 4.0).toFixed(config.decimals),
+        touchedOB:    true,
+        confirmation: engulfingBull ? 'ENGULFING' : wickBull ? 'REJECTION_WICK' : 'BULLISH_CLOSE'
+      };
     }
-    
+
     // ═══════════════════════════════════════════════════════════════════════════
-    // PULLBACK A ZONA DE SUPPLY (para VENTAS)
-    // El precio DEBE TOCAR el Order Block - no solo estar cerca
-    // Entrada: Cuando el precio toca el OB y muestra rechazo bajista
-    // SL: Siempre ARRIBA del Order Block
+    // PULLBACK A ZONA DE SUPPLY (VENTAS)
+    // Regla: precio TOCA el OB Y muestra rechazo → entrada en el OB, SL sobre mecha
     // ═══════════════════════════════════════════════════════════════════════════
     for (const zone of supplyZones) {
-      // ✅ CONDICIÓN OBLIGATORIA: El precio DEBE TOCAR el OB
-      // El high de la vela actual o anterior debe tocar la zona del OB
-      const lastTouchedOB = last.high >= zone.low && last.high <= zone.high + avgRange * 0.3;
-      const prevTouchedOB = prev.high >= zone.low && prev.high <= zone.high + avgRange * 0.3;
-      const touched = lastTouchedOB || prevTouchedOB;
-      
-      if (!touched) continue; // Si no tocó el OB, no es pullback válido
-      
-      // ✅ CONFIRMACIÓN: Vela de rechazo bajista
-      // - Vela roja que cierra debajo del OB
-      // - O mecha superior larga (rechazo)
-      // - O patrón envolvente bajista
+      if (zone.mitigated) continue;
+
+      const lastInOB = last.high >= zone.low && last.high <= zone.high + avgRange * 0.4;
+      const prevInOB = prev.high >= zone.low && prev.high <= zone.high + avgRange * 0.4;
+      const touched  = lastInOB || prevInOB;
+      if (!touched) continue;
+
+      const bearishClose  = last.close < last.open;
       const closedBelowOB = last.close < zone.low;
-      const bearishCandle = last.close < last.open;
-      const wickSize = last.high - Math.max(last.open, last.close);
-      const bodySize = Math.abs(last.close - last.open);
-      const hasRejectionWick = wickSize > bodySize * 0.5; // Mecha superior > 50% del cuerpo
-      const engulfing = prev.close > prev.open && last.close < last.open && last.close < prev.open;
-      
-      const hasConfirmation = (bearishCandle && closedBelowOB) || 
-                              (hasRejectionWick && last.close < zone.mid) ||
-                              engulfing;
-      
-      if (hasConfirmation) {
-        const entry = price;
-        // ✅ STOP LOSS: Arriba de la mecha del OB si existe, sino arriba del cuerpo
-        const slLevel = zone.wickHigh || zone.high;
-        const stop = slLevel + avgRange * 0.2;
-        const risk = stop - entry;
-        
-        if (risk > 0 && risk < avgRange * 5) {
-          return {
-            type: 'SUPPLY_ZONE',
-            side: 'SELL',
-            zone,
-            entry: +entry.toFixed(config.decimals),
-            stop: +stop.toFixed(config.decimals),
-            tp1: +(entry - risk * 1.5).toFixed(config.decimals),
-            tp2: +(entry - risk * 2.5).toFixed(config.decimals),
-            tp3: +(entry - risk * 4).toFixed(config.decimals),
-            touchedOB: true,
-            confirmation: engulfing ? 'ENGULFING' : hasRejectionWick ? 'REJECTION_WICK' : 'BEARISH_CLOSE'
-          };
-        }
-      }
+      const wickBear      = (last.high - Math.max(last.open,last.close)) > Math.abs(last.close-last.open)*0.5;
+      const engulfingBear = prev.close>prev.open && last.close<last.open && last.close<prev.open;
+      const hasConfirmation = (bearishClose && closedBelowOB) || (wickBear && last.close<zone.mid) || engulfingBear;
+      if (!hasConfirmation) continue;
+
+      // ── ENTRY: at the OB low (bottom of the supply zone body) ──
+      const entry = zone.low; // Bottom of OB body = entry for sell
+      const slLevel = zone.wickHigh || zone.high;
+      const stop = +(slLevel + avgRange * 0.15).toFixed(config.decimals);
+      const risk = stop - entry;
+      if (risk <= 0 || risk > avgRange * 6) continue;
+
+      return {
+        type:         'SUPPLY_ZONE',
+        side:         'SELL',
+        zone,
+        entry:        +entry.toFixed(config.decimals),
+        stop,
+        tp1:          +(entry - risk * 1.5).toFixed(config.decimals),
+        tp2:          +(entry - risk * 2.5).toFixed(config.decimals),
+        tp3:          +(entry - risk * 4.0).toFixed(config.decimals),
+        touchedOB:    true,
+        confirmation: engulfingBear ? 'ENGULFING' : wickBear ? 'REJECTION_WICK' : 'BEARISH_CLOSE'
+      };
     }
-    
+
     return null;
   },
 
@@ -2811,36 +2786,7 @@ const SMC = {
     // MODELOS SMC AVANZADOS v14.3
     // ═══════════════════════════════════════════
     
-    // 1. BREAKER_BLOCK - Order Block que falla y se convierte en zona opuesta (v24)
-    // Un OB alcista que es roto se convierte en resistencia (y viceversa)
-    if (bos && choch) {
-      const pdCorrect = (choch.side === 'BUY' && premiumDiscount === 'DISCOUNT') ||
-                        (choch.side === 'SELL' && premiumDiscount === 'PREMIUM');
-      
-      // v24: Solo si tiene MTF o Premium/Discount correcto
-      if (mtfConfluence || pdCorrect) {
-        // Si hay BOS y CHoCH juntos, el OB anterior falló = Breaker Block
-        const breakerEntry = {
-          side: choch.side,
-          entry: lastCandle.close,
-          stop: choch.side === 'BUY' ? choch.level - avgRange * 1.5 : choch.level + avgRange * 1.5,
-          tp1: choch.side === 'BUY' ? lastCandle.close + avgRange * 2 : lastCandle.close - avgRange * 2,
-          tp2: choch.side === 'BUY' ? lastCandle.close + avgRange * 3.5 : lastCandle.close - avgRange * 3.5,
-          tp3: choch.side === 'BUY' ? lastCandle.close + avgRange * 5 : lastCandle.close - avgRange * 5
-        };
-        
-        let score = 80; // Score base aumentado
-        if (mtfConfluence) score += 8;
-        if (pdCorrect) score += 5;
-        
-        signals.push({
-          model: 'BREAKER_BLOCK',
-          baseScore: score,
-          pullback: breakerEntry,
-          reason: `Breaker ${choch.side} + ${bos.type}${mtfConfluence ? ' + MTF' : ''}${pdCorrect ? ' + P/D' : ''}`
-        });
-      }
-    }
+    // BREAKER_BLOCK — ELIMINADO (entradas fuera del OB, SL demasiado amplio)
     
     // 2. INDUCEMENT - Trampa de liquidez (igual highs/lows que son barridos)
     // Detecta cuando el precio barre un nivel obvio y revierte
@@ -2864,15 +2810,18 @@ const SMC = {
           tp3: lastCandle.close - avgRange * 5
         };
         
-        let score = 80;
+        let score = 82;
         if (structureH1.trend === 'BEARISH') score += 5;
-        if (premiumDiscount === 'PREMIUM') score += 5;
+        if (structureM15 && structureM15.trend === 'BEARISH') score += 4;
+        if (premiumDiscount === 'PREMIUM') score += 4;
+        // Must match opDir
+        if (opDir !== 'BEARISH') return; // Don't add — against direction
         
         signals.push({
           model: 'INDUCEMENT',
           baseScore: score,
           pullback: indEntry,
-          reason: `Barrido de máximos + reversión${structureH1.trend === 'BEARISH' ? ' + H1 BEAR' : ''}`
+          reason: `Sweep máximos + rechazo${structureH1.trend === 'BEARISH' ? ' + H1↓' : ''}`
         });
       }
     }
@@ -2892,15 +2841,18 @@ const SMC = {
           tp3: lastCandle.close + avgRange * 5
         };
         
-        let score = 80;
+        let score = 82;
         if (structureH1.trend === 'BULLISH') score += 5;
-        if (premiumDiscount === 'DISCOUNT') score += 5;
+        if (structureM15 && structureM15.trend === 'BULLISH') score += 4;
+        if (premiumDiscount === 'DISCOUNT') score += 4;
+        // Must match opDir
+        if (opDir !== 'BULLISH') return; // Don't add — against direction
         
         signals.push({
           model: 'INDUCEMENT',
           baseScore: score,
           pullback: indEntry,
-          reason: `Barrido de mínimos + reversión${structureH1.trend === 'BULLISH' ? ' + H1 BULL' : ''}`
+          reason: `Sweep mínimos + rechazo${structureH1.trend === 'BULLISH' ? ' + H1↑' : ''}`
         });
       }
     }
@@ -3002,43 +2954,7 @@ const SMC = {
       }
     }
     
-    // 5. SMART_MONEY_TRAP - Falso breakout con volumen
-    // Detecta cuando el precio rompe un nivel y revierte rápido (trampa institucional)
-    if (bos && orderFlow.strength >= 60) {
-      const bosRecent = candlesM5.slice(-3).some(c => 
-        (bos.side === 'BUY' && c.high > bos.level) ||
-        (bos.side === 'SELL' && c.low < bos.level)
-      );
-      
-      // Si el BOS fue reciente pero el precio ya revirtió = trampa
-      const priceReversed = (bos.side === 'BUY' && lastCandle.close < bos.level) ||
-                           (bos.side === 'SELL' && lastCandle.close > bos.level);
-      
-      if (bosRecent && priceReversed) {
-        const trapSide = bos.side === 'BUY' ? 'SELL' : 'BUY';
-        const trapEntry = {
-          side: trapSide,
-          entry: lastCandle.close,
-          stop: trapSide === 'BUY' ? lastCandle.low - avgRange * 0.5 : lastCandle.high + avgRange * 0.5,
-          tp1: trapSide === 'BUY' ? lastCandle.close + avgRange * 2 : lastCandle.close - avgRange * 2,
-          tp2: trapSide === 'BUY' ? lastCandle.close + avgRange * 3.5 : lastCandle.close - avgRange * 3.5,
-          tp3: trapSide === 'BUY' ? lastCandle.close + avgRange * 5 : lastCandle.close - avgRange * 5
-        };
-        
-        let score = 75;
-        if (orderFlow.strength >= 70) score += 5;
-        const pdCorrect = (trapSide === 'BUY' && premiumDiscount === 'DISCOUNT') ||
-                          (trapSide === 'SELL' && premiumDiscount === 'PREMIUM');
-        if (pdCorrect) score += 5;
-        
-        signals.push({
-          model: 'SMART_MONEY_TRAP',
-          baseScore: score,
-          pullback: trapEntry,
-          reason: `Trampa ${bos.type}${orderFlow.strength >= 70 ? ' + Flow fuerte' : ''}${pdCorrect ? ' + P/D' : ''}`
-        });
-    }
-    }
+    // SMART_MONEY_TRAP — ELIMINADO (entradas a mercado sin OB, SL inconsistente)
 
     // ═══════════════════════════════════════════════════════════════
     // MODELO M1_PRECISION — Estrategia H1 tendencia · M15 zona · M1 entrada
