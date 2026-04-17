@@ -954,6 +954,8 @@ for (const symbol of MY_ASSETS) {
     structureM15: { trend: 'LOADING', strength: 0 },
     demandZonesH1: [],
     supplyZonesH1: [],
+    demandZonesM15: [],
+    supplyZonesM15: [],
     premiumDiscount: 'EQUILIBRIUM',
     h1Loaded: false,
     m15Loaded: false,
@@ -1023,10 +1025,10 @@ const SMC = {
     for (let i = 1; i < highs.length; i++) {
       if (highs[i].price > highs[i-1].price) {
         hh++;
-        labels.push({ type: 'HH', price: highs[i].price, index: highs[i].index, time: highs[i].time });
+        labels.push({ type: 'HH', price: highs[i].price, index: highs[i].index, time: highs[i].time, epoch: highs[i].time ? Math.floor(highs[i].time/1000) : null });
       } else {
         lh++;
-        labels.push({ type: 'LH', price: highs[i].price, index: highs[i].index, time: highs[i].time });
+        labels.push({ type: 'LH', price: highs[i].price, index: highs[i].index, time: highs[i].time, epoch: highs[i].time ? Math.floor(highs[i].time/1000) : null });
       }
     }
 
@@ -1034,16 +1036,16 @@ const SMC = {
     for (let i = 1; i < lows.length; i++) {
       if (lows[i].price > lows[i-1].price) {
         hl++;
-        labels.push({ type: 'HL', price: lows[i].price, index: lows[i].index, time: lows[i].time });
+        labels.push({ type: 'HL', price: lows[i].price, index: lows[i].index, time: lows[i].time, epoch: lows[i].time ? Math.floor(lows[i].time/1000) : null });
       } else {
         ll++;
-        labels.push({ type: 'LL', price: lows[i].price, index: lows[i].index, time: lows[i].time });
+        labels.push({ type: 'LL', price: lows[i].price, index: lows[i].index, time: lows[i].time, epoch: lows[i].time ? Math.floor(lows[i].time/1000) : null });
       }
     }
 
     // Última etiqueta del primer high/low (referencia inicial)
-    if (highs.length >= 1) labels.push({ type: highs[0].price > (highs[1]?.price||0) ? 'HH' : 'LH', price: highs[0].price, index: highs[0].index, time: highs[0].time, ref: true });
-    if (lows.length >= 1)  labels.push({ type: lows[0].price < (lows[1]?.price||Infinity) ? 'LL' : 'HL', price: lows[0].price, index: lows[0].index, time: lows[0].time, ref: true });
+    if (highs.length >= 1) labels.push({ type: highs[0].price > (highs[1]?.price||0) ? 'HH' : 'LH', price: highs[0].price, index: highs[0].index, time: highs[0].time, epoch: highs[0].time ? Math.floor(highs[0].time/1000) : null, ref: true });
+    if (lows.length >= 1)  labels.push({ type: lows[0].price < (lows[1]?.price||Infinity) ? 'LL' : 'HL', price: lows[0].price, index: lows[0].index, time: lows[0].time, epoch: lows[0].time ? Math.floor(lows[0].time/1000) : null, ref: true });
 
     const bullScore = hh + hl;
     const bearScore = lh + ll;
@@ -2333,7 +2335,7 @@ const SMC = {
     const bos = this.detectBOS(candlesM5, swingsM5, structureM5);
     const pullback = this.detectPullback(candlesM5, demandZones, supplyZones, config);
     
-    state.swings = swingsM5.slice(-10);
+    state.swings = swingsM5; // ALL swings with correct indices, not just last 10
     state.structure = structureM5;
     state.demandZones = demandZones;
     state.supplyZones = supplyZones;
@@ -2411,6 +2413,10 @@ const SMC = {
       m15Loaded = true;
       const swingsM15 = this.findSwings(candlesM15, 2);
       structureM15 = this.analyzeStructure(swingsM15);
+      // M15 Order Block zones for chart visualization
+      const zonesM15 = this.findZones(candlesM15);
+      state.demandZonesM15 = zonesM15.demandZones;
+      state.supplyZonesM15 = zonesM15.supplyZones;
     }
     state.structureM15 = structureM15;
     state.m15Loaded = m15Loaded;
@@ -4280,8 +4286,11 @@ function analyzeAsset(symbol) {
   
   if (data.lastSignalClosed && 
       now - data.lastSignalClosed < cooldownTime) {
+    // During cooldown: still run analysis to keep zones + structure fresh
+    // but don't generate new signals
     const signal = SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
-    data.signal = signal;
+    data.signal = { ...signal, action: 'WAIT', model: 'COOLDOWN',
+      reason: `Cooldown activo (${Math.ceil((cooldownTime-(now-data.lastSignalClosed))/60000)}min restante)` };
     return;
   }
   
@@ -4664,28 +4673,62 @@ app.get('/api/analyze/:symbol', (req, res) => {
     candlesH1: data.candlesH1?.slice(-50) || [],
     candlesM15: data.candlesM15?.slice(-100) || [],
     candlesM1: data.candlesM1?.slice(-120) || [],
-    // Zones
-    demandZones: data.demandZones || [],
-    supplyZones: data.supplyZones || [],
+    // M5 zones
+    demandZones:   data.demandZones   || [],
+    supplyZones:   data.supplyZones   || [],
+    // M15 zones
+    demandZonesM15: data.demandZonesM15 || [],
+    supplyZonesM15: data.supplyZonesM15 || [],
+    // H1 zones
     demandZonesH1: data.demandZonesH1 || [],
     supplyZonesH1: data.supplyZonesH1 || [],
-    // Structure with swing labels for visualization
-    structureM5:     data.structure?.trend,
-    structureM5Data: data.structure || {},
-    structureH1:     data.structureH1?.trend,
-    structureH1Data: data.structureH1 || {},
-    structureM15:    data.structureM15?.trend || 'LOADING',
+    // Structure with swing labels (HH/HL/LH/LL) per timeframe
+    structureM5:      data.structure?.trend,
+    structureM5Data:  data.structure   || {},
+    structureH1:      data.structureH1?.trend,
+    structureH1Data:  data.structureH1 || {},
+    structureM15:     data.structureM15?.trend || 'LOADING',
     structureM15Data: data.structureM15 || {},
-    // Swings for drawing HH/HL/LH/LL
-    swingsM5:  data.swings || [],
-    // M1 precision steps
+    // Swings with epoch for time-based positioning on chart
+    swingsM5: (data.swings||[]).map(s=>({ type:s.type, price:s.price, index:s.index, epoch: s.time ? Math.floor(s.time/1000) : null })),
+    // M1 precision checklist
     m1Steps: data.m1Steps || null,
-    h1Loaded: data.h1Loaded,
+    h1Loaded:  data.h1Loaded,
     m15Loaded: data.m15Loaded,
-    m1Loaded: data.m1Loaded,
-    mtfConfluence: data.mtfConfluence,
+    m1Loaded:  data.m1Loaded,
+    mtfConfluence:  data.mtfConfluence,
     premiumDiscount: data.premiumDiscount
   });
+});
+
+// ── RESET ANALYSIS: clear cooldowns, force fresh zones + structure ──
+app.post('/api/reset/:symbol', (req, res) => {
+  const { symbol } = req.params;
+  const data = assetData[symbol];
+  if (!data) return res.status(404).json({ error: 'Not found' });
+
+  // Clear all cooldowns so analysis runs immediately
+  data.lastAnalysis      = 0;
+  data.lastSignalClosed  = 0;
+
+  // Clear stored overlays so they get recomputed fresh
+  data.demandZones    = [];
+  data.supplyZones    = [];
+  data.demandZonesH1  = [];
+  data.supplyZonesH1  = [];
+  data.demandZonesM15 = [];
+  data.supplyZonesM15 = [];
+  data.swings         = [];
+  data.structure      = null;
+  data.structureH1    = null;
+  data.structureM15   = null;
+  data.m1Steps        = null;
+
+  // Trigger immediate re-analysis
+  try { analyzeAsset(symbol); } catch(e) {}
+
+  console.log(`🔄 [${symbol}] Analysis reset — zones + structure recomputed`);
+  res.json({ ok: true, symbol, ts: Date.now() });
 });
 
 app.get('/api/signals', (req, res) => res.json({ signals: signalHistory, stats }));

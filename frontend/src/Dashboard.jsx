@@ -70,7 +70,18 @@ const Chart = ({ candles, height, signal, timeframe='M5',
       const drawOBs = (zones, isBull) => {
         zones.slice(0, cfg.maxOB).forEach(z => {
           if (!z.high || !z.low || z.high <= z.low) return;
-          const relIdx = z.index !== undefined ? (z.index - visStartIndex) : -1;
+          // Epoch-based positioning for stable OB placement
+          let relIdx = -1;
+          if (z.epoch) {
+            const epoch = typeof z.epoch === 'number' ? z.epoch : Math.floor(z.epoch/1000);
+            relIdx = vis.findIndex(cv => {
+              const ce = cv.epoch || Math.floor((cv.time||0)/1000);
+              return Math.abs(ce - epoch) <= 60;
+            });
+          }
+          if (relIdx < 0 && z.index !== undefined) {
+            relIdx = z.index - visStartIndex;
+          }
           if (relIdx < 0 || relIdx >= vis.length) return; // not visible
 
           const startX = Math.max(P.l, P.l + relIdx * cW);
@@ -130,7 +141,18 @@ const Chart = ({ candles, height, signal, timeframe='M5',
       const isYFree = (y) => usedY.every(uy => Math.abs(uy-y) > 16);
 
       labels.filter((_,i) => i % every === 0).forEach(lb => {
-        const relIdx = lb.index !== undefined ? (lb.index - visStartIndex) : -1;
+        // Use epoch for stable positioning — survives candle array shifts
+        let relIdx = -1;
+        if (lb.epoch) {
+          const epoch = lb.epoch;
+          relIdx = vis.findIndex(cv => {
+            const ce = cv.epoch || Math.floor((cv.time||0)/1000);
+            return Math.abs(ce - epoch) <= 60; // within 1 min
+          });
+        }
+        if (relIdx < 0 && lb.index !== undefined) {
+          relIdx = lb.index - visStartIndex; // fallback to index
+        }
         if (relIdx < 0 || relIdx >= vis.length) return;
 
         const x = P.l + relIdx * cW + cW/2;
@@ -282,9 +304,24 @@ export default function Dashboard({ user, onLogout }) {
   const [sub, setSub]                   = useState(null);
   const [loadingSub, setLoadingSub]     = useState(true);
   const [tpDlg, setTpDlg]             = useState({open:false,id:null});
+  const [refreshKey, setRefreshKey]   = useState(0); // bump to force re-fetch
 
   const mounted   = useRef(true);
   const firstSet  = useRef(false);
+
+  // Reset analysis: clears all chart overlays and re-fetches immediately
+  const resetAnalysis = async () => {
+    // Clear local state immediately for instant visual feedback
+    setZonesData({ m5:{d:[],s:[]}, m15:{d:[],s:[]}, h1:{d:[],s:[]} });
+    setStructAll({ m5:null, m15:null, h1:null });
+    setM1Steps(null);
+    // Tell backend to clear cooldowns + recompute
+    if (selectedAsset) {
+      try { await fetch(`${API_URL}/api/reset/${selectedAsset}`, { method:'POST' }); } catch {}
+    }
+    // Bump refreshKey to trigger immediate re-fetch
+    setRefreshKey(k => k + 1);
+  };
 
   useEffect(()=>()=>{mounted.current=false;},[]);
 
@@ -356,7 +393,7 @@ export default function Dashboard({ user, onLogout }) {
       } catch {}
     };
     go(); const iv=setInterval(go,4000); return()=>{cancelled=true;clearInterval(iv);};
-  },[selectedAsset]);
+  },[selectedAsset, refreshKey]);
 
   // Mark signal
   const markSignal=async(id,status)=>{
@@ -482,7 +519,7 @@ export default function Dashboard({ user, onLogout }) {
         )}
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-semibold text-white capitalize">{section}</h2>
-          <span className="hidden sm:inline text-[9px] px-2 py-0.5 bg-purple-500/12 text-purple-400 border border-purple-500/20 rounded-md font-medium">12 Modelos SMC</span>
+          <span className="hidden sm:inline text-[9px] px-2 py-0.5 bg-purple-500/12 text-purple-400 border border-purple-500/20 rounded-md font-medium">6 Modelos SMC</span>
         </div>
       </div>
 
@@ -552,11 +589,16 @@ export default function Dashboard({ user, onLogout }) {
                   </span>
                 )}
               </div>
-              {/* Triple confluencia badges */}
-              <div className="flex gap-1.5">
+              {/* Triple confluencia badges + reset */}
+              <div className="flex items-center gap-1.5">
                 {structBadge('M5', asset?.structureM5)}
                 {structBadge('M15', asset?.structureM15)}
                 {structBadge('H1', asset?.structureH1)}
+                <button onClick={resetAnalysis}
+                  title="Recargar análisis (OBs + estructura)"
+                  className="ml-1 w-6 h-5 flex items-center justify-center rounded bg-white/6 hover:bg-white/15 text-white/30 hover:text-white/80 transition-all text-[10px]">
+                  ⟳
+                </button>
               </div>
             </div>
           </div>
