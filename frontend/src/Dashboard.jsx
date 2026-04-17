@@ -6,12 +6,21 @@ import ModelosGuia from './ModelosGuia';
 const API_URL = import.meta.env.VITE_API_URL || 'https://trading-master-pro-production.up.railway.app';
 const ALLOWED = ['stpRNG', 'frxXAUUSD', '1HZ100V'];
 
-// ─── CHART — with OBs, HH/HL/LH/LL labels, M1 steps ─────────────────────────
-const Chart = ({ candles, height, signal, demandZones=[], supplyZones=[], structureData=null, m1Steps=null }) => {
+// ─── CHART — per-timeframe aware rendering ────────────────────────────────────
+const Chart = ({ candles, height, signal, timeframe='M5',
+                 demandZones=[], supplyZones=[], structureData=null, m1Steps=null }) => {
   const svgRef = useRef(null);
   const zoom   = useRef(60);
   const off    = useRef(0);
   const drag   = useRef({ active:false, startX:0, startOff:0 });
+
+  // Per-timeframe config
+  const TF_CFG = {
+    M1:  { maxOB: 0, showLabels: false, labelEvery: 1, defaultZoom: 80  },
+    M5:  { maxOB: 3, showLabels: true,  labelEvery: 1, defaultZoom: 60  },
+    M15: { maxOB: 2, showLabels: true,  labelEvery: 2, defaultZoom: 50  },
+    H1:  { maxOB: 2, showLabels: true,  labelEvery: 3, defaultZoom: 40  },
+  };
 
   const draw = useCallback(() => {
     const svg = svgRef.current;
@@ -21,38 +30,32 @@ const Chart = ({ candles, height, signal, demandZones=[], supplyZones=[], struct
     svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
     svg.setAttribute('width', W); svg.setAttribute('height', H);
 
+    const cfg = TF_CFG[timeframe] || TF_CFG.M5;
     const total = candles.length;
     const z = Math.max(15, Math.min(zoom.current, total));
     const o = Math.max(0, Math.min(total - z, off.current));
     const vis = candles.slice(Math.max(0, total-z-o), total-o).slice(-z);
     if (!vis.length) return;
 
+    const visStartIndex = Math.max(0, total-z-o);
     const P = { t:14, r:88, b:24, l:6 };
     const CH = H - P.t - P.b, CW = W - P.l - P.r;
 
-    // Price range including signal levels and OB zones
+    // Price range
     let hi = Math.max(...vis.map(c=>+c.high));
     let lo = Math.min(...vis.map(c=>+c.low));
     if (signal?.entry) {
-      const lvs = [signal.entry,signal.tp1,signal.tp2,signal.tp3,signal.stop].map(v=>+v||0).filter(v=>v>0);
-      if (lvs.length) { hi = Math.max(hi,...lvs); lo = Math.min(lo,...lvs); }
+      [signal.entry,signal.tp1,signal.tp2,signal.tp3,signal.stop].forEach(v=>{ const n=+v||0; if(n>0){hi=Math.max(hi,n);lo=Math.min(lo,n);} });
     }
-    // Include OB zones in range
-    [...demandZones,...supplyZones].forEach(z=>{ hi=Math.max(hi,z.high||0); lo=Math.min(lo,z.low||Infinity); });
+    // Include ONLY visible OBs in range
+    const visibleDemand = demandZones.filter(z=> { const r = z.index-visStartIndex; return r>=0&&r<vis.length; });
+    const visibleSupply = supplyZones.filter(z=> { const r = z.index-visStartIndex; return r>=0&&r<vis.length; });
+    [...visibleDemand,...visibleSupply].forEach(z=>{ hi=Math.max(hi,z.high||0); lo=Math.min(lo,z.low||Infinity); });
     const mg = (hi-lo)*0.1; hi+=mg; lo-=mg;
-    const rng = hi-lo || 0.01;
+    const rng = hi-lo||0.01;
     const Y = p => P.t + CH*(1-(+p-lo)/rng);
 
-    // Candle index map for label positioning
-    const visStartIndex = Math.max(0, total-z-o);
-    const getX = candleOrigIdx => {
-      const relIdx = candleOrigIdx - visStartIndex;
-      const n = vis.length, cW_ = CW/n;
-      return P.l + relIdx * cW_ + cW_/2;
-    };
-
     const n = vis.length, cW = CW/n, bW = Math.max(1.5, cW*0.62);
-
     let h = `<rect width="${W}" height="${H}" fill="#07080f"/>`;
 
     // Grid
@@ -62,88 +65,118 @@ const Chart = ({ candles, height, signal, demandZones=[], supplyZones=[], struct
       h += `<text x="${W-P.r+4}" y="${(y+3.5)|0}" fill="#1e2d3d" font-size="8" font-family="'Courier New',monospace">${p.toFixed(2)}</text>`;
     }
 
-    // ── ORDER BLOCKS — anchored to their candle, extend to right edge ──
-    const drawOBs = (zones, isBull) => {
-      zones.forEach(z => {
-        if (!z.high || !z.low || z.high <= z.low) return;
+    // ── ORDER BLOCKS — only if TF is not M1, only visible ones ──
+    if (cfg.maxOB > 0) {
+      const drawOBs = (zones, isBull) => {
+        zones.slice(0, cfg.maxOB).forEach(z => {
+          if (!z.high || !z.low || z.high <= z.low) return;
+          const relIdx = z.index !== undefined ? (z.index - visStartIndex) : -1;
+          if (relIdx < 0 || relIdx >= vis.length) return; // not visible
 
-        // Map candle index to X position
-        const relIdx = z.index !== undefined ? (z.index - visStartIndex) : -1;
-        if (relIdx < 0 || relIdx >= vis.length) return; // OB candle not in visible range? Still draw from edge
-        const startX = Math.max(P.l, P.l + relIdx * cW);
+          const startX = Math.max(P.l, P.l + relIdx * cW);
+          const yTop = Math.max(P.t+1, Math.min(P.t+CH-1, Y(z.high)));
+          const yBot = Math.max(P.t+1, Math.min(P.t+CH-1, Y(z.low)));
+          const boxH = Math.max(4, Math.abs(yBot - yTop));
+          const col  = isBull ? '#22c55e' : '#ef4444';
+          const miti = z.mitigated;
+          const endX = W - P.r;
 
-        const yTop = Math.max(P.t+1, Math.min(P.t+CH-1, Y(z.high)));
-        const yBot = Math.max(P.t+1, Math.min(P.t+CH-1, Y(z.low)));
-        const boxH  = Math.max(4, Math.abs(yBot - yTop));
+          // Background fill
+          h += `<rect x="${startX|0}" y="${yTop|0}" width="${(endX-startX)|0}" height="${boxH|0}" fill="${col}" fill-opacity="${miti?'0.04':z.strength==='STRONG'?'0.16':'0.09'}" rx="1"/>`;
 
-        const col      = isBull ? '#22c55e' : '#ef4444';
-        const fillOpac = z.mitigated ? '0.05' : z.strength === 'STRONG' ? '0.18' : '0.11';
-        const lineOpac = z.mitigated ? '0.25' : '0.85';
-        const endX     = W - P.r;
+          // Top border — the entry level
+          h += `<line x1="${startX|0}" y1="${yTop|0}" x2="${endX}" y2="${yTop|0}" stroke="${col}" stroke-width="${z.strength==='STRONG'?1.5:1}" opacity="${miti?'0.25':'0.85'}"/>`;
 
-        // OB box — from its candle position to right edge
-        h += `<rect x="${startX|0}" y="${yTop|0}" width="${(endX-startX)|0}" height="${boxH|0}" fill="${col}" fill-opacity="${fillOpac}" rx="1"/>`;
+          // Bottom border — SL reference (wick)
+          const slY = Y(isBull ? (z.wickLow||z.low) : (z.wickHigh||z.high));
+          if (Math.abs(slY - yTop) > 3) {
+            h += `<line x1="${startX|0}" y1="${slY|0}" x2="${endX}" y2="${slY|0}" stroke="${col}" stroke-width="0.7" stroke-dasharray="4,4" opacity="${miti?'0.12':'0.35'}"/>`;
+          }
 
-        // Top border line (solid — the OB level to watch)
-        h += `<line x1="${startX|0}" y1="${yTop|0}" x2="${endX}" y2="${yTop|0}" stroke="${col}" stroke-width="${z.strength==='STRONG'?1.5:1}" opacity="${lineOpac}"/>`;
+          // Label — compact, positioned at the OB candle
+          const midY = yTop + boxH/2;
+          const lblText = miti ? (isBull?'OB↑✗':'OB↓✗') : (isBull?'OB↑':'OB↓');
+          const lblW = miti ? 28 : 22;
+          h += `<rect x="${(startX)|0}" y="${(midY-7)|0}" width="${lblW}" height="13" rx="2" fill="${col}" fill-opacity="${miti?'0.4':'0.9'}"/>`;
+          h += `<text x="${(startX+lblW/2)|0}" y="${(midY+4)|0}" text-anchor="middle" fill="${miti?'#aaa':'#000'}" font-size="7" font-weight="700" font-family="monospace">${lblText}</text>`;
 
-        // Bottom border (dashed — the wick level / SL reference)
-        const slY = Y(isBull ? (z.wickLow||z.low) : (z.wickHigh||z.high));
-        h += `<line x1="${startX|0}" y1="${slY|0}" x2="${endX}" y2="${slY|0}" stroke="${col}" stroke-width="0.8" stroke-dasharray="4,4" opacity="${z.mitigated?'0.15':'0.45'}"/>`;
+          // Pattern label — only on M5
+          if (!miti && timeframe === 'M5' && z.pattern) {
+            h += `<text x="${(startX+3)|0}" y="${(yTop-3)|0}" fill="${col}" font-size="6" font-family="monospace" opacity="0.6">${z.pattern}</text>`;
+          }
 
-        // Label on the OB candle (left side of the box)
-        const midY = (yTop + yTop + boxH) / 2;
-        const lblText = isBull ? (z.mitigated ? 'OB↑✗' : 'OB↑') : (z.mitigated ? 'OB↓✗' : 'OB↓');
-        const lblW = z.mitigated ? 30 : 22;
-        h += `<rect x="${(startX-1)|0}" y="${(midY-8)|0}" width="${lblW}" height="14" rx="2" fill="${col}" fill-opacity="${z.mitigated?'0.45':'0.9'}"/>`;
-        h += `<text x="${(startX+lblW/2-1)|0}" y="${(midY+4)|0}" text-anchor="middle" fill="${z.mitigated?'#fff':'#000'}" font-size="7" font-weight="700" font-family="monospace">${lblText}</text>`;
-
-        // Pattern label (ENGULFING or IMPULSE)
-        if (!z.mitigated) {
-          h += `<text x="${(startX+3)|0}" y="${(yTop-3)|0}" fill="${col}" font-size="6.5" font-family="monospace" opacity="0.7">${z.pattern||''}</text>`;
-        }
-
-        // Vertical marker on the base OB candle
-        if (relIdx >= 0 && relIdx < vis.length) {
+          // Dot on base candle
           const cx = P.l + relIdx * cW + cW/2;
-          h += `<circle cx="${cx|0}" cy="${(isBull?yBot+4:yTop-4)|0}" r="2.5" fill="${col}" opacity="0.8"/>`;
-        }
-      });
-    };
-    drawOBs(demandZones, true);
-    drawOBs(supplyZones, false);
+          h += `<circle cx="${cx|0}" cy="${(isBull?yBot+5:yTop-5)|0}" r="2" fill="${col}" opacity="0.8"/>`;
+        });
+      };
+      drawOBs(visibleDemand.filter(z=>!z.mitigated).slice(0,cfg.maxOB), true);
+      drawOBs(visibleSupply.filter(z=>!z.mitigated).slice(0,cfg.maxOB), false);
+      // Show 1 mitigated for context (only M5)
+      if (timeframe === 'M5') {
+        drawOBs(visibleDemand.filter(z=>z.mitigated).slice(0,1), true);
+        drawOBs(visibleSupply.filter(z=>z.mitigated).slice(0,1), false);
+      }
+    }
 
     // ── HH/HL/LH/LL STRUCTURE LABELS ──
-    const labels = structureData?.labels || [];
-    labels.filter(lb => !lb.ref).forEach(lb => {
-      const relIdx = lb.index !== undefined ? (lb.index - visStartIndex) : -1;
-      if (relIdx < 0 || relIdx >= vis.length) return;
-      const x = P.l + relIdx * cW + cW/2;
-      const isBull = lb.type === 'HH' || lb.type === 'HL';
-      const col = isBull ? '#22c55e' : '#ef4444';
-      const y = lb.type === 'HH' || lb.type === 'LH' ? Y(lb.price) - 12 : Y(lb.price) + 20;
-      const yClamp = Math.max(P.t+4, Math.min(P.t+CH-4, y));
-      h += `<rect x="${(x-10)|0}" y="${(yClamp-9)|0}" width="20" height="12" rx="2" fill="${col}" fill-opacity="0.9"/>`;
-      h += `<text x="${x|0}" y="${(yClamp)|0}" text-anchor="middle" fill="#000" font-size="7.5" font-weight="800" font-family="monospace">${lb.type}</text>`;
-      // Dot on the candle
-      const dotY = lb.type === 'HH' || lb.type === 'LH' ? Y(lb.price) - 3 : Y(lb.price) + 3;
-      h += `<circle cx="${x|0}" cy="${dotY|0}" r="2" fill="${col}" opacity="0.8"/>`;
-    });
+    if (cfg.showLabels && structureData?.labels) {
+      const labels = structureData.labels.filter(lb => !lb.ref);
+      // Every N-th label to reduce clutter in H1
+      const every = cfg.labelEvery;
+      
+      // Anti-overlap: track used Y positions
+      const usedY = [];
+      const isYFree = (y) => usedY.every(uy => Math.abs(uy-y) > 16);
 
-    // ── M1 PRECISION STEPS ──
-    if (m1Steps) {
-      const steps = [
-        { cond: m1Steps.h1ok,    label:'H1✓',  col:'#f59e0b', x: W-P.r-120 },
-        { cond: m1Steps.m15ok,   label:'M15✓', col:'#f59e0b', x: W-P.r-92 },
-        { cond: m1Steps.m5ok,    label:'M5✓',  col:'#f59e0b', x: W-P.r-64 },
-        { cond: m1Steps.zoneok,  label:'Zona✓',col:'#3b82f6', x: W-P.r-36 },
-        { cond: m1Steps.m1conf,  label:'M1✓',  col:'#22c55e', x: W-P.r-8  },
-      ];
-      let stepsH = `<rect x="${W-P.r-126}" y="${P.t+2}" width="120" height="16" rx="4" fill="#0c0c18" fill-opacity="0.85"/>`;
-      steps.forEach(s => {
-        stepsH += `<text x="${s.x}" y="${P.t+13}" text-anchor="end" fill="${s.cond?s.col:'#374151'}" font-size="7.5" font-weight="700" font-family="monospace">${s.label}</text>`;
+      labels.filter((_,i) => i % every === 0).forEach(lb => {
+        const relIdx = lb.index !== undefined ? (lb.index - visStartIndex) : -1;
+        if (relIdx < 0 || relIdx >= vis.length) return;
+
+        const x = P.l + relIdx * cW + cW/2;
+        const isBull = lb.type === 'HH' || lb.type === 'HL';
+        const col = isBull ? '#22c55e' : '#ef4444';
+
+        // Position: HH/LH above candle, HL/LL below candle
+        const isAbove = lb.type === 'HH' || lb.type === 'LH';
+        let y = isAbove ? Y(lb.price) - 14 : Y(lb.price) + 18;
+        y = Math.max(P.t+6, Math.min(P.t+CH-6, y));
+
+        if (!isYFree(y)) return; // skip overlapping label
+        usedY.push(y);
+
+        // Label box
+        h += `<rect x="${(x-11)|0}" y="${(y-9)|0}" width="22" height="12" rx="2" fill="${col}" fill-opacity="0.88"/>`;
+        h += `<text x="${x|0}" y="${y|0}" text-anchor="middle" fill="#000" font-size="7.5" font-weight="800" font-family="monospace">${lb.type}</text>`;
+
+        // Connecting dot on candle
+        const dotY = isAbove ? Y(lb.price)-2 : Y(lb.price)+2;
+        const dotClamped = Math.max(P.t+2, Math.min(P.t+CH-2, dotY));
+        h += `<circle cx="${x|0}" cy="${dotClamped|0}" r="2" fill="${col}" opacity="0.7"/>`;
       });
-      h += stepsH;
+    }
+
+    // ── M1 STEPS BAR — only in M1 view ──
+    if (timeframe === 'M1' && m1Steps) {
+      const steps = [
+        { label:'H1',   ok: m1Steps.h1ok,   col:'#f59e0b' },
+        { label:'M15',  ok: m1Steps.m15ok,  col:'#f59e0b' },
+        { label:'M5',   ok: m1Steps.m5ok,   col:'#f59e0b' },
+        { label:'Zona', ok: m1Steps.zoneok, col:'#3b82f6' },
+        { label:'M1',   ok: m1Steps.m1conf, col:'#22c55e' },
+      ];
+      const barW = 200, barH = 20, barX = W - P.r - barW - 4, barY = P.t + 2;
+      h += `<rect x="${barX}" y="${barY}" width="${barW}" height="${barH}" rx="5" fill="#0c0c18" fill-opacity="0.92"/>`;
+      const stepW = barW / steps.length;
+      steps.forEach((s, i) => {
+        const sx = barX + i * stepW + stepW/2;
+        h += `<text x="${sx|0}" y="${(barY+13)|0}" text-anchor="middle" fill="${s.ok?s.col:'#2d3a4a'}" font-size="8" font-weight="700" font-family="monospace">${s.label}${s.ok?'✓':'○'}</text>`;
+      });
+      // Progress bar
+      const ready = steps.filter(s=>s.ok).length;
+      const progW = (ready/steps.length) * barW;
+      const progCol = ready===5?'#22c55e':ready>=3?'#f59e0b':'#374151';
+      h += `<rect x="${barX}" y="${barY+barH-3}" width="${progW|0}" height="3" rx="1.5" fill="${progCol}" opacity="0.7"/>`;
     }
 
     // ── CANDLES ──
@@ -160,47 +193,47 @@ const Chart = ({ candles, height, signal, demandZones=[], supplyZones=[], struct
     // ── SIGNAL LEVELS ──
     if (signal?.entry) {
       const drawL = (price, col, lbl, lw=1.5, dash='') => {
-        if (!price || +price<=0) return;
-        const y = Math.max(P.t+5, Math.min(P.t+CH-5, Y(+price)));
-        const x2 = W-P.r;
-        h += `<line x1="${P.l}" y1="${y|0}" x2="${x2}" y2="${y|0}" stroke="${col}" stroke-width="${lw}" ${dash?`stroke-dasharray="${dash}"`:''}  opacity="0.9"/>`;
-        h += `<rect x="${x2+1}" y="${(y-8)|0}" width="${P.r-3}" height="16" rx="3" fill="${col}"/>`;
-        h += `<text x="${x2+5}" y="${(y+4)|0}" fill="#000" font-size="7.5" font-weight="700" font-family="'Courier New',monospace">${lbl} ${(+price).toFixed(2)}</text>`;
+        if (!price||+price<=0) return;
+        const y=Math.max(P.t+5,Math.min(P.t+CH-5,Y(+price)));
+        const x2=W-P.r;
+        h+=`<line x1="${P.l}" y1="${y|0}" x2="${x2}" y2="${y|0}" stroke="${col}" stroke-width="${lw}" ${dash?`stroke-dasharray="${dash}"`:''}  opacity="0.9"/>`;
+        h+=`<rect x="${x2+1}" y="${(y-8)|0}" width="${P.r-3}" height="16" rx="3" fill="${col}"/>`;
+        h+=`<text x="${x2+5}" y="${(y+4)|0}" fill="#000" font-size="7.5" font-weight="700" font-family="'Courier New',monospace">${lbl} ${(+price).toFixed(2)}</text>`;
       };
-      drawL(signal.stop||signal.stop_loss, '#ef4444','SL',  1.2,'5,3');
+      drawL(signal.stop||signal.stop_loss,'#ef4444','SL',1.2,'5,3');
       drawL(signal.tp3||signal.take_profit_3,'#059669','TP3',1.2,'4,3');
       drawL(signal.tp2||signal.take_profit_2,'#10b981','TP2',1.5,'4,3');
       drawL(signal.tp1||signal.take_profit_1,'#34d399','TP1',2);
       drawL(signal.entry,'#f59e0b','ENT',2.5);
       const isLong=['BUY','LONG'].includes(signal.direction||signal.action||signal.tipo);
-      const eY = Math.max(P.t+12, Math.min(P.t+CH-12, Y(+signal.entry)));
-      h += isLong
-        ? `<polygon points="${P.l+8},${eY+8} ${P.l+20},${eY} ${P.l+8},${eY-8}" fill="#22c55e" opacity="0.95"/>`
-        : `<polygon points="${P.l+20},${eY+8} ${P.l+8},${eY} ${P.l+20},${eY-8}" fill="#ef4444" opacity="0.95"/>`;
+      const eY=Math.max(P.t+12,Math.min(P.t+CH-12,Y(+signal.entry)));
+      h+=isLong
+        ?`<polygon points="${P.l+8},${eY+8} ${P.l+20},${eY} ${P.l+8},${eY-8}" fill="#22c55e" opacity="0.95"/>`
+        :`<polygon points="${P.l+20},${eY+8} ${P.l+8},${eY} ${P.l+20},${eY-8}" fill="#ef4444" opacity="0.95"/>`;
     }
 
     // ── CURRENT PRICE ──
-    const lc = +vis[vis.length-1]?.close||0;
+    const lc=+vis[vis.length-1]?.close||0;
     if (lc>0) {
-      const py = Math.max(P.t+5,Math.min(P.t+CH-5,Y(lc)));
-      const up = lc>=(+vis[vis.length-1]?.open||lc);
-      const cc = up?'#22c55e':'#ef4444';
-      h += `<line x1="${P.l}" y1="${py|0}" x2="${W-P.r}" y2="${py|0}" stroke="${cc}" stroke-width="1" stroke-dasharray="3,4" opacity="0.35"/>`;
-      h += `<rect x="${W-P.r+1}" y="${(py-8)|0}" width="${P.r-3}" height="16" rx="3" fill="${cc}"/>`;
-      h += `<text x="${W-P.r+5}" y="${(py+4)|0}" fill="#fff" font-size="7.5" font-weight="700" font-family="'Courier New',monospace">${lc.toFixed(2)}</text>`;
+      const py=Math.max(P.t+5,Math.min(P.t+CH-5,Y(lc)));
+      const up=lc>=(+vis[vis.length-1]?.open||lc);
+      const cc=up?'#22c55e':'#ef4444';
+      h+=`<line x1="${P.l}" y1="${py|0}" x2="${W-P.r}" y2="${py|0}" stroke="${cc}" stroke-width="1" stroke-dasharray="3,4" opacity="0.35"/>`;
+      h+=`<rect x="${W-P.r+1}" y="${(py-8)|0}" width="${P.r-3}" height="16" rx="3" fill="${cc}"/>`;
+      h+=`<text x="${W-P.r+5}" y="${(py+4)|0}" fill="#fff" font-size="7.5" font-weight="700" font-family="'Courier New',monospace">${lc.toFixed(2)}</text>`;
     }
 
     // ── TIMESTAMPS ──
-    const step = Math.max(1,Math.floor(n/6));
-    vis.forEach((c,i) => {
-      if (i%step!==0&&i!==n-1) return;
+    const step=Math.max(1,Math.floor(n/6));
+    vis.forEach((c,i)=>{
+      if(i%step!==0&&i!==n-1) return;
       const x=P.l+i*cW+cW/2, ep=+(c.epoch||c.time/1000||0); if(!ep) return;
       const d=new Date(ep*1000);
-      h += `<text x="${x|0}" y="${H-P.b+13}" text-anchor="middle" fill="#1e2d3d" font-size="7.5" font-family="monospace">${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}</text>`;
+      h+=`<text x="${x|0}" y="${H-P.b+13}" text-anchor="middle" fill="#1e2d3d" font-size="7.5" font-family="monospace">${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}</text>`;
     });
 
     svg.innerHTML = h;
-  }, [candles, height, signal, demandZones, supplyZones, structureData, m1Steps]);
+  }, [candles, height, signal, timeframe, demandZones, supplyZones, structureData, m1Steps]);
 
   useEffect(()=>{ draw(); },[draw]);
   useEffect(()=>{
@@ -208,22 +241,17 @@ const Chart = ({ candles, height, signal, demandZones=[], supplyZones=[], struct
     const ro=new ResizeObserver(()=>draw()); ro.observe(el); return()=>ro.disconnect();
   },[draw]);
 
-  const onMD = e => { drag.current={active:true,startX:e.clientX,startOff:off.current}; };
-  const onMM = e => {
-    if(!drag.current.active) return;
-    const sl=(svgRef.current?.parentElement?.clientWidth||700)/zoom.current;
-    off.current=Math.max(0,Math.min((candles?.length||0)-zoom.current, drag.current.startOff+Math.round((drag.current.startX-e.clientX)/Math.max(2,sl))));
-    draw();
-  };
-  const onMU = ()=>{ drag.current.active=false; };
-  const onWh = e=>{ e.preventDefault(); zoom.current=Math.max(10,Math.min(200,zoom.current+(e.deltaY>0?8:-8))); draw(); };
-  const onTD = e=>{ drag.current={active:true,startX:e.touches[0].clientX,startOff:off.current}; };
-  const onTM = e=>{ if(!drag.current.active)return; const sl=(svgRef.current?.parentElement?.clientWidth||700)/zoom.current; off.current=Math.max(0,Math.min((candles?.length||0)-zoom.current,drag.current.startOff+Math.round((drag.current.startX-e.touches[0].clientX)/Math.max(2,sl)))); draw(); };
+  const onMD=e=>{drag.current={active:true,startX:e.clientX,startOff:off.current};};
+  const onMM=e=>{ if(!drag.current.active)return; const sl=(svgRef.current?.parentElement?.clientWidth||700)/zoom.current; off.current=Math.max(0,Math.min((candles?.length||0)-zoom.current,drag.current.startOff+Math.round((drag.current.startX-e.clientX)/Math.max(2,sl)))); draw(); };
+  const onMU=()=>{drag.current.active=false;};
+  const onWh=e=>{e.preventDefault();zoom.current=Math.max(10,Math.min(200,zoom.current+(e.deltaY>0?8:-8)));draw();};
+  const onTD=e=>{drag.current={active:true,startX:e.touches[0].clientX,startOff:off.current};};
+  const onTM=e=>{if(!drag.current.active)return;const sl=(svgRef.current?.parentElement?.clientWidth||700)/zoom.current;off.current=Math.max(0,Math.min((candles?.length||0)-zoom.current,drag.current.startOff+Math.round((drag.current.startX-e.touches[0].clientX)/Math.max(2,sl))));draw();};
 
   return (
     <div className="relative w-full select-none" style={{height,background:'#07080f'}}>
       <div className="absolute top-2 left-2 z-10 flex gap-1">
-        {[{l:'+',fn:()=>{zoom.current=Math.max(10,zoom.current-15);draw();}},{l:'−',fn:()=>{zoom.current=Math.min(200,zoom.current+15);draw();}},{l:'↺',fn:()=>{zoom.current=60;off.current=0;draw();}}].map(({l,fn})=>(
+        {[{l:'+',fn:()=>{zoom.current=Math.max(10,zoom.current-15);draw();}},{l:'−',fn:()=>{zoom.current=Math.min(200,zoom.current+15);draw();}},{l:'↺',fn:()=>{zoom.current=(TF_CFG[timeframe]||TF_CFG.M5).defaultZoom;off.current=0;draw();}}].map(({l,fn})=>(
           <button key={l} onClick={fn} className="w-6 h-6 rounded bg-white/8 hover:bg-white/15 text-white/40 hover:text-white text-xs flex items-center justify-center transition-all">{l}</button>
         ))}
       </div>
@@ -244,9 +272,9 @@ export default function Dashboard({ user, onLogout }) {
   const [candlesH1, setCandlesH1]       = useState([]);
   const [candlesM15, setCandlesM15]     = useState([]);
   const [candlesM1, setCandlesM1]       = useState([]);
-  const [demandZones, setDemandZones]   = useState([]);
-  const [supplyZones, setSupplyZones]   = useState([]);
-  const [structureData, setStructData]  = useState(null);
+  // Per-timeframe zones and structure
+  const [zonesData, setZonesData]       = useState({ m5:{d:[],s:[]}, m15:{d:[],s:[]}, h1:{d:[],s:[]} });
+  const [structAll, setStructAll]       = useState({ m5:null, m15:null, h1:null });
   const [m1Steps, setM1Steps]           = useState(null);
   const [isMobile, setMobile]           = useState(window.innerWidth < 768);
   const [showMenu, setShowMenu]         = useState(false);
@@ -312,15 +340,17 @@ export default function Dashboard({ user, onLogout }) {
           if(j.candlesH1?.length)  setCandlesH1(j.candlesH1);
           if(j.candlesM15?.length) setCandlesM15(j.candlesM15);
           if(j.candlesM1?.length)  setCandlesM1(j.candlesM1);
-          // Structure labels and zones for chart visualization
-          if(j.demandZones)  setDemandZones(j.demandZones);
-          if(j.supplyZones)  setSupplyZones(j.supplyZones);
-          // Pick structure data based on current timeframe
-          const sData = tf==='H1'  ? j.structureH1Data :
-                        tf==='M15' ? j.structureM15Data :
-                        tf==='M1'  ? null : j.structureM5Data;
-          setStructData(sData || null);
-          // M1 precision steps
+          // Store all TF zones and structure for switching
+          setZonesData({
+            m5:  { d: j.demandZones    || [], s: j.supplyZones    || [] },
+            m15: { d: j.demandZonesM15 || [], s: j.supplyZonesM15 || [] },
+            h1:  { d: j.demandZonesH1  || [], s: j.supplyZonesH1  || [] },
+          });
+          setStructAll({
+            m5:  j.structureM5Data  || null,
+            m15: j.structureM15Data || null,
+            h1:  j.structureH1Data  || null,
+          });
           if(j.m1Steps) setM1Steps(j.m1Steps);
         }
       } catch {}
@@ -538,9 +568,10 @@ export default function Dashboard({ user, onLogout }) {
 
         {/* Chart — tall */}
         <Chart candles={currentCandles} height={isMobile?240:420} signal={signal}
-          demandZones={tf==='H1'?[]:demandZones}
-          supplyZones={tf==='H1'?[]:supplyZones}
-          structureData={structureData}
+          timeframe={tf}
+          demandZones={tf==='M1'?[]: tf==='H1'?zonesData.h1.d : tf==='M15'?zonesData.m15.d : zonesData.m5.d}
+          supplyZones={tf==='M1'?[]: tf==='H1'?zonesData.h1.s : tf==='M15'?zonesData.m15.s : zonesData.m5.s}
+          structureData={tf==='M1'?null : tf==='H1'?structAll.h1 : tf==='M15'?structAll.m15 : structAll.m5}
           m1Steps={tf==='M1'?m1Steps:null}/>
       </div>
 
