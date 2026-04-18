@@ -298,6 +298,7 @@ export default function Dashboard({ user, onLogout }) {
   const [zonesData, setZonesData]       = useState({ m5:{d:[],s:[]}, m15:{d:[],s:[]}, h1:{d:[],s:[]} });
   const [structAll, setStructAll]       = useState({ m5:null, m15:null, h1:null });
   const [m1Steps, setM1Steps]           = useState(null);
+  const [liveAnalysis, setLiveAnalysis] = useState(null); // current WAIT state + what system seeks
   const [isMobile, setMobile]           = useState(window.innerWidth < 768);
   const [showMenu, setShowMenu]         = useState(false);
   const [showPricing, setShowPricing]   = useState(false);
@@ -389,6 +390,22 @@ export default function Dashboard({ user, onLogout }) {
             h1:  j.structureH1Data  || null,
           });
           if(j.m1Steps) setM1Steps(j.m1Steps);
+          // Live analysis: what is the system currently waiting for
+          if(j.signal) setLiveAnalysis({
+            action:   j.signal.action,
+            model:    j.signal.model,
+            reason:   j.signal.reason,
+            score:    j.signal.score,
+            structM5:  j.structureM5,
+            structM15: j.structureM15,
+            structH1:  j.structureH1,
+            pd:        j.premiumDiscount,
+            demandCount: (j.demandZones||[]).filter(z=>!z.mitigated).length,
+            supplyCount: (j.supplyZones||[]).filter(z=>!z.mitigated).length,
+            ls: j.liveState || {},
+            m1: j.m1Steps   || null,
+            ts: Date.now()
+          });
         }
       } catch {}
     };
@@ -731,6 +748,211 @@ export default function Dashboard({ user, onLogout }) {
           </div>
         </div>
       )}
+
+      {/* ── SMC LIVE ANALYSIS PANEL ── */}
+      {liveAnalysis&&(()=>{
+        const la = liveAnalysis;
+        const ls = la.ls || {};
+        const m1 = la.m1 || null;
+        const isWait = ['WAIT','LOADING','COOLDOWN'].includes(la.action);
+        const isLive = la.action==='LONG'||la.action==='SHORT';
+        const opDir  = la.structH1==='BULLISH'?'LONG':la.structH1==='BEARISH'?'SHORT':null;
+        const opBull = opDir==='LONG';
+
+        // ── Per-TF structure badges
+        const TFBadge = ({tf,trend})=>{
+          const bull=trend==='BULLISH',bear=trend==='BEARISH';
+          return (
+            <div className={`flex flex-col items-center px-2.5 py-1.5 rounded-lg border ${bull?'bg-emerald-500/10 border-emerald-500/25':bear?'bg-red-500/10 border-red-500/25':'bg-white/4 border-white/8'}`}>
+              <span className="text-[8px] text-white/30 font-semibold">{tf}</span>
+              <span className={`text-[9px] font-bold mt-0.5 ${bull?'text-emerald-400':bear?'text-red-400':'text-white/25'}`}>
+                {bull?'▲':bear?'▼':'—'}
+              </span>
+            </div>
+          );
+        };
+
+        // ── Step checker: returns {ok, label, detail}
+        const h1ok   = la.structH1!=='NEUTRAL'&&la.structH1!=='LOADING';
+        const m15ok  = la.structM15!=='NEUTRAL'&&la.structM15!=='LOADING';
+        const align  = h1ok&&m15ok&&la.structH1===la.structM15;
+        const m5ok   = la.structM5!=='NEUTRAL'&&la.structM5!=='LOADING';
+        const triOk  = align&&m5ok&&la.structM5===la.structH1;
+        const obDemOk= ls.demandM5>0||ls.demandM15>0;
+        const obSupOk= ls.supplyM5>0||ls.supplyM15>0;
+        const obOk   = opBull?obDemOk:obSupOk;
+        const pdOk   = (opBull&&la.pd==='DISCOUNT')||(!opBull&&la.pd==='PREMIUM');
+        const chochOk= ls.hasChoch&&ls.chochSide===(opBull?'BUY':'SELL');
+        const pullOk = ls.hasPullback&&ls.pullbackSide===(opBull?'BUY':'SELL');
+        const m1cOk  = m1?.m1conf||false;
+
+        // ── Model-specific step list
+        const modelSteps = {
+          MTF_CONFLUENCE: [
+            { ok: h1ok,   label:'H1 con tendencia', detail: la.structH1 },
+            { ok: m15ok,  label:'M15 alineado con H1', detail: la.structM15 },
+            { ok: align,  label:'H1 = M15 misma dirección', detail: align?'✓ Alineados':`${la.structH1} ≠ ${la.structM15}` },
+            { ok: obOk,   label:`OBs ${opBull?'demanda':'oferta'} activos`, detail: opBull?`${ls.demandM5} M5 · ${ls.demandM15} M15`:`${ls.supplyM5} M5 · ${ls.supplyM15} M15` },
+            { ok: pullOk, label:'Precio toca el Order Block', detail: pullOk?`OB tocado · ${ls.pullbackConf||'—'}`:'Esperando retroceso al OB' },
+            { ok: pdOk,   label:`Zona ${opBull?'Discount (compras)':'Premium (ventas)'}`, detail: la.pd, bonus:true },
+          ],
+          CHOCH_PULLBACK: [
+            { ok: h1ok,    label:'H1 con tendencia definida', detail: la.structH1 },
+            { ok: m15ok,   label:'M15 no en contra', detail: la.structM15 },
+            { ok: chochOk, label:`CHoCH ${opBull?'alcista':'bajista'} detectado`, detail: ls.hasChoch?`${ls.chochType}`:'Sin CHoCH aún' },
+            { ok: obOk,    label:'Order Block formado en el CHoCH', detail: obOk?`${opBull?ls.demandM5:ls.supplyM5} OBs activos`:'Sin OB en zona' },
+            { ok: pullOk,  label:'Pullback al OB + confirmación', detail: pullOk?`Confirmado: ${ls.pullbackConf||'—'}`:'Esperando retroceso' },
+            { ok: ls.mtfConfluence, label:'MTF Confluencia (bonus +5)', detail: ls.mtfConfluence?'M5+H1 alineados':'—', bonus:true },
+          ],
+          LIQUIDITY_GRAB: [
+            { ok: h1ok,  label:'H1 no opuesto a la dirección', detail: la.structH1 },
+            { ok: m15ok, label:'M15 no opuesto a la dirección', detail: la.structM15 },
+            { ok: ls.hasChoch||ls.hasBos, label:'Barrido de nivel + rechazo en M5', detail: ls.hasChoch?`CHoCH: ${ls.chochType}`:(ls.hasBos?`BOS: ${ls.bosSide}`:'Sin barrido detectado') },
+            { ok: pullOk, label:'Vela de reversión fuerte', detail: pullOk?`Rechazo ${ls.pullbackConf}`:'Esperando vela de rechazo' },
+            { ok: pdOk,   label:`Precio en ${opBull?'Discount':'Premium'}`, detail: la.pd, bonus:true },
+          ],
+          BOS_CONTINUATION: [
+            { ok: h1ok,  label:'H1 define tendencia', detail: la.structH1 },
+            { ok: m15ok, label:'M15 alineado', detail: la.structM15 },
+            { ok: ls.hasBos, label:`BOS ${opBull?'alcista':'bajista'} confirmado`, detail: ls.hasBos?`BOS: ${ls.bosSide}`:'Sin ruptura de estructura' },
+            { ok: obOk,  label:'OB en zona del BOS', detail: obOk?`${opBull?ls.demandM5:ls.supplyM5} OBs`:'Sin OB' },
+            { ok: pullOk,label:'Pullback al nivel del BOS', detail: pullOk?`Confirmado`:'Esperando pullback' },
+            { ok: pdOk,  label:`${opBull?'Discount':'Premium'} (bonus)`, detail: la.pd, bonus:true },
+          ],
+          OTE_ENTRY: [
+            { ok: h1ok,    label:'H1 con impulso claro', detail: la.structH1 },
+            { ok: m15ok,   label:'M15 alineado', detail: la.structM15 },
+            { ok: ls.hasBos||ls.hasChoch, label:'BOS/CHoCH confirmado (impulso)', detail: ls.hasBos?`BOS ${ls.bosSide}`:(ls.hasChoch?`CHoCH ${ls.chochSide}`:'Sin impulso') },
+            { ok: obOk,    label:'OB en zona Fibonacci 62-79%', detail: obOk?'OBs en zona OTE':'Sin OB en retroceso' },
+            { ok: pullOk,  label:'Precio retrocede a zona OTE', detail: pullOk?`OB tocado · ${ls.pullbackConf}`:'Esperando retroceso OTE' },
+          ],
+          FVG_ENTRY: [
+            { ok: h1ok,    label:'H1 define tendencia', detail: la.structH1 },
+            { ok: m15ok,   label:'M15 no en contra', detail: la.structM15 },
+            { ok: ls.hasBos||ls.hasChoch, label:'Impulso con desequilibrio (FVG)', detail: ls.hasBos?`BOS ${ls.bosSide}`:'Detectando FVG' },
+            { ok: obOk,    label:'FVG / OB en zona', detail: obOk?`${opBull?ls.demandM5:ls.supplyM5} zonas activas`:'Sin desequilibrio' },
+            { ok: pullOk,  label:'Precio llena el FVG', detail: pullOk?`FVG: ${ls.pullbackConf}`:'Esperando retorno al gap' },
+          ],
+          M1_PRECISION: [
+            { ok: h1ok,    label:'H1 define dirección', detail: la.structH1 },
+            { ok: m15ok&&la.structM15===la.structH1, label:'M15 = H1 misma dirección', detail: m15ok&&la.structM15===la.structH1?'Alineados':`${la.structM15} ≠ ${la.structH1}` },
+            { ok: triOk,   label:'M5 = M15 = H1 triple confluencia', detail: triOk?'Triple alineación confirmada':`M5: ${la.structM5}` },
+            { ok: obOk,    label:'Zona de interés M15', detail: obOk?`${la.pd}`:'Buscando OB en M15' },
+            { ok: m1cOk,   label:'Confirmación en M1 (CHoCH/OB/Wick)', detail: m1?.m1conf?'M1 confirma entrada':'Esperando patrón M1' },
+          ],
+          INDUCEMENT: [
+            { ok: h1ok,  label:'H1 define dirección', detail: la.structH1 },
+            { ok: m15ok&&la.structM15===la.structH1, label:'M15 = H1', detail: m15ok&&la.structM15===la.structH1?'Alineados':la.structM15 },
+            { ok: ls.hasChoch||ls.hasBos, label:'Barrido de liquidez obvio', detail: ls.hasChoch?`CHoCH: ${ls.chochType}`:(ls.hasBos?`BOS: ${ls.bosSide}`:'Buscando sweep') },
+            { ok: pullOk, label:'Rechazo fuerte + vela de reversión', detail: pullOk?`${ls.pullbackConf}`:'Esperando mecha de rechazo' },
+            { ok: pdOk,   label:`${opBull?'Discount':'Premium'} (bonus)`, detail: la.pd, bonus:true },
+          ],
+        };
+
+        const steps = modelSteps[la.model] || modelSteps.MTF_CONFLUENCE;
+        const doneCount  = steps.filter(s=>s.ok&&!s.bonus).length;
+        const totalReq   = steps.filter(s=>!s.bonus).length;
+        const allDone    = doneCount === totalReq;
+        const pct        = Math.round((doneCount/totalReq)*100);
+        const progColor  = allDone?'#22c55e':pct>=60?'#f59e0b':'#ef4444';
+
+        const modelMeta = {
+          MTF_CONFLUENCE:   { label:'MTF Confluencia',  icon:'⚡' },
+          CHOCH_PULLBACK:   { label:'CHoCH + Pullback', icon:'🔄' },
+          LIQUIDITY_GRAB:   { label:'Liquidity Grab',   icon:'🎯' },
+          BOS_CONTINUATION: { label:'BOS Continuación', icon:'📈' },
+          OTE_ENTRY:        { label:'OTE Fibonacci',    icon:'📐' },
+          FVG_ENTRY:        { label:'Fair Value Gap',   icon:'📊' },
+          M1_PRECISION:     { label:'M1 Precisión',     icon:'🎯' },
+          INDUCEMENT:       { label:'Inducement',       icon:'🪤' },
+          WAIT:             { label:'Analizando',       icon:'👁' },
+          COOLDOWN:         { label:'Cooldown',         icon:'⏳' },
+          LOADING:          { label:'Cargando',         icon:'🔄' },
+        };
+        const mm = modelMeta[la.model] || modelMeta.WAIT;
+
+        return (
+          <div className="bg-[#0c0c18] rounded-xl border border-white/[0.05] overflow-hidden">
+
+            {/* Header */}
+            <div className="px-4 py-3 border-b border-white/[0.04] flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <span className="text-lg">{mm.icon}</span>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="text-white/80 text-xs font-bold">{mm.label}</p>
+                    {opDir&&<span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${opDir==='LONG'?'bg-emerald-500/20 text-emerald-400':'bg-red-500/20 text-red-400'}`}>Buscando {opDir}</span>}
+                  </div>
+                  <p className="text-white/20 text-[9px] mt-0.5">
+                    {isLive?`✓ Señal activa · Score ${la.score}%`:isWait?la.reason||'Monitoreando mercado':''}
+                  </p>
+                </div>
+              </div>
+              <div className="text-right">
+                <p className="text-white/50 text-xs font-bold font-mono" style={{color:progColor}}>{doneCount}/{totalReq}</p>
+                <p className="text-[8px] text-white/15">condiciones</p>
+              </div>
+            </div>
+
+            {/* TF badges */}
+            <div className="px-4 pt-3 pb-2 flex gap-2">
+              <TFBadge tf="H1"  trend={la.structH1}/>
+              <TFBadge tf="M15" trend={la.structM15}/>
+              <TFBadge tf="M5"  trend={la.structM5}/>
+              <div className="flex-1 flex items-center pl-2">
+                <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
+                  <div className="h-full rounded-full transition-all duration-500" style={{width:`${pct}%`,background:progColor}}/>
+                </div>
+              </div>
+            </div>
+
+            {/* Steps checklist */}
+            <div className="px-4 pb-3 space-y-1.5">
+              <p className="text-[8px] text-white/20 uppercase tracking-widest mb-2">Condiciones de activación</p>
+              {steps.map((s,i)=>(
+                <div key={i} className={`flex items-start gap-2.5 px-2 py-1.5 rounded-lg transition-all ${s.ok?s.bonus?'bg-emerald-500/4':'bg-emerald-500/7':'bg-white/[0.02]'}`}>
+                  {/* Status icon */}
+                  <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 text-[10px] font-bold ${s.ok?(s.bonus?'bg-emerald-500/20 text-emerald-400':'bg-emerald-500/30 text-emerald-300'):'bg-white/6 text-white/20'}`}>
+                    {s.ok?'✓':i+1}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-[10px] font-semibold leading-tight ${s.ok?s.bonus?'text-emerald-400/70':'text-white/70':'text-white/35'}`}>
+                      {s.label}{s.bonus&&<span className="ml-1 text-[8px] text-emerald-500/60 font-normal">+bonus</span>}
+                    </p>
+                    <p className={`text-[9px] mt-0.5 ${s.ok?'text-white/35':'text-white/20'}`}>{s.detail||'—'}</p>
+                  </div>
+                  {/* Right indicator */}
+                  <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 mt-1.5 ${s.ok?s.bonus?'bg-emerald-500/40':'bg-emerald-500':'bg-white/10'}`}/>
+                </div>
+              ))}
+
+              {/* Bottom status */}
+              {allDone&&isWait&&(
+                <div className="mt-2 flex items-center gap-2 px-3 py-2 bg-amber-500/10 rounded-lg border border-amber-500/25">
+                  <span className="text-amber-400">⚡</span>
+                  <p className="text-[10px] text-amber-300/90 font-semibold">Todas las condiciones listas — esperando toque al OB</p>
+                </div>
+              )}
+              {!allDone&&!isLive&&(
+                <div className="mt-2 px-3 py-2 bg-white/[0.02] rounded-lg border border-white/[0.04]">
+                  <p className="text-[9px] text-white/25">
+                    Faltan <span className="text-white/50 font-semibold">{totalReq-doneCount} condición{totalReq-doneCount>1?'es':''}</span> — el sistema sigue monitoreando
+                  </p>
+                </div>
+              )}
+              {isLive&&(
+                <div className="mt-2 flex items-center gap-2 px-3 py-2 bg-emerald-500/10 rounded-lg border border-emerald-500/25">
+                  <span className="text-emerald-400 text-base">✓</span>
+                  <div>
+                    <p className="text-[10px] text-emerald-300/90 font-semibold">Señal activa — {la.action} · {la.score}%</p>
+                    <p className="text-[9px] text-emerald-400/50">{la.reason}</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Pending signals mini-list */}
       {pending.length>0&&(

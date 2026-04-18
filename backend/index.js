@@ -881,7 +881,7 @@ function resubscribeToAsset(symbol) {
   derivWs.send(JSON.stringify({
     ticks_history: symbol,
     adjust_start_time: 1,
-    count: 100,
+    count: 200,
     end: 'latest',
     granularity: 300,
     style: 'candles',
@@ -1805,8 +1805,8 @@ const SMC = {
           low:          obLow,
           mid:          obMid,
           wickLow:      base.low,  // For SL positioning
-          index:        i,         // Candle index for X positioning on chart
-          epoch:        base.epoch || base.time, // For time-based X
+          index:        i,         // array index (may shift — use epoch for display)
+          epoch:        base.epoch || (base.time ? Math.floor(base.time/1000) : null),
           impulseSize,
           pattern:      impulseUp ? 'ENGULFING' : 'IMPULSE',
           strength:     impulseUp ? 'STRONG' : (strongImpulse ? 'STRONG' : 'NORMAL'),
@@ -1851,7 +1851,7 @@ const SMC = {
           mid:          obMid,
           wickHigh:     base.high, // For SL positioning
           index:        i,
-          epoch:        base.epoch || base.time,
+          epoch:        base.epoch || (base.time ? Math.floor(base.time/1000) : null),
           impulseSize,
           pattern:      impulseDown ? 'ENGULFING' : 'IMPULSE',
           strength:     impulseDown ? 'STRONG' : (strongImpulse ? 'STRONG' : 'NORMAL'),
@@ -4148,7 +4148,7 @@ function connectDeriv() {
               candles[candles.length - 1] = newCandle;
             } else if (newCandle.time > last.time) {
               candles.push(newCandle);
-              if (candles.length > 200) candles.shift();
+              if (candles.length > 300) candles.shift(); // 300 keeps more OB history
               analyzeAsset(symbol);
             }
           }
@@ -4210,7 +4210,7 @@ function requestH1(symbol) {
     derivWs.send(JSON.stringify({
       ticks_history: symbol,
       adjust_start_time: 1,
-      count: 100,
+      count: 80,
       end: 'latest',
       granularity: 3600,
       style: 'candles'
@@ -4223,7 +4223,7 @@ function requestM15(symbol) {
     derivWs.send(JSON.stringify({
       ticks_history: symbol,
       adjust_start_time: 1,
-      count: 100,
+      count: 200,
       end: 'latest',
       granularity: 900,   // 15 min
       style: 'candles'
@@ -4669,10 +4669,10 @@ app.get('/api/analyze/:symbol', (req, res) => {
     price: data.price,
     signal: data.signal,
     lockedSignal: data.lockedSignal,
-    candles: data.candles.slice(-100),
-    candlesH1: data.candlesH1?.slice(-50) || [],
-    candlesM15: data.candlesM15?.slice(-100) || [],
-    candlesM1: data.candlesM1?.slice(-120) || [],
+    candles: data.candles.slice(-200),       // 200 M5 candles for OB accuracy
+    candlesH1: data.candlesH1?.slice(-80) || [],
+    candlesM15: data.candlesM15?.slice(-200) || [],
+    candlesM1: data.candlesM1?.slice(-150) || [],
     // M5 zones
     demandZones:   data.demandZones   || [],
     supplyZones:   data.supplyZones   || [],
@@ -4691,6 +4691,27 @@ app.get('/api/analyze/:symbol', (req, res) => {
     structureM15Data: data.structureM15 || {},
     // Swings with epoch for time-based positioning on chart
     swingsM5: (data.swings||[]).map(s=>({ type:s.type, price:s.price, index:s.index, epoch: s.time ? Math.floor(s.time/1000) : null })),
+    // Live analysis details for the "what we're looking for" panel
+    liveState: {
+      hasChoch:     !!data.choch,
+      chochSide:    data.choch?.side || null,
+      chochType:    data.choch?.type || null,
+      hasBos:       !!data.bos,
+      bosSide:      data.bos?.side  || null,
+      hasPullback:  !!data.pullback,
+      pullbackSide: data.pullback?.side || null,
+      pullbackConf: data.pullback?.confirmation || null,
+      orderFlowMom: data.orderFlow?.momentum || 'NEUTRAL',
+      orderFlowStr: data.orderFlow?.strength || 0,
+      mtfConfluence: !!data.mtfConfluence,
+      tripleConfl:  !!(data.mtfConfluence && data.structureM15?.trend === data.structureH1?.trend && data.structureM15?.trend !== 'NEUTRAL'),
+      h1Strong:     (data.structureH1?.strength || 0) >= 55,
+      m15Strong:    (data.structureM15?.strength || 0) >= 45,
+      demandM5:     (data.demandZones||[]).filter(z=>!z.mitigated).length,
+      supplyM5:     (data.supplyZones||[]).filter(z=>!z.mitigated).length,
+      demandM15:    (data.demandZonesM15||[]).filter(z=>!z.mitigated).length,
+      supplyM15:    (data.supplyZonesM15||[]).filter(z=>!z.mitigated).length,
+    },
     // M1 precision checklist
     m1Steps: data.m1Steps || null,
     h1Loaded:  data.h1Loaded,
