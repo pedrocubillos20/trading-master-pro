@@ -8,7 +8,7 @@ const ALLOWED = ['stpRNG', 'frxXAUUSD', '1HZ100V'];
 
 // ─── CHART — per-timeframe aware rendering ────────────────────────────────────
 const Chart = ({ candles, height, signal, timeframe='M5',
-                 demandZones=[], supplyZones=[], structureData=null, m1Steps=null }) => {
+                 demandZones=[], supplyZones=[], structureData=null, m1Steps=null, chartOverlays=null }) => {
   const svgRef = useRef(null);
   const zoom   = useRef(60);
   const off    = useRef(0);
@@ -201,6 +201,67 @@ const Chart = ({ candles, height, signal, timeframe='M5',
       h += `<rect x="${barX}" y="${barY+barH-3}" width="${progW|0}" height="3" rx="1.5" fill="${progCol}" opacity="0.7"/>`;
     }
 
+
+    // ── CHoCH / BOS / Liquidity OVERLAY LINES ──
+    // Professional short horizontal lines at the break level
+    if (chartOverlays && timeframe !== 'M1') {
+      const drawOverlayLine = (ov, label, col, dash='') => {
+        if (!ov?.level) return;
+        const y = Math.max(P.t+8, Math.min(P.t+CH-8, Y(ov.level)));
+
+        // Find X position by epoch
+        let lineStartX = P.l;
+        if (ov.epoch) {
+          const idx = vis.findIndex(cv => {
+            const ce = cv.epoch || Math.floor((cv.time||0)/1000);
+            return Math.abs(ce - ov.epoch) <= 120;
+          });
+          if (idx >= 0) lineStartX = P.l + idx * cW;
+        }
+
+        // Full-width dashed line at the level
+        const lineCol = col;
+        h += `<line x1="${lineStartX|0}" y1="${y|0}" x2="${W-P.r-2}" y2="${y|0}" stroke="${lineCol}" stroke-width="1.2" ${dash?`stroke-dasharray="${dash}"`:'stroke-dasharray="6,3"'} opacity="0.75"/>`;
+
+        // Short marker line (thicker, left side) — "short horizontal line" style
+        const markerW = Math.min(60, CW * 0.12);
+        h += `<line x1="${lineStartX|0}" y1="${y|0}" x2="${(lineStartX+markerW)|0}" y2="${y|0}" stroke="${lineCol}" stroke-width="2.5" opacity="0.9"/>`;
+
+        // Label pill
+        const lblW = label.length * 5.8 + 12;
+        h += `<rect x="${(lineStartX+markerW+3)|0}" y="${(y-8)|0}" width="${lblW|0}" height="15" rx="3" fill="${lineCol}" fill-opacity="0.9"/>`;
+        h += `<text x="${(lineStartX+markerW+3+lblW/2)|0}" y="${(y+4)|0}" text-anchor="middle" fill="#000" font-size="7.5" font-weight="800" font-family="monospace">${label}</text>`;
+
+        // Small triangle arrow indicating direction
+        const isBull = label.includes('↑') || label.includes('BULL');
+        const triX = lineStartX + markerW + lblW + 8;
+        const triSize = 5;
+        if (isBull) {
+          h += `<polygon points="${triX},${y+triSize} ${triX+triSize*1.5},${y+triSize} ${triX+triSize*0.75},${y-triSize}" fill="${lineCol}" opacity="0.7"/>`;
+        } else {
+          h += `<polygon points="${triX},${y-triSize} ${triX+triSize*1.5},${y-triSize} ${triX+triSize*0.75},${y+triSize}" fill="${lineCol}" opacity="0.7"/>`;
+        }
+      };
+
+      // CHoCH — Change of Character (trend reversal signal)
+      if (chartOverlays.choch) {
+        const co = chartOverlays.choch;
+        const isBull = co.side === 'BUY';
+        const label = isBull ? 'CHoCH↑' : 'CHoCH↓';
+        const col   = isBull ? '#22c55e' : '#ef4444';
+        drawOverlayLine(co, label, col);
+      }
+
+      // BOS — Break of Structure (continuation signal)
+      if (chartOverlays.bos) {
+        const bo = chartOverlays.bos;
+        const isBull = bo.side === 'BUY';
+        const label = isBull ? 'BOS↑' : 'BOS↓';
+        const col   = isBull ? '#34d399' : '#f87171';
+        drawOverlayLine(bo, label, col, '3,3');
+      }
+    }
+
     // ── CANDLES ──
     vis.forEach((c,i) => {
       const o_=+c.open,cl=+c.close,hi_=+c.high,lo_=+c.low;
@@ -255,7 +316,7 @@ const Chart = ({ candles, height, signal, timeframe='M5',
     });
 
     svg.innerHTML = h;
-  }, [candles, height, signal, timeframe, demandZones, supplyZones, structureData, m1Steps]);
+  }, [candles, height, signal, timeframe, demandZones, supplyZones, structureData, m1Steps, chartOverlays]);
 
   useEffect(()=>{ draw(); },[draw]);
   useEffect(()=>{
@@ -299,6 +360,7 @@ export default function Dashboard({ user, onLogout }) {
   const [structAll, setStructAll]       = useState({ m5:null, m15:null, h1:null });
   const [m1Steps, setM1Steps]           = useState(null);
   const [liveAnalysis, setLiveAnalysis] = useState(null); // current WAIT state + what system seeks
+  const [chartOverlays, setChartOverlays] = useState(null); // CHoCH/BOS lines for chart
   const [isMobile, setMobile]           = useState(window.innerWidth < 768);
   const [showMenu, setShowMenu]         = useState(false);
   const [showPricing, setShowPricing]   = useState(false);
@@ -390,6 +452,7 @@ export default function Dashboard({ user, onLogout }) {
             h1:  j.structureH1Data  || null,
           });
           if(j.m1Steps) setM1Steps(j.m1Steps);
+          if(j.chartOverlays) setChartOverlays(j.chartOverlays);
           // Live analysis: what is the system currently waiting for
           if(j.signal) setLiveAnalysis({
             action:   j.signal.action,
@@ -631,6 +694,7 @@ export default function Dashboard({ user, onLogout }) {
           demandZones={tf==='M1'?[]: tf==='H1'?zonesData.h1.d : tf==='M15'?zonesData.m15.d : zonesData.m5.d}
           supplyZones={tf==='M1'?[]: tf==='H1'?zonesData.h1.s : tf==='M15'?zonesData.m15.s : zonesData.m5.s}
           structureData={tf==='M1'?null : tf==='H1'?structAll.h1 : tf==='M15'?structAll.m15 : structAll.m5}
+          chartOverlays={chartOverlays}
           m1Steps={tf==='M1'?m1Steps:null}/>
       </div>
 

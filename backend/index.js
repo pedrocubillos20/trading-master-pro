@@ -1943,123 +1943,89 @@ const SMC = {
 
   detectCHoCH(candles, swings) {
     if (swings.length < 4 || candles.length < 20) return null;
-    
-    const highs = swings.filter(s => s.type === 'high').slice(-6);
-    const lows = swings.filter(s => s.type === 'low').slice(-6);
+
+    const highs = swings.filter(s => s.type === 'high').slice(-8);
+    const lows  = swings.filter(s => s.type === 'low').slice(-8);
     const lastPrice = candles[candles.length - 1].close;
     const avgRange = this.getAvgRange(candles);
-    
-    // ═══════════════════════════════════════════
-    // BULLISH CHoCH: Estaba bajando (LL) y rompió un high
-    // ═══════════════════════════════════════════
-    if (lows.length >= 2 && highs.length >= 2) {
-      // Buscar si hubo estructura bajista (LL = Lower Lows)
-      let hadLowerLows = false;
-      for (let i = 1; i < lows.length; i++) {
-        if (lows[i].price < lows[i-1].price) {
-          hadLowerLows = true;
-          break;
-        }
-      }
-      
-      if (hadLowerLows) {
-        // Buscar el último LH (Lower High) que fue roto
-        const sortedHighs = [...highs].sort((a, b) => a.index - b.index);
-        
-        for (let i = sortedHighs.length - 2; i >= 0; i--) {
-          const targetHigh = sortedHighs[i];
-          
-          // ¿El precio rompió este high en las últimas 20 velas?
-          const breakIndex = candles.findIndex((c, idx) => 
-            idx > targetHigh.index && c.close > targetHigh.price
-          );
-          
-          if (breakIndex > 0 && breakIndex >= candles.length - 20) {
-            // CHoCH confirmado, ahora verificar si estamos en pullback
-            // (precio retrocedió pero sigue arriba del nivel de CHoCH o cerca)
-            const chochLevel = targetHigh.price;
-            const inPullbackZone = lastPrice >= chochLevel - avgRange * 2 && 
-                                   lastPrice <= chochLevel + avgRange * 5;
-            
-            if (inPullbackZone || lastPrice > chochLevel) {
-              return { 
-                type: 'BULLISH_CHOCH', 
-                side: 'BUY', 
-                level: chochLevel,
-                breakIndex 
-              };
-            }
-          }
-        }
-      }
-    }
-    
-    // ═══════════════════════════════════════════
-    // BEARISH CHoCH: Estaba subiendo (HH) y rompió un low
-    // ═══════════════════════════════════════════
-    if (highs.length >= 2 && lows.length >= 2) {
-      // Buscar si hubo estructura alcista (HH = Higher Highs)
-      let hadHigherHighs = false;
-      for (let i = 1; i < highs.length; i++) {
-        if (highs[i].price > highs[i-1].price) {
-          hadHigherHighs = true;
-          break;
-        }
-      }
-      
+
+    // ── BEARISH CHoCH: HH structure broken — price breaks below a HL ──
+    // Pattern: HH → LH (trend weakening) → price closes below last HL = CHoCH
+    if (highs.length >= 2) {
+      const hadHigherHighs = highs.some((h,i) => i>0 && h.price > highs[i-1].price);
       if (hadHigherHighs) {
-        // Buscar el último HL (Higher Low) que fue roto
-        const sortedLows = [...lows].sort((a, b) => a.index - b.index);
-        
+        const sortedLows = [...lows].sort((a,b) => a.index - b.index);
         for (let i = sortedLows.length - 2; i >= 0; i--) {
           const targetLow = sortedLows[i];
-          
-          // ¿El precio rompió este low en las últimas 20 velas?
-          const breakIndex = candles.findIndex((c, idx) => 
+          const breakIdx = candles.findIndex((c, idx) =>
             idx > targetLow.index && c.close < targetLow.price
           );
-          
-          if (breakIndex > 0 && breakIndex >= candles.length - 20) {
-            // CHoCH confirmado, ahora verificar si estamos en pullback
-            const chochLevel = targetLow.price;
-            const inPullbackZone = lastPrice <= chochLevel + avgRange * 2 && 
-                                   lastPrice >= chochLevel - avgRange * 5;
-            
-            if (inPullbackZone || lastPrice < chochLevel) {
-              return { 
-                type: 'BEARISH_CHOCH', 
-                side: 'SELL', 
-                level: chochLevel,
-                breakIndex 
-              };
-            }
+          if (breakIdx > 0 && breakIdx >= candles.length - 25) {
+            const level = targetLow.price;
+            const epoch = candles[breakIdx]?.epoch || (candles[breakIdx]?.time ? Math.floor(candles[breakIdx].time/1000) : null);
+            return {
+              type: 'BEARISH_CHOCH', side: 'SELL', level,
+              breakIndex: breakIdx, epoch,
+              obEpoch: candles[Math.max(0, breakIdx-3)]?.epoch || null, // OB cerca del CHoCH
+            };
           }
         }
       }
     }
-    
+
+    // ── BULLISH CHoCH: LL structure broken — price closes above last LH ──
+    if (lows.length >= 2) {
+      const hadLowerLows = lows.some((l,i) => i>0 && l.price < lows[i-1].price);
+      if (hadLowerLows) {
+        const sortedHighs = [...highs].sort((a,b) => a.index - b.index);
+        for (let i = sortedHighs.length - 2; i >= 0; i--) {
+          const targetHigh = sortedHighs[i];
+          const breakIdx = candles.findIndex((c, idx) =>
+            idx > targetHigh.index && c.close > targetHigh.price
+          );
+          if (breakIdx > 0 && breakIdx >= candles.length - 25) {
+            const level = targetHigh.price;
+            const epoch = candles[breakIdx]?.epoch || (candles[breakIdx]?.time ? Math.floor(candles[breakIdx].time/1000) : null);
+            return {
+              type: 'BULLISH_CHOCH', side: 'BUY', level,
+              breakIndex: breakIdx, epoch,
+              obEpoch: candles[Math.max(0, breakIdx-3)]?.epoch || null,
+            };
+          }
+        }
+      }
+    }
+
     return null;
   },
 
   detectBOS(candles, swings, structure) {
     if (swings.length < 3 || candles.length < 5) return null;
-    
     const lastPrice = candles[candles.length - 1].close;
-    
+    const last = candles[candles.length - 1];
+
     if (structure.trend === 'BULLISH') {
-      const highs = swings.filter(s => s.type === 'high').slice(-2);
-      if (highs.length >= 1 && lastPrice > highs[highs.length - 1].price) {
-        return { type: 'BULLISH_BOS', side: 'BUY', level: highs[highs.length - 1].price };
+      const highs = swings.filter(s => s.type === 'high').slice(-3);
+      if (highs.length >= 1) {
+        const swingHigh = highs[highs.length - 1];
+        if (lastPrice > swingHigh.price) {
+          const epoch = last?.epoch || (last?.time ? Math.floor(last.time/1000) : null);
+          return { type: 'BULLISH_BOS', side: 'BUY', level: swingHigh.price, epoch,
+            breakIndex: candles.length - 1 };
+        }
       }
     }
-    
     if (structure.trend === 'BEARISH') {
-      const lows = swings.filter(s => s.type === 'low').slice(-2);
-      if (lows.length >= 1 && lastPrice < lows[lows.length - 1].price) {
-        return { type: 'BEARISH_BOS', side: 'SELL', level: lows[lows.length - 1].price };
+      const lows = swings.filter(s => s.type === 'low').slice(-3);
+      if (lows.length >= 1) {
+        const swingLow = lows[lows.length - 1];
+        if (lastPrice < swingLow.price) {
+          const epoch = last?.epoch || (last?.time ? Math.floor(last.time/1000) : null);
+          return { type: 'BEARISH_BOS', side: 'SELL', level: swingLow.price, epoch,
+            breakIndex: candles.length - 1 };
+        }
       }
     }
-    
     return null;
   },
 
@@ -2090,86 +2056,85 @@ const SMC = {
     const price = last.close;
     const avgRange = this.getAvgRange(candles);
 
-    // ═══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════
     // PULLBACK A ZONA DE DEMANDA (COMPRAS)
-    // Regla: precio TOCA el OB Y muestra rechazo → entrada en el OB, SL bajo mecha
-    // ═══════════════════════════════════════════════════════════════════════════
+    // Flujo SMC: CHoCH alcista → OB formado → BOS → retroceso al OB
+    // Entry: 50% del cuerpo del OB (nivel óptimo)
+    // SL: debajo de la mecha inferior del OB
+    // ══════════════════════════════════════════════════════════════
     for (const zone of demandZones) {
-      if (zone.mitigated) continue; // OB ya mitigado — no operar
+      if (zone.mitigated) continue;
 
-      // Precio debe tocar el OB (low de la vela actual o anterior dentro del OB)
-      const lastInOB = last.low <= zone.high && last.low >= zone.low - avgRange * 0.4;
-      const prevInOB = prev.low <= zone.high && prev.low >= zone.low - avgRange * 0.4;
-      const touched  = lastInOB || prevInOB;
+      // ── TOQUE: precio entra al OB (low ≤ zona.high, cualquier profundidad) ──
+      const lastTouches = last.low <= zone.high && last.high >= zone.low - avgRange * 0.5;
+      const prevTouches = prev.low <= zone.high && prev.high >= zone.low - avgRange * 0.5;
+      const touched = lastTouches || prevTouches;
       if (!touched) continue;
 
-      // Confirmaciones de rechazo alcista
-      const bullishClose   = last.close > last.open;
-      const closedAboveOB  = last.close > zone.high;
-      const wickBull       = (Math.min(last.open,last.close) - last.low) > Math.abs(last.close-last.open)*0.5;
-      const engulfingBull  = prev.close<prev.open && last.close>last.open && last.close>prev.open;
-      const hasConfirmation = (bullishClose && closedAboveOB) || (wickBull && last.close>zone.mid) || engulfingBull;
-      if (!hasConfirmation) continue;
+      // ── CONFIRMACIÓN de rechazo alcista (vela de confirmación en el OB) ──
+      const wickBull     = (Math.min(last.open,last.close) - last.low) > Math.abs(last.close-last.open)*0.4;
+      const bullClose    = last.close > last.open && last.close > zone.mid;
+      const engulfBull   = prev.close<prev.open && last.close>last.open && last.close>prev.open;
+      const pinBar       = last.low < zone.low && last.close > zone.mid; // pin bar tocando el OB
+      const hasConf      = bullClose || wickBull || engulfBull || pinBar;
+      if (!hasConf) continue;
 
-      // ── ENTRY: at the OB high (top of the demand zone body) ──
-      // This ensures we enter AT the zone, not wherever price currently is
-      const entry = zone.high; // Top of the OB body = entry level
-      const slLevel = zone.wickLow || zone.low;
-      const stop = +(slLevel - avgRange * 0.15).toFixed(config.decimals);
-      const risk = entry - stop;
-      if (risk <= 0 || risk > avgRange * 6) continue;
+      // ── ENTRY AL 50% DEL OB (Optimal Trade Entry dentro del OB) ──
+      const entry50 = +(zone.mid).toFixed(config.decimals); // 50% del cuerpo del OB
+      const slLevel = +(( (zone.wickLow || zone.low) - avgRange * 0.15 )).toFixed(config.decimals);
+      const risk    = entry50 - slLevel;
+      if (risk <= 0 || risk > avgRange * 8) continue;
 
       return {
-        type:         'DEMAND_ZONE',
-        side:         'BUY',
-        zone,
-        entry:        +entry.toFixed(config.decimals),
-        stop,
-        tp1:          +(entry + risk * 1.5).toFixed(config.decimals),
-        tp2:          +(entry + risk * 2.5).toFixed(config.decimals),
-        tp3:          +(entry + risk * 4.0).toFixed(config.decimals),
-        touchedOB:    true,
-        confirmation: engulfingBull ? 'ENGULFING' : wickBull ? 'REJECTION_WICK' : 'BULLISH_CLOSE'
+        type: 'DEMAND_ZONE', side: 'BUY', zone,
+        entry: entry50, stop: slLevel,
+        tp1:  +(entry50 + risk * 1.5).toFixed(config.decimals),
+        tp2:  +(entry50 + risk * 2.5).toFixed(config.decimals),
+        tp3:  +(entry50 + risk * 4.0).toFixed(config.decimals),
+        touchedOB: true,
+        entryType: 'OB_50PCT',
+        confirmation: engulfBull?'ENGULFING':pinBar?'PIN_BAR':wickBull?'REJECTION_WICK':'BULLISH_CLOSE'
       };
     }
 
-    // ═══════════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════
     // PULLBACK A ZONA DE SUPPLY (VENTAS)
-    // Regla: precio TOCA el OB Y muestra rechazo → entrada en el OB, SL sobre mecha
-    // ═══════════════════════════════════════════════════════════════════════════
+    // Flujo SMC: CHoCH bajista → OB formado → BOS → retroceso al OB
+    // Entry: 50% del cuerpo del OB (nivel óptimo)
+    // SL: encima de la mecha superior del OB
+    // ══════════════════════════════════════════════════════════════
     for (const zone of supplyZones) {
       if (zone.mitigated) continue;
 
-      const lastInOB = last.high >= zone.low && last.high <= zone.high + avgRange * 0.4;
-      const prevInOB = prev.high >= zone.low && prev.high <= zone.high + avgRange * 0.4;
-      const touched  = lastInOB || prevInOB;
+      // ── TOQUE: precio entra al OB (high ≥ zona.low) ──
+      const lastTouches = last.high >= zone.low && last.low <= zone.high + avgRange * 0.5;
+      const prevTouches = prev.high >= zone.low && prev.low <= zone.high + avgRange * 0.5;
+      const touched = lastTouches || prevTouches;
       if (!touched) continue;
 
-      const bearishClose  = last.close < last.open;
-      const closedBelowOB = last.close < zone.low;
-      const wickBear      = (last.high - Math.max(last.open,last.close)) > Math.abs(last.close-last.open)*0.5;
-      const engulfingBear = prev.close>prev.open && last.close<last.open && last.close<prev.open;
-      const hasConfirmation = (bearishClose && closedBelowOB) || (wickBear && last.close<zone.mid) || engulfingBear;
-      if (!hasConfirmation) continue;
+      // ── CONFIRMACIÓN de rechazo bajista ──
+      const wickBear   = (last.high - Math.max(last.open,last.close)) > Math.abs(last.close-last.open)*0.4;
+      const bearClose  = last.close < last.open && last.close < zone.mid;
+      const engulfBear = prev.close>prev.open && last.close<last.open && last.close<prev.open;
+      const pinBarB    = last.high > zone.high && last.close < zone.mid; // pin bar en el OB
+      const hasConf    = bearClose || wickBear || engulfBear || pinBarB;
+      if (!hasConf) continue;
 
-      // ── ENTRY: at the OB low (bottom of the supply zone body) ──
-      const entry = zone.low; // Bottom of OB body = entry for sell
-      const slLevel = zone.wickHigh || zone.high;
-      const stop = +(slLevel + avgRange * 0.15).toFixed(config.decimals);
-      const risk = stop - entry;
-      if (risk <= 0 || risk > avgRange * 6) continue;
+      // ── ENTRY AL 50% DEL OB ──
+      const entry50 = +(zone.mid).toFixed(config.decimals);
+      const slLevel = +(( (zone.wickHigh || zone.high) + avgRange * 0.15 )).toFixed(config.decimals);
+      const risk    = slLevel - entry50;
+      if (risk <= 0 || risk > avgRange * 8) continue;
 
       return {
-        type:         'SUPPLY_ZONE',
-        side:         'SELL',
-        zone,
-        entry:        +entry.toFixed(config.decimals),
-        stop,
-        tp1:          +(entry - risk * 1.5).toFixed(config.decimals),
-        tp2:          +(entry - risk * 2.5).toFixed(config.decimals),
-        tp3:          +(entry - risk * 4.0).toFixed(config.decimals),
-        touchedOB:    true,
-        confirmation: engulfingBear ? 'ENGULFING' : wickBear ? 'REJECTION_WICK' : 'BEARISH_CLOSE'
+        type: 'SUPPLY_ZONE', side: 'SELL', zone,
+        entry: entry50, stop: slLevel,
+        tp1:  +(entry50 - risk * 1.5).toFixed(config.decimals),
+        tp2:  +(entry50 - risk * 2.5).toFixed(config.decimals),
+        tp3:  +(entry50 - risk * 4.0).toFixed(config.decimals),
+        touchedOB: true,
+        entryType: 'OB_50PCT',
+        confirmation: engulfBear?'ENGULFING':pinBarB?'PIN_BAR':wickBear?'REJECTION_WICK':'BEARISH_CLOSE'
       };
     }
 
@@ -4696,8 +4661,12 @@ app.get('/api/analyze/:symbol', (req, res) => {
       hasChoch:     !!data.choch,
       chochSide:    data.choch?.side || null,
       chochType:    data.choch?.type || null,
+      chochLevel:   data.choch?.level || null,
+      chochEpoch:   data.choch?.epoch || null,
       hasBos:       !!data.bos,
       bosSide:      data.bos?.side  || null,
+      bosLevel:     data.bos?.level || null,
+      bosEpoch:     data.bos?.epoch || null,
       hasPullback:  !!data.pullback,
       pullbackSide: data.pullback?.side || null,
       pullbackConf: data.pullback?.confirmation || null,
@@ -4711,6 +4680,19 @@ app.get('/api/analyze/:symbol', (req, res) => {
       supplyM5:     (data.supplyZones||[]).filter(z=>!z.mitigated).length,
       demandM15:    (data.demandZonesM15||[]).filter(z=>!z.mitigated).length,
       supplyM15:    (data.supplyZonesM15||[]).filter(z=>!z.mitigated).length,
+    },
+    // Chart overlay lines: CHoCH, BOS for visualization
+    chartOverlays: {
+      choch: data.choch ? {
+        type: data.choch.type, side: data.choch.side,
+        level: data.choch.level, epoch: data.choch.epoch,
+        breakIndex: data.choch.breakIndex
+      } : null,
+      bos: data.bos ? {
+        type: data.bos.type, side: data.bos.side,
+        level: data.bos.level, epoch: data.bos.epoch,
+        breakIndex: data.bos.breakIndex
+      } : null,
     },
     // M1 precision checklist
     m1Steps: data.m1Steps || null,
