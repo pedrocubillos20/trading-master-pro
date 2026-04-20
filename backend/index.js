@@ -2041,20 +2041,24 @@ const SMC = {
       const hasConf      = bullClose || wickBull || engulfBull || pinBar;
       if (!hasConf) continue;
 
-      // ── ENTRY AL 50% DEL OB (Optimal Trade Entry dentro del OB) ──
-      const entry50 = +(zone.mid).toFixed(config.decimals); // 50% del cuerpo del OB
+      // ── ENTRY: use CURRENT close price (not historical OB level) ──
+      // The OB was touched and confirmed. Entry is where price IS NOW.
+      // SL goes below the OB wick (not below current price).
+      const entryCurrent = +(last.close).toFixed(config.decimals);
       const slLevel = +(( (zone.wickLow || zone.low) - avgRange * 0.15 )).toFixed(config.decimals);
-      const risk    = entry50 - slLevel;
-      if (risk <= 0 || risk > avgRange * 8) continue;
+      const risk    = entryCurrent - slLevel;
+      if (risk <= 0 || risk > avgRange * 10) continue;
+      // Reject if current price is already more than 1 risk-unit ABOVE zone.high (too late)
+      if (entryCurrent > zone.high + avgRange * 0.5) continue;
 
       return {
         type: 'DEMAND_ZONE', side: 'BUY', zone,
-        entry: entry50, stop: slLevel,
-        tp1:  +(entry50 + risk * 1.5).toFixed(config.decimals),
-        tp2:  +(entry50 + risk * 2.5).toFixed(config.decimals),
-        tp3:  +(entry50 + risk * 4.0).toFixed(config.decimals),
+        entry: entryCurrent, stop: slLevel,
+        tp1:  +(entryCurrent + risk * 1.5).toFixed(config.decimals),
+        tp2:  +(entryCurrent + risk * 2.5).toFixed(config.decimals),
+        tp3:  +(entryCurrent + risk * 4.0).toFixed(config.decimals),
         touchedOB: true,
-        entryType: 'OB_50PCT',
+        entryType: 'OB_CURRENT_CLOSE',
         confirmation: engulfBull?'ENGULFING':pinBar?'PIN_BAR':wickBull?'REJECTION_WICK':'BULLISH_CLOSE'
       };
     }
@@ -2082,20 +2086,22 @@ const SMC = {
       const hasConf    = bearClose || wickBear || engulfBear || pinBarB;
       if (!hasConf) continue;
 
-      // ── ENTRY AL 50% DEL OB ──
-      const entry50 = +(zone.mid).toFixed(config.decimals);
+      // ── ENTRY: use CURRENT close price (not historical OB level) ──
+      const entryCurrent = +(last.close).toFixed(config.decimals);
       const slLevel = +(( (zone.wickHigh || zone.high) + avgRange * 0.15 )).toFixed(config.decimals);
-      const risk    = slLevel - entry50;
-      if (risk <= 0 || risk > avgRange * 8) continue;
+      const risk    = slLevel - entryCurrent;
+      if (risk <= 0 || risk > avgRange * 10) continue;
+      // Reject if current price is already more than 0.5 avgRange BELOW zone.low (too late)
+      if (entryCurrent < zone.low - avgRange * 0.5) continue;
 
       return {
         type: 'SUPPLY_ZONE', side: 'SELL', zone,
-        entry: entry50, stop: slLevel,
-        tp1:  +(entry50 - risk * 1.5).toFixed(config.decimals),
-        tp2:  +(entry50 - risk * 2.5).toFixed(config.decimals),
-        tp3:  +(entry50 - risk * 4.0).toFixed(config.decimals),
+        entry: entryCurrent, stop: slLevel,
+        tp1:  +(entryCurrent - risk * 1.5).toFixed(config.decimals),
+        tp2:  +(entryCurrent - risk * 2.5).toFixed(config.decimals),
+        tp3:  +(entryCurrent - risk * 4.0).toFixed(config.decimals),
         touchedOB: true,
-        entryType: 'OB_50PCT',
+        entryType: 'OB_CURRENT_CLOSE',
         confirmation: engulfBear?'ENGULFING':pinBarB?'PIN_BAR':wickBear?'REJECTION_WICK':'BEARISH_CLOSE'
       };
     }
@@ -4317,6 +4323,24 @@ function analyzeAsset(symbol) {
     return;
   }
   
+  // ═══════════════════════════════════════════════════════════════
+  // FILTRO CRÍTICO: Validar que el precio sigue cerca de la entrada
+  // Si el precio ya se movió más de 0.5 riesgo desde la entrada → RECHAZAR
+  // Esto evita entrar en señales "vencidas" donde el movimiento ya ocurrió
+  // ═══════════════════════════════════════════════════════════════
+  const currentPrice = data.price;
+  const signalEntry  = signal.entry;
+  const signalRisk   = Math.abs(signalEntry - signal.stop);
+  const priceDistance = Math.abs(currentPrice - signalEntry);
+
+  if (signalRisk > 0 && priceDistance > signalRisk * 0.6) {
+    const direction = signal.action === 'LONG'
+      ? (currentPrice > signalEntry ? 'precio ya subió past entry' : 'precio cayó demasiado')
+      : (currentPrice < signalEntry ? 'precio ya bajó past entry' : 'precio subió demasiado');
+    console.log(`⛔ [${config.shortName}] SEÑAL VENCIDA — ${direction}: price=${currentPrice.toFixed(config.decimals)} entry=${signalEntry} dist=${priceDistance.toFixed(config.decimals)} > ${(signalRisk*0.6).toFixed(config.decimals)}`);
+    return;
+  }
+
   // ═══════════════════════════════════════════
   // GENERAR SEÑAL (pasó todos los filtros)
   // ═══════════════════════════════════════════

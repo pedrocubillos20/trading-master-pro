@@ -215,16 +215,24 @@ const Chart = ({ candles, height, signal, timeframe='M5',
         if (!ov?.level) return;
         const levelY = Math.max(P.t+8, Math.min(P.t+CH-8, Y(ov.level)));
 
-        // Find the break candle by epoch
+        // Find break candle: try breakIndex first (most accurate), then epoch
         let breakX = -1;
-        if (ov.epoch) {
+        // Use breakIndex if in visible range
+        if (ov.breakIndex !== undefined) {
+          const relIdx = ov.breakIndex - visStartIndex;
+          if (relIdx >= 0 && relIdx < vis.length) {
+            breakX = P.l + relIdx * cW + cW/2;
+          }
+        }
+        // Fallback: search by epoch
+        if (breakX < 0 && ov.epoch) {
           const idx = vis.findIndex(cv => {
             const ce = cv.epoch || Math.floor((cv.time||0)/1000);
-            return Math.abs(ce - ov.epoch) <= 90; // ±90s tolerance
+            return Math.abs(ce - ov.epoch) <= 60; // ±60s for M5
           });
           if (idx >= 0) breakX = P.l + idx * cW + cW/2;
         }
-        if (breakX < 0) breakX = W - P.r - 80; // fallback
+        if (breakX < 0) breakX = W - P.r - 120; // last fallback: right edge
 
         // ── 1. Horizontal level line (dashed, full width to right edge) ──
         h += `<line x1="${P.l}" y1="${levelY|0}" x2="${W-P.r}" y2="${levelY|0}" stroke="${col}" stroke-width="${lw}" stroke-dasharray="${dash}" opacity="0.6"/>`;
