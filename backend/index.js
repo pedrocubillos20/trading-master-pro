@@ -185,7 +185,7 @@ const LearningSystem = {
 // =============================================
 const SIGNAL_CONFIG = {
   // Score mínimo para generar señal
-  MIN_SCORE: 82, // v17.0: Alta calidad — solo señales fuertes
+  MIN_SCORE: 84, // v19: Unified with analyze() minScore
   
   // Score mínimo específico para Boom/Crash (más estricto)
   MIN_SCORE_BOOM_CRASH: 80, // v24: Ajustado
@@ -203,7 +203,7 @@ const SIGNAL_CONFIG = {
   // MTF CONFLUENCE - AHORA REQUERIDO PARA CALIDAD
   // true = H1 y M5 deben estar alineados (menos señales, mejor calidad)
   // ═══════════════════════════════════════════════════════════════
-  REQUIRE_MTF_CONFLUENCE: true, // v24: ¡HABILITADO! Para mejor win rate
+  REQUIRE_MTF_CONFLUENCE: false, // H1+M15 already enforced by marketReady filter // v24: ¡HABILITADO! Para mejor win rate
   
   // Modelos que SIEMPRE pueden operar sin MTF (tienen su propia lógica H1)
   MODELS_WITHOUT_MTF: [
@@ -2365,7 +2365,7 @@ const SMC = {
       structureH1.trend !== 'NEUTRAL';
 
     const signals = [];
-    const minScore = 84; // v19.0: Adjusted for improved OB detection
+    const minScore = SIGNAL_CONFIG.MIN_SCORE; // Use config value
 
     // ── FILTRO GLOBAL: H1 y M15 deben estar alineados para cualquier señal ──
     // Si H1 y M15 no están en la misma dirección → no operar
@@ -3779,6 +3779,11 @@ function checkSignalHits() {
     // Después de TP1: Mover SL a Entry (breakeven)
     if (signal.tp1Hit && !signal.trailingTP1) {
       signal.trailingTP1 = true;
+      // Reset structure alerts — we're in profit, no need to show warning
+      signal.criticalAlertSent = false;
+      signal.moderateAlertSent = false;
+      signal.structureAlert = null;
+      if (data.lockedSignal) data.lockedSignal.structureAlert = null;
       signal.originalStop = signal.stop;
       signal.stop = signal.entry;
       locked.stop = signal.entry;
