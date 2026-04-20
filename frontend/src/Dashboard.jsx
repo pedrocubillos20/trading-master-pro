@@ -202,63 +202,72 @@ const Chart = ({ candles, height, signal, timeframe='M5',
     }
 
 
-    // ── CHoCH / BOS / Liquidity OVERLAY LINES ──
-    // Professional short horizontal lines at the break level
+    // ── CHoCH / BOS OVERLAY — exact break candle marker + horizontal level ──
     if (chartOverlays && timeframe !== 'M1') {
-      const drawOverlayLine = (ov, label, col, dash='') => {
+      /**
+       * drawStructureMarker: draws the classic SMC structure break visualization
+       * - Horizontal dashed line at the broken level (from the swing to the right edge)
+       * - VERTICAL tick at the exact break candle (where price closed beyond the level)
+       * - Label pill at the break candle
+       * - Small dot at the candle that created the original swing
+       */
+      const drawStructureMarker = (ov, label, col, lw=1.5, dash='6,3') => {
         if (!ov?.level) return;
-        const y = Math.max(P.t+8, Math.min(P.t+CH-8, Y(ov.level)));
+        const levelY = Math.max(P.t+8, Math.min(P.t+CH-8, Y(ov.level)));
 
-        // Find X position by epoch
-        let lineStartX = P.l;
+        // Find the break candle by epoch
+        let breakX = -1;
         if (ov.epoch) {
           const idx = vis.findIndex(cv => {
             const ce = cv.epoch || Math.floor((cv.time||0)/1000);
-            return Math.abs(ce - ov.epoch) <= 120;
+            return Math.abs(ce - ov.epoch) <= 90; // ±90s tolerance
           });
-          if (idx >= 0) lineStartX = P.l + idx * cW;
+          if (idx >= 0) breakX = P.l + idx * cW + cW/2;
         }
+        if (breakX < 0) breakX = W - P.r - 80; // fallback
 
-        // Full-width dashed line at the level
-        const lineCol = col;
-        h += `<line x1="${lineStartX|0}" y1="${y|0}" x2="${W-P.r-2}" y2="${y|0}" stroke="${lineCol}" stroke-width="1.2" ${dash?`stroke-dasharray="${dash}"`:'stroke-dasharray="6,3"'} opacity="0.75"/>`;
+        // ── 1. Horizontal level line (dashed, full width to right edge) ──
+        h += `<line x1="${P.l}" y1="${levelY|0}" x2="${W-P.r}" y2="${levelY|0}" stroke="${col}" stroke-width="${lw}" stroke-dasharray="${dash}" opacity="0.6"/>`;
 
-        // Short marker line (thicker, left side) — "short horizontal line" style
-        const markerW = Math.min(60, CW * 0.12);
-        h += `<line x1="${lineStartX|0}" y1="${y|0}" x2="${(lineStartX+markerW)|0}" y2="${y|0}" stroke="${lineCol}" stroke-width="2.5" opacity="0.9"/>`;
+        // ── 2. Vertical break marker at the exact break candle ──
+        const vTop = Math.max(P.t+4, levelY - 22);
+        const vBot = Math.min(P.t+CH-4, levelY + 22);
+        h += `<line x1="${breakX|0}" y1="${vTop|0}" x2="${breakX|0}" y2="${vBot|0}" stroke="${col}" stroke-width="2" opacity="0.9"/>`;
 
-        // Label pill
-        const lblW = label.length * 5.8 + 12;
-        h += `<rect x="${(lineStartX+markerW+3)|0}" y="${(y-8)|0}" width="${lblW|0}" height="15" rx="3" fill="${lineCol}" fill-opacity="0.9"/>`;
-        h += `<text x="${(lineStartX+markerW+3+lblW/2)|0}" y="${(y+4)|0}" text-anchor="middle" fill="#000" font-size="7.5" font-weight="800" font-family="monospace">${label}</text>`;
+        // ── 3. Diamond/circle at the break point ──
+        h += `<circle cx="${breakX|0}" cy="${levelY|0}" r="4" fill="${col}" opacity="0.9"/>`;
+        h += `<circle cx="${breakX|0}" cy="${levelY|0}" r="2" fill="#000" opacity="0.6"/>`;
 
-        // Small triangle arrow indicating direction
-        const isBull = label.includes('↑') || label.includes('BULL');
-        const triX = lineStartX + markerW + lblW + 8;
-        const triSize = 5;
-        if (isBull) {
-          h += `<polygon points="${triX},${y+triSize} ${triX+triSize*1.5},${y+triSize} ${triX+triSize*0.75},${y-triSize}" fill="${lineCol}" opacity="0.7"/>`;
-        } else {
-          h += `<polygon points="${triX},${y-triSize} ${triX+triSize*1.5},${y-triSize} ${triX+triSize*0.75},${y+triSize}" fill="${lineCol}" opacity="0.7"/>`;
-        }
+        // ── 4. Label pill right of the break ──
+        const lblW = label.length * 6 + 14;
+        const lblX = Math.min(breakX + 8, W - P.r - lblW - 2);
+        h += `<rect x="${lblX|0}" y="${(levelY-9)|0}" width="${lblW|0}" height="17" rx="3" fill="${col}" fill-opacity="0.92"/>`;
+        h += `<text x="${(lblX+lblW/2)|0}" y="${(levelY+4)|0}" text-anchor="middle" fill="#000" font-size="8" font-weight="800" font-family="monospace">${label}</text>`;
       };
 
-      // CHoCH — Change of Character (trend reversal signal)
+      // M5 CHoCH (entry signal, brighter)
       if (chartOverlays.choch) {
         const co = chartOverlays.choch;
-        const isBull = co.side === 'BUY';
-        const label = isBull ? 'CHoCH↑' : 'CHoCH↓';
-        const col   = isBull ? '#22c55e' : '#ef4444';
-        drawOverlayLine(co, label, col);
+        const bull = co.side === 'BUY';
+        drawStructureMarker(co, bull?'CHoCH↑ M5':'CHoCH↓ M5', bull?'#22c55e':'#ef4444', 1.5, '6,3');
       }
-
-      // BOS — Break of Structure (continuation signal)
+      // M5 BOS (continuation, slightly muted)
       if (chartOverlays.bos) {
         const bo = chartOverlays.bos;
-        const isBull = bo.side === 'BUY';
-        const label = isBull ? 'BOS↑' : 'BOS↓';
-        const col   = isBull ? '#34d399' : '#f87171';
-        drawOverlayLine(bo, label, col, '3,3');
+        const bull = bo.side === 'BUY';
+        drawStructureMarker(bo, bull?'BOS↑ M5':'BOS↓ M5', bull?'#34d399':'#f87171', 1.2, '3,3');
+      }
+      // M15 CHoCH (trend marker, different shade)
+      if (chartOverlays.chochM15) {
+        const co15 = chartOverlays.chochM15;
+        const bull = co15.side === 'BUY';
+        drawStructureMarker(co15, bull?'CHoCH↑ M15':'CHoCH↓ M15', bull?'#4ade80':'#fb923c', 2, '8,4');
+      }
+      // M15 BOS
+      if (chartOverlays.bosM15) {
+        const bo15 = chartOverlays.bosM15;
+        const bull = bo15.side === 'BUY';
+        drawStructureMarker(bo15, bull?'BOS↑ M15':'BOS↓ M15', bull?'#86efac':'#fca5a5', 1.2, '4,4');
       }
     }
 
@@ -359,8 +368,9 @@ export default function Dashboard({ user, onLogout }) {
   const [zonesData, setZonesData]       = useState({ m5:{d:[],s:[]}, m15:{d:[],s:[]}, h1:{d:[],s:[]} });
   const [structAll, setStructAll]       = useState({ m5:null, m15:null, h1:null });
   const [m1Steps, setM1Steps]           = useState(null);
-  const [liveAnalysis, setLiveAnalysis] = useState(null); // current WAIT state + what system seeks
-  const [chartOverlays, setChartOverlays] = useState(null); // CHoCH/BOS lines for chart
+  const [liveAnalysis, setLiveAnalysis] = useState(null);
+  const [chartOverlays, setChartOverlays] = useState(null);
+  const [signalExp, setSignalExp]         = useState(null); // why last signal fired
   const [isMobile, setMobile]           = useState(window.innerWidth < 768);
   const [showMenu, setShowMenu]         = useState(false);
   const [showPricing, setShowPricing]   = useState(false);
@@ -453,6 +463,7 @@ export default function Dashboard({ user, onLogout }) {
           });
           if(j.m1Steps) setM1Steps(j.m1Steps);
           if(j.chartOverlays) setChartOverlays(j.chartOverlays);
+          if(j.signalExplanation) setSignalExp(j.signalExplanation);
           // Live analysis: what is the system currently waiting for
           if(j.signal) setLiveAnalysis({
             action:   j.signal.action,
@@ -746,6 +757,27 @@ export default function Dashboard({ user, onLogout }) {
               <span className="text-2xl font-bold text-white font-mono">{signal.score}%</span>
             </div>
           </div>
+
+          {/* ── Why this signal fired ── */}
+          {signalExp?.reason&&(
+            <div className={`px-4 py-2.5 border-t ${isLong?'border-emerald-500/10 bg-emerald-500/4':'border-red-500/10 bg-red-500/4'}`}>
+              <p className="text-[9px] text-white/25 uppercase tracking-widest mb-1">¿Por qué se activó?</p>
+              <p className="text-[10px] text-white/55 leading-relaxed">{signalExp.reason}</p>
+              <div className="flex gap-3 mt-1.5 flex-wrap">
+                {[
+                  {l:'H1', v:signalExp.structureAtSignal?.h1},
+                  {l:'M15',v:signalExp.structureAtSignal?.m15},
+                  {l:'M5', v:signalExp.structureAtSignal?.m5},
+                  {l:'P/D',v:signalExp.structureAtSignal?.pd},
+                ].map(({l,v})=>(
+                  <span key={l} className="text-[9px]">
+                    <span className="text-white/20">{l}: </span>
+                    <span className={v==='BULLISH'?'text-emerald-400/70':v==='BEARISH'?'text-red-400/70':'text-white/40'}>{v||'—'}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Levels + Copy */}
           <div className="bg-[#0c0c18]">

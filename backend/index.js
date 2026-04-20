@@ -2340,7 +2340,10 @@ const SMC = {
       m15Loaded = true;
       const swingsM15 = this.findSwings(candlesM15, 3); // lb=3 for cleaner M15 swings
       structureM15 = this.analyzeStructure(swingsM15);
-      state.structureM15 = structureM15; // Update immediately for real-time
+      state.structureM15 = structureM15;
+      // M15 CHoCH and BOS for chart visualization
+      state.chochM15 = this.detectCHoCH(candlesM15, swingsM15);
+      state.bosM15   = this.detectBOS(candlesM15, swingsM15, structureM15);
       // M15 Order Block zones for chart visualization
       const zonesM15 = this.findZones(candlesM15);
       state.demandZonesM15 = zonesM15.demandZones;
@@ -2464,16 +2467,19 @@ const SMC = {
       const pdCorrect = (bos.side === 'BUY' && premiumDiscount === 'DISCOUNT') ||
                         (bos.side === 'SELL' && premiumDiscount === 'PREMIUM');
       
-      // Solo operar si tiene MTF o Premium/Discount correcto
-      if (mtfConfluence || pdCorrect) {
-        let score = 78; // Score base aumentado
-        if (mtfConfluence) score += 7; // Bonus con MTF
-        if (pdCorrect) score += 5; // Bonus con P/D correcto
+      // Must match opSide — BOS must go in the H1+M15 direction
+      if (bos.side === opSide) {
+        const pdBonus = (opSide==='BUY'&&premiumDiscount==='DISCOUNT') || (opSide==='SELL'&&premiumDiscount==='PREMIUM');
+        let score = 84;
+        if (tripleConfluence) score += 5;
+        if (pdBonus) score += 4;
+        if (m15Strong) score += 3;
+        score = Math.min(score, 97);
         signals.push({
           model: 'BOS_CONTINUATION',
           baseScore: score,
           pullback,
-          reason: `${bos.type} + Pullback${mtfConfluence ? ' + MTF' : ''}${pdCorrect ? ' + P/D' : ''}`
+          reason: `${bos.type} H1/M15 ${opDir} + OB 50%${pdBonus?' + '+premiumDiscount:''}`
         });
       }
     }
@@ -2549,25 +2555,24 @@ const SMC = {
     }
     */
     
-    // v24.0: FVG_ENTRY con filtros mejorados
+    // FVG_ENTRY: must align with opDir (H1+M15), not just M5
     for (const fvg of fvgZones) {
+      const fvgSide = fvg.side === 'BUY' ? 'BUY' : 'SELL';
+      if (fvgSide !== opSide) continue; // strictly aligned with H1+M15
       const inFVG = price >= fvg.low * 0.999 && price <= fvg.high * 1.001;
-      if (inFVG && pullback && fvg.side === pullback.side) {
-        const pdCorrect = (fvg.side === 'BUY' && premiumDiscount === 'DISCOUNT') ||
-                          (fvg.side === 'SELL' && premiumDiscount === 'PREMIUM');
-        
-        // v24: Solo operar si tiene MTF o P/D correcto
-        if (mtfConfluence || pdCorrect) {
-          let score = 76; // Score base aumentado
-          if (mtfConfluence) score += 8;
-          if (pdCorrect) score += 5;
-          signals.push({
-            model: 'FVG_ENTRY',
-            baseScore: score,
-            pullback,
-            reason: `En ${fvg.type}${mtfConfluence ? ' + MTF' : ''}${pdCorrect ? ' + P/D' : ''}`
-          });
-        }
+      if (inFVG && pullback && fvg.side === opSide && pullback.side === opSide) {
+        const pdBonus = (opSide==='BUY'&&premiumDiscount==='DISCOUNT') || (opSide==='SELL'&&premiumDiscount==='PREMIUM');
+        let score = 84; // base already high — requires H1+M15+FVG alignment
+        if (pdBonus)        score += 4;
+        if (tripleConfluence) score += 4;
+        if (choch)          score += 3;
+        score = Math.min(score, 98);
+        signals.push({
+          model: 'FVG_ENTRY',
+          baseScore: score,
+          pullback,
+          reason: `${fvg.type} H1/M15 ${opDir}${pdBonus?' + '+premiumDiscount:''}${choch?' + CHoCH':''}`
+        });
       }
     }
     
@@ -2795,18 +2800,18 @@ const SMC = {
         ? (lastCandle.close >= ote62 && lastCandle.close <= ote79)
         : (lastCandle.close <= ote62 && lastCandle.close >= ote79);
       
-      if (inOTE) {
-        let score = 82;
-        if (mtfConfluence) score += 5;
-        const pdCorrect = (choch.side === 'BUY' && premiumDiscount === 'DISCOUNT') ||
-                          (choch.side === 'SELL' && premiumDiscount === 'PREMIUM');
-        if (pdCorrect) score += 5;
-        
+      if (inOTE && choch.side === opSide) { // Must align with H1+M15
+        const pdBonus = (opSide==='BUY'&&premiumDiscount==='DISCOUNT')||(opSide==='SELL'&&premiumDiscount==='PREMIUM');
+        let score = 85;
+        if (tripleConfluence) score += 5;
+        if (pdBonus) score += 4;
+        if (m15Strong) score += 3;
+        score = Math.min(score, 97);
         signals.push({
           model: 'OTE_ENTRY',
           baseScore: score,
           pullback,
-          reason: `OTE Fib 62-79%${mtfConfluence ? ' + MTF' : ''}${pdCorrect ? ' + P/D' : ''}`
+          reason: `OTE 62-79% H1/M15 ${opDir}${pdBonus?' + '+premiumDiscount:''}`
         });
       }
     }
@@ -2821,57 +2826,58 @@ const SMC = {
       const brokeLow = prevCandle.low < prev2Candle.low && prevCandle.close > prev2Candle.low;
       
       // Confirmación: vela actual continúa la reversión
-      if (brokeHigh && lastCandle.close < prevCandle.close) {
-      // SHORT: Solo si H1 NO es BULLISH (H1 BEARISH o NEUTRAL)
-        // El PREMIUM puede ser bonus pero NO puede permitir ir contra H1 fuerte
-        const h1AllowsShort = structureH1.trend !== 'BULLISH';
-        const m15AllowsShort = !structureM15 || structureM15.trend !== 'BULLISH';
-        const pdBonus = premiumDiscount === 'PREMIUM';
-        
-        if (h1AllowsShort && m15AllowsShort) {
+      if (brokeHigh && lastCandle.close < prevCandle.close && opSide === 'SELL') {
+        // LIQUIDITY_GRAB SHORT: H1+M15 must be BEARISH
+        const avgR = avgRange;
+        const risk = prevCandle.high + avgR*0.3 - lastCandle.close;
+        if (risk > 0 && risk < avgR * 6) {
           const lgEntry = {
             side: 'SELL',
-            entry: lastCandle.close,
-            stop: prevCandle.high + avgRange * 0.3,
-            tp1: lastCandle.close - avgRange * 1.8,
-            tp2: lastCandle.close - avgRange * 3,
-            tp3: lastCandle.close - avgRange * 4.5
+            entry:  +(lastCandle.close).toFixed(config.decimals),
+            stop:   +(prevCandle.high + avgR * 0.25).toFixed(config.decimals),
+            tp1:    +(lastCandle.close - risk*1.5).toFixed(config.decimals),
+            tp2:    +(lastCandle.close - risk*2.5).toFixed(config.decimals),
+            tp3:    +(lastCandle.close - risk*4.0).toFixed(config.decimals),
+            entryType: 'LIQUIDITY_GRAB'
           };
-          let score = 80;
-          if (structureH1.trend === 'BEARISH') score += 7;
-          if (pdBonus) score += 5;
+          const pdBonus = premiumDiscount === 'PREMIUM';
+          let score = 85;
+          if (tripleConfluence) score += 4;
+          if (pdBonus) score += 4;
+          score = Math.min(score, 96);
           signals.push({
             model: 'LIQUIDITY_GRAB',
             baseScore: score,
             pullback: lgEntry,
-            reason: `Grab alcista fallido${structureH1.trend === 'BEARISH' ? ' + H1↓' : ''}${pdBonus ? ' + PREMIUM' : ''}`
+            reason: `Sweep alcista + H1/M15 BEARISH${pdBonus?' + PREMIUM':''}`
           });
         }
       }
       
-      if (brokeLow && lastCandle.close > prevCandle.close) {
-      // LONG: Solo si H1 NO es BEARISH (H1 BULLISH o NEUTRAL)
-        const h1AllowsLong = structureH1.trend !== 'BEARISH';
-        const m15AllowsLong = !structureM15 || structureM15.trend !== 'BEARISH';
-        const pdBonusL = premiumDiscount === 'DISCOUNT';
-        
-        if (h1AllowsLong && m15AllowsLong) {
+      if (brokeLow && lastCandle.close > prevCandle.close && opSide === 'BUY') {
+        // LIQUIDITY_GRAB LONG: H1+M15 must be BULLISH
+        const avgR = avgRange;
+        const risk = lastCandle.close - (prevCandle.low - avgR*0.25);
+        if (risk > 0 && risk < avgR * 6) {
           const lgEntry = {
             side: 'BUY',
-            entry: lastCandle.close,
-            stop: prevCandle.low - avgRange * 0.3,
-            tp1: lastCandle.close + avgRange * 1.8,
-            tp2: lastCandle.close + avgRange * 3,
-            tp3: lastCandle.close + avgRange * 4.5
+            entry:  +(lastCandle.close).toFixed(config.decimals),
+            stop:   +(prevCandle.low - avgR * 0.25).toFixed(config.decimals),
+            tp1:    +(lastCandle.close + risk*1.5).toFixed(config.decimals),
+            tp2:    +(lastCandle.close + risk*2.5).toFixed(config.decimals),
+            tp3:    +(lastCandle.close + risk*4.0).toFixed(config.decimals),
+            entryType: 'LIQUIDITY_GRAB'
           };
-          let score = 80;
-          if (structureH1.trend === 'BULLISH') score += 7;
-          if (pdBonusL) score += 5;
+          const pdBonus = premiumDiscount === 'DISCOUNT';
+          let score = 85;
+          if (tripleConfluence) score += 4;
+          if (pdBonus) score += 4;
+          score = Math.min(score, 96);
           signals.push({
             model: 'LIQUIDITY_GRAB',
             baseScore: score,
             pullback: lgEntry,
-            reason: `Grab bajista fallido${structureH1.trend === 'BULLISH' ? ' + H1↑' : ''}${pdBonusL ? ' + DISCOUNT' : ''}`
+            reason: `Sweep bajista + H1/M15 BULLISH${pdBonus?' + DISCOUNT':''}`
           });
         }
       }
@@ -4634,19 +4640,45 @@ app.get('/api/analyze/:symbol', (req, res) => {
       demandM15:    (data.demandZonesM15||[]).filter(z=>!z.mitigated).length,
       supplyM15:    (data.supplyZonesM15||[]).filter(z=>!z.mitigated).length,
     },
-    // Chart overlay lines: CHoCH, BOS for visualization
+    // Chart overlay lines: CHoCH, BOS for visualization (M5 and M15)
     chartOverlays: {
+      // M5 CHoCH — the entry signal (more recent, smaller timeframe)
       choch: data.choch ? {
         type: data.choch.type, side: data.choch.side,
         level: data.choch.level, epoch: data.choch.epoch,
-        breakIndex: data.choch.breakIndex
+        breakIndex: data.choch.breakIndex, tf: 'M5'
       } : null,
       bos: data.bos ? {
         type: data.bos.type, side: data.bos.side,
         level: data.bos.level, epoch: data.bos.epoch,
-        breakIndex: data.bos.breakIndex
+        breakIndex: data.bos.breakIndex, tf: 'M5'
+      } : null,
+      // M15 CHoCH — trend confirmation (higher timeframe)
+      chochM15: data.chochM15 ? {
+        type: data.chochM15.type, side: data.chochM15.side,
+        level: data.chochM15.level, epoch: data.chochM15.epoch,
+        breakIndex: data.chochM15.breakIndex, tf: 'M15'
+      } : null,
+      bosM15: data.bosM15 ? {
+        type: data.bosM15.type, side: data.bosM15.side,
+        level: data.bosM15.level, epoch: data.bosM15.epoch,
+        tf: 'M15'
       } : null,
     },
+    // Signal explanation — why the last signal fired
+    signalExplanation: data.signal ? {
+      model:     data.signal.model,
+      action:    data.signal.action,
+      reason:    data.signal.reason,
+      score:     data.signal.score,
+      entryType: data.signal.entryType || null,
+      structureAtSignal: {
+        m5:  data.structure?.trend,
+        m15: data.structureM15?.trend,
+        h1:  data.structureH1?.trend,
+        pd:  data.premiumDiscount,
+      }
+    } : null,
     // M1 precision checklist
     m1Steps: data.m1Steps || null,
     h1Loaded:  data.h1Loaded,
