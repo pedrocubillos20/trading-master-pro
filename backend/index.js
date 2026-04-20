@@ -191,13 +191,13 @@ const SIGNAL_CONFIG = {
   MIN_SCORE_BOOM_CRASH: 80, // v24: Ajustado
   
   // Cooldown entre análisis del mismo activo
-  ANALYSIS_COOLDOWN: 30000, // v24: 30 segundos (era 15)
+  ANALYSIS_COOLDOWN: 8000,  // 8s — real-time update on every new candle
   
   // Cooldown después de cerrar una señal antes de abrir otra
-  POST_SIGNAL_COOLDOWN: 900000, // 15 minutos entre señales - calidad sobre cantidad
+  POST_SIGNAL_COOLDOWN: 300000, // 5 minutos entre señales
   
   // Cooldown específico para Boom/Crash
-  POST_SIGNAL_COOLDOWN_BOOM_CRASH: 600000, // v24: 10 minutos
+  POST_SIGNAL_COOLDOWN_BOOM_CRASH: 300000, // 5 minutos
   
   // ═══════════════════════════════════════════════════════════════
   // MTF CONFLUENCE - AHORA REQUERIDO PARA CALIDAD
@@ -233,29 +233,17 @@ const SIGNAL_CONFIG = {
 };
 
 // Función para verificar si estamos en horario de trading
+// Synthetic indices (Step, V100) operan 24/7 — siempre activos
 function isInTradingHours(plan = 'free') {
+  // Elite/Premium: 24/7 — synthetic indices no tienen horario fijo
+  if (plan === 'premium' || plan === 'elite') return true;
+
   const now = new Date();
   const utcHour = now.getUTCHours() + now.getUTCMinutes() / 60;
-  
-  // Horario base (todos los planes)
   const baseStart = SIGNAL_CONFIG.TRADING_HOURS.base.start;
-  const baseEnd = SIGNAL_CONFIG.TRADING_HOURS.base.end;
-  
-  if (utcHour >= baseStart && utcHour < baseEnd) {
-    return true;
-  }
-  
-  // Horario nocturno (solo Premium y Elite)
-  if (plan === 'premium' || plan === 'elite') {
-    const nightStart = SIGNAL_CONFIG.TRADING_HOURS.night.start;
-    const nightEnd = SIGNAL_CONFIG.TRADING_HOURS.night.end;
-    
-    if (utcHour >= nightStart && utcHour < nightEnd) {
-      return true;
-    }
-  }
-  
-  return false;
+  const baseEnd   = SIGNAL_CONFIG.TRADING_HOURS.base.end;
+
+  return utcHour >= baseStart && utcHour < baseEnd;
 }
 
 const app = express();
@@ -928,6 +916,14 @@ function startMarketMonitoring() {
   // Verificar mercados cada 30 segundos
   marketCheckInterval = setInterval(checkAndResubscribeMarkets, 30000);
   console.log('✅ Monitor de mercados iniciado (verificación cada 30s)');
+
+  // ── Refrescar M15 y H1 cada 5 minutos para mantener estructura actualizada ──
+  setInterval(() => {
+    for (const symbol of MY_ASSETS) {
+      try { requestM15(symbol); } catch(e) {}
+      try { requestH1(symbol); } catch(e) {}
+    }
+  }, 5 * 60 * 1000);
 }
 
 const assetData = {};
@@ -994,17 +990,22 @@ const SMC = {
   findSwings(candles, lookback = 3) {
     const swings = [];
     if (candles.length < lookback * 2 + 1) return swings;
-    
-    for (let i = lookback; i < candles.length - lookback; i++) {
+
+    // Adaptive lookback: on larger candle sets use slightly bigger window for cleaner swings
+    const lb = Math.max(2, Math.min(lookback, Math.floor(candles.length / 20)));
+
+    for (let i = lb; i < candles.length - lb; i++) {
       const c = candles[i];
-      const left = candles.slice(i - lookback, i);
-      const right = candles.slice(i + 1, i + lookback + 1);
-      
+      const left  = candles.slice(i - lb, i);
+      const right = candles.slice(i + 1, i + lb + 1);
+
       const isHigh = left.every(x => x.high <= c.high) && right.every(x => x.high < c.high);
-      const isLow = left.every(x => x.low >= c.low) && right.every(x => x.low > c.low);
-      
-      if (isHigh) swings.push({ type: 'high', price: c.high, index: i, time: c.time });
-      if (isLow) swings.push({ type: 'low', price: c.low, index: i, time: c.time });
+      const isLow  = left.every(x => x.low  >= c.low)  && right.every(x => x.low  > c.low);
+
+      if (isHigh) swings.push({ type: 'high', price: c.high, index: i,
+        time: c.time, epoch: c.epoch || (c.time ? Math.floor(c.time/1000) : null) });
+      if (isLow)  swings.push({ type: 'low',  price: c.low,  index: i,
+        time: c.time, epoch: c.epoch || (c.time ? Math.floor(c.time/1000) : null) });
     }
     return swings;
   },
@@ -1012,68 +1013,61 @@ const SMC = {
   analyzeStructure(swings) {
     if (swings.length < 4) return { trend: 'NEUTRAL', strength: 0, labels: [] };
 
-    const recent = swings.slice(-10); // más historia
-    const highs = recent.filter(s => s.type === 'high');
-    const lows  = recent.filter(s => s.type === 'low');
+    // Use ALL swings but weight recent ones more heavily
+    const all   = swings;
+    const highs = all.filter(s => s.type === 'high');
+    const lows  = all.filter(s => s.type === 'low');
 
     if (highs.length < 2 || lows.length < 2) return { trend: 'NEUTRAL', strength: 0, labels: [] };
 
     let hh = 0, hl = 0, lh = 0, ll = 0;
-    const labels = []; // para visualización en el gráfico
+    const labels = [];
 
-    // Etiquetar highs: HH o LH
+    // Label every high
     for (let i = 1; i < highs.length; i++) {
-      if (highs[i].price > highs[i-1].price) {
-        hh++;
-        labels.push({ type: 'HH', price: highs[i].price, index: highs[i].index, time: highs[i].time, epoch: highs[i].time ? Math.floor(highs[i].time/1000) : null });
-      } else {
-        lh++;
-        labels.push({ type: 'LH', price: highs[i].price, index: highs[i].index, time: highs[i].time, epoch: highs[i].time ? Math.floor(highs[i].time/1000) : null });
-      }
+      const isHH = highs[i].price > highs[i-1].price;
+      if (isHH) { hh++; labels.push({ type:'HH', price:highs[i].price, index:highs[i].index, time:highs[i].time, epoch:highs[i].epoch }); }
+      else       { lh++; labels.push({ type:'LH', price:highs[i].price, index:highs[i].index, time:highs[i].time, epoch:highs[i].epoch }); }
     }
 
-    // Etiquetar lows: HL o LL
+    // Label every low
     for (let i = 1; i < lows.length; i++) {
-      if (lows[i].price > lows[i-1].price) {
-        hl++;
-        labels.push({ type: 'HL', price: lows[i].price, index: lows[i].index, time: lows[i].time, epoch: lows[i].time ? Math.floor(lows[i].time/1000) : null });
-      } else {
-        ll++;
-        labels.push({ type: 'LL', price: lows[i].price, index: lows[i].index, time: lows[i].time, epoch: lows[i].time ? Math.floor(lows[i].time/1000) : null });
-      }
+      const isHL = lows[i].price > lows[i-1].price;
+      if (isHL) { hl++; labels.push({ type:'HL', price:lows[i].price, index:lows[i].index, time:lows[i].time, epoch:lows[i].epoch }); }
+      else      { ll++; labels.push({ type:'LL', price:lows[i].price, index:lows[i].index, time:lows[i].time, epoch:lows[i].epoch }); }
     }
 
-    // Última etiqueta del primer high/low (referencia inicial)
-    if (highs.length >= 1) labels.push({ type: highs[0].price > (highs[1]?.price||0) ? 'HH' : 'LH', price: highs[0].price, index: highs[0].index, time: highs[0].time, epoch: highs[0].time ? Math.floor(highs[0].time/1000) : null, ref: true });
-    if (lows.length >= 1)  labels.push({ type: lows[0].price < (lows[1]?.price||Infinity) ? 'LL' : 'HL', price: lows[0].price, index: lows[0].index, time: lows[0].time, epoch: lows[0].time ? Math.floor(lows[0].time/1000) : null, ref: true });
+    // ── KEY FIX: Recent structure matters more ──
+    // Check the LAST 3 swing labels — they define the current market direction
+    const recLabels = labels.slice(-4);
+    const recBull = recLabels.filter(l => l.type==='HH'||l.type==='HL').length;
+    const recBear = recLabels.filter(l => l.type==='LH'||l.type==='LL').length;
 
-    const bullScore = hh + hl;
-    const bearScore = lh + ll;
+    const total = hh + hl + lh + ll;
+    if (total === 0) return { trend:'NEUTRAL', strength:0, labels };
 
-    // Más flexible: mayoría de puntos define la tendencia
-    const total = bullScore + bearScore;
-    if (total === 0) return { trend: 'NEUTRAL', strength: 0, labels };
+    // Weighted: recent labels count 3x
+    const bullW = hh + hl + recBull * 2;
+    const bearW = lh + ll + recBear * 2;
+    const totalW = bullW + bearW;
+    const bullPct = bullW / totalW;
+    const bearPct = bearW / totalW;
 
-    const bullPct = bullScore / total;
-    const bearPct = bearScore / total;
+    // Strength = how recent+consistent the trend is
+    const strengthBase = Math.round(Math.max(bullPct, bearPct) * 130);
 
-    if (bullPct >= 0.55) {
-      return { trend: 'BULLISH', strength: Math.min(100, Math.round(bullPct * 120)), hh, hl, lh, ll, labels };
+    if (bullPct >= 0.52) {
+      return { trend:'BULLISH', strength:Math.min(100,strengthBase), hh,hl,lh,ll, labels };
     }
-    if (bearPct >= 0.55) {
-      return { trend: 'BEARISH', strength: Math.min(100, Math.round(bearPct * 120)), hh, hl, lh, ll, labels };
-    }
-
-    // Empate → mirar las últimas 2 etiquetas
-    const lastLabels = labels.filter(l => !l.ref).slice(-2);
-    if (lastLabels.length === 2) {
-      const lastBull = lastLabels.filter(l => l.type === 'HH' || l.type === 'HL').length;
-      const lastBear = lastLabels.filter(l => l.type === 'LH' || l.type === 'LL').length;
-      if (lastBull > lastBear) return { trend: 'BULLISH', strength: 45, hh, hl, lh, ll, labels };
-      if (lastBear > lastBull) return { trend: 'BEARISH', strength: 45, hh, hl, lh, ll, labels };
+    if (bearPct >= 0.52) {
+      return { trend:'BEARISH', strength:Math.min(100,strengthBase), hh,hl,lh,ll, labels };
     }
 
-    return { trend: 'NEUTRAL', strength: 25, labels };
+    // Tie-break by most recent swing
+    if (recBull > recBear) return { trend:'BULLISH', strength:40, hh,hl,lh,ll, labels };
+    if (recBear > recBull) return { trend:'BEARISH', strength:40, hh,hl,lh,ll, labels };
+
+    return { trend:'NEUTRAL', strength:20, labels };
   },
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -1754,129 +1748,97 @@ const SMC = {
   findZones(candles) {
     const demandZones = [];
     const supplyZones = [];
-
     if (candles.length < 10) return { demandZones, supplyZones };
 
-    const avgRange = this.getAvgRange(candles);
-    const lastPrice = candles[candles.length - 1].close;
+    const avgRange  = this.getAvgRange(candles);
     const lastIndex = candles.length - 1;
 
-    for (let i = 2; i < candles.length - 3; i++) {
-      const base  = candles[i];       // The OB candle
-      const next1 = candles[i + 1];   // The impulse candle
-      const next2 = candles[i + 2];   // Continuation
+    for (let i = 1; i < candles.length - 2; i++) {
+      const base  = candles[i];
+      const next1 = candles[i + 1];
+      const next2 = candles[Math.min(i + 2, lastIndex)];
+      const next3 = candles[Math.min(i + 3, lastIndex)];
       const bodySize = Math.abs(base.close - base.open);
-      if (bodySize < avgRange * 0.15) continue; // Too small = doji, skip
+      if (bodySize < avgRange * 0.1) continue;
 
-      // ═════════════════════════════════════════════════════════════
-      // DEMAND ORDER BLOCK (BULLISH OB)
-      // Pattern: RED candle (base OB) → GREEN engulfing OR strong bullish impulse
-      // The OB zone is the BODY of the red candle (open → close)
-      // Price should return to this zone FROM ABOVE to give a BUY entry
-      // ═════════════════════════════════════════════════════════════
-      if (base.close < base.open) { // Red (bearish) base candle
-        const impulseUp    = next1.close > next1.open && next1.close > base.open; // bullish engulf
-        const strongImpulse = (next2.close - base.low) > avgRange * 1.5;         // strong move up
-        if (!impulseUp && !strongImpulse) continue;
+      // ── DEMAND OB: last RED candle before a bullish impulse ──
+      if (base.close < base.open) {
+        const immediateImpulse = next1.close > next1.open && next1.close > base.open;
+        const delayedImpulse   = (next1.close > base.close) && (next2.high > base.high);
+        const strongMove       = Math.max(next1.high, next2.high, next3.high) - base.low > avgRange * 1.2;
+        if (!immediateImpulse && !delayedImpulse && !strongMove) continue;
 
-        const obHigh = base.open;  // Top of OB body
-        const obLow  = base.close; // Bottom of OB body (= candle close)
+        const obHigh = base.open;
+        const obLow  = base.close;
         const obMid  = (obHigh + obLow) / 2;
 
-        // Skip if too close to an existing demand OB
-        if (demandZones.some(z => Math.abs(z.mid - obMid) < avgRange * 0.8)) continue;
+        if (demandZones.some(z => Math.abs(z.mid - obMid) < avgRange * 0.6)) continue;
 
-        // Check if already MITIGATED: price passed through the bottom of the OB
-        // (price closed below obLow on a later candle after the OB was formed)
         let mitigated = false;
-        let mitigatedAt = null;
         for (let j = i + 2; j <= lastIndex; j++) {
-          if (candles[j].close < obLow) { mitigated = true; mitigatedAt = j; break; }
+          if (candles[j].close < obLow) { mitigated = true; break; }
         }
 
-        // Calculate impulse size (how strong the move was after the OB)
-        const impulseEnd = Math.max(...candles.slice(i+1, Math.min(i+8, lastIndex)).map(c=>c.high));
-        const impulseSize = impulseEnd - obHigh;
+        const futureCandles = candles.slice(i+1, Math.min(i+10, lastIndex+1));
+        const impulseEnd  = futureCandles.length ? Math.max(...futureCandles.map(c=>c.high)) : obHigh;
+        const impulseSize = Math.max(0, impulseEnd - obHigh);
 
         demandZones.push({
-          type:         'DEMAND',
-          side:         'BUY',
-          high:         obHigh,
-          low:          obLow,
-          mid:          obMid,
-          wickLow:      base.low,  // For SL positioning
-          index:        i,         // array index (may shift — use epoch for display)
-          epoch:        base.epoch || (base.time ? Math.floor(base.time/1000) : null),
+          type: 'DEMAND', side: 'BUY',
+          high: obHigh, low: obLow, mid: obMid,
+          wickLow: base.low, index: i,
+          epoch: base.epoch || (base.time ? Math.floor(base.time/1000) : null),
           impulseSize,
-          pattern:      impulseUp ? 'ENGULFING' : 'IMPULSE',
-          strength:     impulseUp ? 'STRONG' : (strongImpulse ? 'STRONG' : 'NORMAL'),
-          mitigated,
-          mitigatedAt,
-          tested:       false,
+          pattern:  immediateImpulse ? 'ENGULFING' : 'IMPULSE',
+          strength: (immediateImpulse || impulseSize > avgRange * 2) ? 'STRONG' : 'NORMAL',
+          mitigated, tested: false,
         });
       }
 
-      // ═════════════════════════════════════════════════════════════
-      // SUPPLY ORDER BLOCK (BEARISH OB)
-      // Pattern: GREEN candle (base OB) → RED engulfing OR strong bearish impulse
-      // The OB zone is the BODY of the green candle (open → close)
-      // Price should return to this zone FROM BELOW to give a SELL entry
-      // ═════════════════════════════════════════════════════════════
-      if (base.close > base.open) { // Green (bullish) base candle
-        const impulseDown   = next1.close < next1.open && next1.close < base.open; // bearish engulf
-        const strongImpulse = (base.high - next2.close) > avgRange * 1.5;         // strong move down
-        if (!impulseDown && !strongImpulse) continue;
+      // ── SUPPLY OB: last GREEN candle before a bearish impulse ──
+      if (base.close > base.open) {
+        const immediateImpulse = next1.close < next1.open && next1.close < base.open;
+        const delayedImpulse   = (next1.close < base.close) && (next2.low < base.low);
+        const strongMove       = base.high - Math.min(next1.low, next2.low, next3.low) > avgRange * 1.2;
+        if (!immediateImpulse && !delayedImpulse && !strongMove) continue;
 
-        const obHigh = base.close; // Top of OB body (= candle close)
-        const obLow  = base.open;  // Bottom of OB body
+        const obHigh = base.close;
+        const obLow  = base.open;
         const obMid  = (obHigh + obLow) / 2;
 
-        if (supplyZones.some(z => Math.abs(z.mid - obMid) < avgRange * 0.8)) continue;
+        if (supplyZones.some(z => Math.abs(z.mid - obMid) < avgRange * 0.6)) continue;
 
-        // Check mitigation: price closed above obHigh after the OB
         let mitigated = false;
-        let mitigatedAt = null;
         for (let j = i + 2; j <= lastIndex; j++) {
-          if (candles[j].close > obHigh) { mitigated = true; mitigatedAt = j; break; }
+          if (candles[j].close > obHigh) { mitigated = true; break; }
         }
 
-        const impulseEnd = Math.min(...candles.slice(i+1, Math.min(i+8, lastIndex)).map(c=>c.low));
-        const impulseSize = obLow - impulseEnd;
+        const futureCandles = candles.slice(i+1, Math.min(i+10, lastIndex+1));
+        const impulseEnd  = futureCandles.length ? Math.min(...futureCandles.map(c=>c.low)) : obLow;
+        const impulseSize = Math.max(0, obLow - impulseEnd);
 
         supplyZones.push({
-          type:         'SUPPLY',
-          side:         'SELL',
-          high:         obHigh,
-          low:          obLow,
-          mid:          obMid,
-          wickHigh:     base.high, // For SL positioning
-          index:        i,
-          epoch:        base.epoch || (base.time ? Math.floor(base.time/1000) : null),
+          type: 'SUPPLY', side: 'SELL',
+          high: obHigh, low: obLow, mid: obMid,
+          wickHigh: base.high, index: i,
+          epoch: base.epoch || (base.time ? Math.floor(base.time/1000) : null),
           impulseSize,
-          pattern:      impulseDown ? 'ENGULFING' : 'IMPULSE',
-          strength:     impulseDown ? 'STRONG' : (strongImpulse ? 'STRONG' : 'NORMAL'),
-          mitigated,
-          mitigatedAt,
-          tested:       false,
+          pattern:  immediateImpulse ? 'ENGULFING' : 'IMPULSE',
+          strength: (immediateImpulse || impulseSize > avgRange * 2) ? 'STRONG' : 'NORMAL',
+          mitigated, tested: false,
         });
       }
     }
 
-    // Sort by index descending → keep only the 3 most recent UNMITIGATED
-    // Plus up to 1 mitigated (for reference)
     const filterOBs = (zones) => {
-      const sorted = zones.sort((a,b) => b.index - a.index);
-      const fresh     = sorted.filter(z => !z.mitigated).slice(0, 3);
-      const mitigated = sorted.filter(z => z.mitigated).slice(0, 1);
+      const sorted    = zones.sort((a,b) => b.index - a.index);
+      const fresh     = sorted.filter(z => !z.mitigated).slice(0, 4);
+      const mitigated = sorted.filter(z =>  z.mitigated).slice(0, 1);
       return [...fresh, ...mitigated];
     };
 
-    return {
-      demandZones: filterOBs(demandZones),
-      supplyZones: filterOBs(supplyZones)
-    };
+    return { demandZones: filterOBs(demandZones), supplyZones: filterOBs(supplyZones) };
   },
-
   findFVGs(candles) {
     const fvgs = [];
     if (candles.length < 5) return fvgs;
@@ -2318,7 +2280,7 @@ const SMC = {
     
     if (candlesH1 && candlesH1.length >= 20) {
       h1Loaded = true;
-      const swingsH1 = this.findSwings(candlesH1, 2);
+      const swingsH1 = this.findSwings(candlesH1, 3); // lb=3 for cleaner H1 swings
       structureH1 = this.analyzeStructure(swingsH1);
       const zonesH1 = this.findZones(candlesH1);
       demandZonesH1 = zonesH1.demandZones;
@@ -2376,8 +2338,9 @@ const SMC = {
     let m15Loaded = false;
     if (candlesM15 && candlesM15.length >= 20) {
       m15Loaded = true;
-      const swingsM15 = this.findSwings(candlesM15, 2);
+      const swingsM15 = this.findSwings(candlesM15, 3); // lb=3 for cleaner M15 swings
       structureM15 = this.analyzeStructure(swingsM15);
+      state.structureM15 = structureM15; // Update immediately for real-time
       // M15 Order Block zones for chart visualization
       const zonesM15 = this.findZones(candlesM15);
       state.demandZonesM15 = zonesM15.demandZones;
@@ -2393,7 +2356,7 @@ const SMC = {
       structureH1.trend !== 'NEUTRAL';
 
     const signals = [];
-    const minScore = 86; // v18.0: Solo señales con muy alta probabilidad
+    const minScore = 84; // v19.0: Adjusted for improved OB detection
 
     // ── FILTRO GLOBAL: H1 y M15 deben estar alineados para cualquier señal ──
     // Si H1 y M15 no están en la misma dirección → no operar
@@ -2403,8 +2366,8 @@ const SMC = {
       structureH1.trend !== 'LOADING';
 
     // ── FILTRO GLOBAL: necesitamos también confirmación de fuerza ──
-    const h1Strong  = structureH1.strength  >= 55;
-    const m15Strong = structureM15.strength >= 45;
+    const h1Strong  = structureH1.strength  >= 40; // lowered — real markets often read 40-60
+    const m15Strong = structureM15.strength >= 35; // lowered
     const marketReady = h1m15Aligned && h1Strong;
 
     if (!marketReady) {
@@ -2426,55 +2389,44 @@ const SMC = {
     }
 
     // La dirección operativa está definida por H1 (tendencia mayor)
-    const opDir = structureH1.trend; // 'BULLISH' o 'BEARISH'
-    
-    if (mtfConfluence && pullback) {
-      // pullback.side debe coincidir con la dirección operativa H1+M15
-      const sideMatch = pullback.side === (opDir === 'BULLISH' ? 'BUY' : 'SELL');
+    const opDir  = structureH1.trend; // 'BULLISH' o 'BEARISH'
+    const opSide = opDir === 'BULLISH' ? 'BUY' : 'SELL';
 
-      if (sideMatch) {
-        let score = 92; // Base más alta — ya pasó el filtro H1+M15
-        // Bonificaciones por escenarios adicionales confirmados
-        if (pullback.side === 'BUY'  && premiumDiscount === 'DISCOUNT') score += 4; // P/D correcto
-        if (pullback.side === 'SELL' && premiumDiscount === 'PREMIUM')  score += 4;
-        if (m15Strong) score += 3;           // M15 con fuerza estructural
-        if (tripleConfluence) score += 3;    // M5 también alineado
-        if (choch) score += 2;               // CHoCH adicional como confirmación
-        score = Math.min(score, 100);
+    // ── MTF_CONFLUENCE: H1+M15 alineados + OB pullback ──
+    // Core flow: H1 tendencia → M15 confirmación → OB toque → entrada 50%
+    if (pullback && pullback.side === opSide) {
+      let score = 88; // Base: ya pasó filtro H1+M15
+      if (pullback.side === 'BUY'  && premiumDiscount === 'DISCOUNT') score += 5;
+      if (pullback.side === 'SELL' && premiumDiscount === 'PREMIUM')  score += 5;
+      if (m15Strong)       score += 4; // M15 tiene tendencia fuerte
+      if (tripleConfluence) score += 3; // M5 también alineado (bonus, no requerido)
+      if (choch)           score += 3; // CHoCH en M5 como confirmación adicional
+      if (pullback.confirmation === 'ENGULFING' || pullback.confirmation === 'PIN_BAR') score += 3;
+      score = Math.min(score, 100);
 
-        signals.push({
-          model: 'MTF_CONFLUENCE',
-          baseScore: score,
-          pullback,
-          reason: `H1+M15+M5 ${opDir} + OB ${pullback.confirmation||''} ${premiumDiscount !== 'EQUILIBRIUM' ? '+ '+premiumDiscount : ''}`
-        });
-      }
+      signals.push({
+        model: 'MTF_CONFLUENCE',
+        baseScore: score,
+        pullback,
+        reason: `H1(${opDir})+M15(${structureM15.trend}) + OB 50% ${pullback.confirmation||''} ${premiumDiscount !== 'EQUILIBRIUM' ? '+ '+premiumDiscount : ''}`
+      });
     }
     
-    if (choch && pullback) {
-      const chochDir = choch.side === 'BUY' ? 'BULLISH' : 'BEARISH';
-      // CHoCH debe ir EN la misma dirección operativa H1+M15
-      if (choch.side === pullback.side && chochDir === opDir) {
-        let score = 86;
-        if (mtfConfluence)  score += 5;
-        if (tripleConfluence) score += 4;
-        const m15Aligned = (choch.side === 'BUY'  && structureM15.trend === 'BULLISH') ||
-                           (choch.side === 'SELL' && structureM15.trend === 'BEARISH');
-        if (m15Aligned && m15Strong) score += 3;
-        if (pullback.confirmation === 'ENGULFING') score += 3;
-        score = Math.min(score, 98);
+    // ── CHOCH_PULLBACK: CHoCH en M5 + retroceso al OB ──
+    if (choch && pullback && choch.side === opSide && pullback.side === opSide) {
+      let score = 86;
+      if (tripleConfluence) score += 5;
+      if (m15Strong)        score += 4;
+      if (pullback.confirmation === 'ENGULFING' || pullback.confirmation === 'PIN_BAR') score += 4;
+      if (premiumDiscount === (opSide==='BUY'?'DISCOUNT':'PREMIUM')) score += 3;
+      score = Math.min(score, 98);
 
-        signals.push({
-          model: 'CHOCH_PULLBACK',
-          baseScore: score,
-          pullback,
-          reason: `${choch.type} + OB ${pullback.confirmation||''} + H1/M15 ${opDir}`
-        });
-      } else if (choch.side !== pullback.side) {
-        console.log(`⚠️ [${config.shortName}] CHoCH=${choch.side} ≠ Pullback=${pullback.side}`);
-      } else {
-        console.log(`⚠️ [${config.shortName}] CHoCH bloqueado: CHoCH=${chochDir} vs opDir=${opDir}`);
-      }
+      signals.push({
+        model: 'CHOCH_PULLBACK',
+        baseScore: score,
+        pullback,
+        reason: `${choch.type} + OB 50% ${pullback.confirmation||''} + H1/M15 ${opDir}`
+      });
     }
     
     const last3 = candlesM5.slice(-3);
@@ -3064,8 +3016,9 @@ const Elisa = {
       price: data.price,
       decimals: config.decimals,
       priceChange,
-      structureM5: data.structure?.trend || 'LOADING',
-      structureH1: data.structureH1?.trend || 'LOADING',
+      structureM5:  data.structure?.trend   || 'LOADING',
+      structureM15: data.structureM15?.trend || 'LOADING',
+      structureH1:  data.structureH1?.trend  || 'LOADING',
       h1Loaded: data.h1Loaded,
       mtfConfluence: data.mtfConfluence,
       premiumDiscount: data.premiumDiscount,

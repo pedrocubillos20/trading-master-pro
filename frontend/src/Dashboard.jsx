@@ -424,7 +424,7 @@ export default function Dashboard({ user, onLogout }) {
         }
       } catch {}
     };
-    go(); const iv=setInterval(go,3000); return()=>{cancelled=true;clearInterval(iv);};
+    go(); const iv=setInterval(go,2000); return()=>{cancelled=true;clearInterval(iv);};
   },[user?.email,user?.id]);
 
   // Candles — 4s polling
@@ -472,7 +472,7 @@ export default function Dashboard({ user, onLogout }) {
         }
       } catch {}
     };
-    go(); const iv=setInterval(go,4000); return()=>{cancelled=true;clearInterval(iv);};
+    go(); const iv=setInterval(go,2000); return()=>{cancelled=true;clearInterval(iv);};
   },[selectedAsset, refreshKey]);
 
   // Mark signal
