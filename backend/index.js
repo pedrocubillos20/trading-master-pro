@@ -869,7 +869,7 @@ function resubscribeToAsset(symbol) {
   derivWs.send(JSON.stringify({
     ticks_history: symbol,
     adjust_start_time: 1,
-    count: 300,
+    count: 500,
     end: 'latest',
     granularity: 300,
     style: 'candles',
@@ -1753,86 +1753,132 @@ const SMC = {
     const avgRange  = this.getAvgRange(candles);
     const lastIndex = candles.length - 1;
 
-    for (let i = 1; i < candles.length - 2; i++) {
+    for (let i = 1; i < candles.length - 3; i++) {
       const base  = candles[i];
-      const next1 = candles[i + 1];
+      const next1 = candles[Math.min(i + 1, lastIndex)];
       const next2 = candles[Math.min(i + 2, lastIndex)];
       const next3 = candles[Math.min(i + 3, lastIndex)];
-      const bodySize = Math.abs(base.close - base.open);
-      if (bodySize < avgRange * 0.1) continue;
 
-      // ── DEMAND OB: last RED candle before a bullish impulse ──
-      if (base.close < base.open) {
-        const immediateImpulse = next1.close > next1.open && next1.close > base.open;
-        const delayedImpulse   = (next1.close > base.close) && (next2.high > base.high);
-        const strongMove       = Math.max(next1.high, next2.high, next3.high) - base.low > avgRange * 1.2;
-        if (!immediateImpulse && !delayedImpulse && !strongMove) continue;
+      const baseBody = Math.abs(base.close - base.open);
+      if (baseBody < avgRange * 0.08) continue; // skip doji
 
-        const obHigh = base.open;
-        const obLow  = base.close;
+      // ══════════════════════════════════════════════════════════════
+      // DEMAND ORDER BLOCK (BUY)
+      // Rule 1: RED base + 1 GREEN candle whose BODY exceeds RED body
+      // Rule 2: RED base + 2 GREEN candles whose COMBINED close exceeds RED open
+      // Rule 3: RED base + strong impulse (fractal extremity)
+      // ══════════════════════════════════════════════════════════════
+      if (base.close < base.open) { // RED base candle
+        const n1Body     = Math.abs(next1.close - next1.open);
+        const n1Bull     = next1.close > next1.open;
+        const n2Bull     = next2.close > next2.open;
+
+        // Rule 1: Single green engulfs the red body
+        const singleEngulf = n1Bull && next1.close > base.open && next1.open <= base.close;
+
+        // Rule 2: Green body of next1 alone exceeds red body (doesn't need to start below)
+        const singleBodyExceeds = n1Bull && n1Body > baseBody * 0.8 && next1.close > base.open;
+
+        // Rule 3: Two green candles — combined move exceeds red body
+        const n2Body = Math.abs(next2.close - next2.open);
+        const twoGreenExceed = n1Bull && n2Bull &&
+          (n1Body + n2Body) > baseBody &&
+          next2.close > base.open;
+
+        // Rule 4: Strong impulse move (fractal low → next swing high)
+        const impulse3 = Math.max(next1.high, next2.high, next3.high) - base.low > avgRange * 1.5;
+
+        if (!singleEngulf && !singleBodyExceeds && !twoGreenExceed && !impulse3) continue;
+
+        const obHigh = base.open;    // Top of red body
+        const obLow  = base.close;   // Bottom of red body
         const obMid  = (obHigh + obLow) / 2;
 
-        if (demandZones.some(z => Math.abs(z.mid - obMid) < avgRange * 0.6)) continue;
+        // Deduplicate: skip if very close to existing zone
+        if (demandZones.some(z => Math.abs(z.mid - obMid) < avgRange * 0.5)) continue;
 
+        // Mitigation: price closed BELOW OB low after formation
         let mitigated = false;
         for (let j = i + 2; j <= lastIndex; j++) {
           if (candles[j].close < obLow) { mitigated = true; break; }
         }
 
-        const futureCandles = candles.slice(i+1, Math.min(i+10, lastIndex+1));
-        const impulseEnd  = futureCandles.length ? Math.max(...futureCandles.map(c=>c.high)) : obHigh;
-        const impulseSize = Math.max(0, impulseEnd - obHigh);
+        const futureC = candles.slice(i+1, Math.min(i+12, lastIndex+1));
+        const impulseHigh = futureC.length ? Math.max(...futureC.map(c=>c.high)) : obHigh;
+        const impulseSize = Math.max(0, impulseHigh - obHigh);
+
+        const pattern = singleEngulf ? 'ENGULFING' : twoGreenExceed ? '2-CANDLE' : 'IMPULSE';
+        const strength = (singleEngulf || impulseSize > avgRange * 2) ? 'STRONG' : 'NORMAL';
 
         demandZones.push({
           type: 'DEMAND', side: 'BUY',
           high: obHigh, low: obLow, mid: obMid,
           wickLow: base.low, index: i,
           epoch: base.epoch || (base.time ? Math.floor(base.time/1000) : null),
-          impulseSize,
-          pattern:  immediateImpulse ? 'ENGULFING' : 'IMPULSE',
-          strength: (immediateImpulse || impulseSize > avgRange * 2) ? 'STRONG' : 'NORMAL',
-          mitigated, tested: false,
+          impulseSize, pattern, strength, mitigated, tested: false,
         });
       }
 
-      // ── SUPPLY OB: last GREEN candle before a bearish impulse ──
-      if (base.close > base.open) {
-        const immediateImpulse = next1.close < next1.open && next1.close < base.open;
-        const delayedImpulse   = (next1.close < base.close) && (next2.low < base.low);
-        const strongMove       = base.high - Math.min(next1.low, next2.low, next3.low) > avgRange * 1.2;
-        if (!immediateImpulse && !delayedImpulse && !strongMove) continue;
+      // ══════════════════════════════════════════════════════════════
+      // SUPPLY ORDER BLOCK (SELL)
+      // Rule 1: GREEN base + 1 RED candle whose BODY exceeds GREEN body
+      // Rule 2: GREEN base + 2 RED candles whose COMBINED close exceeds GREEN open
+      // Rule 3: GREEN base + strong bearish impulse
+      // ══════════════════════════════════════════════════════════════
+      if (base.close > base.open) { // GREEN base candle
+        const n1Body = Math.abs(next1.close - next1.open);
+        const n1Bear = next1.close < next1.open;
+        const n2Bear = next2.close < next2.open;
 
-        const obHigh = base.close;
-        const obLow  = base.open;
+        // Rule 1: Single red engulfs the green body
+        const singleEngulf = n1Bear && next1.close < base.open && next1.open >= base.close;
+
+        // Rule 2: Red body alone exceeds green body
+        const singleBodyExceeds = n1Bear && n1Body > baseBody * 0.8 && next1.close < base.open;
+
+        // Rule 3: Two red candles combined exceed green body
+        const n2Body = Math.abs(next2.close - next2.open);
+        const twoRedExceed = n1Bear && n2Bear &&
+          (n1Body + n2Body) > baseBody &&
+          next2.close < base.open;
+
+        // Rule 4: Strong bearish impulse
+        const impulse3 = base.high - Math.min(next1.low, next2.low, next3.low) > avgRange * 1.5;
+
+        if (!singleEngulf && !singleBodyExceeds && !twoRedExceed && !impulse3) continue;
+
+        const obHigh = base.close;   // Top of green body
+        const obLow  = base.open;    // Bottom of green body
         const obMid  = (obHigh + obLow) / 2;
 
-        if (supplyZones.some(z => Math.abs(z.mid - obMid) < avgRange * 0.6)) continue;
+        if (supplyZones.some(z => Math.abs(z.mid - obMid) < avgRange * 0.5)) continue;
 
         let mitigated = false;
         for (let j = i + 2; j <= lastIndex; j++) {
           if (candles[j].close > obHigh) { mitigated = true; break; }
         }
 
-        const futureCandles = candles.slice(i+1, Math.min(i+10, lastIndex+1));
-        const impulseEnd  = futureCandles.length ? Math.min(...futureCandles.map(c=>c.low)) : obLow;
-        const impulseSize = Math.max(0, obLow - impulseEnd);
+        const futureC = candles.slice(i+1, Math.min(i+12, lastIndex+1));
+        const impulseLow  = futureC.length ? Math.min(...futureC.map(c=>c.low)) : obLow;
+        const impulseSize = Math.max(0, obLow - impulseLow);
+
+        const pattern = singleEngulf ? 'ENGULFING' : twoRedExceed ? '2-CANDLE' : 'IMPULSE';
+        const strength = (singleEngulf || impulseSize > avgRange * 2) ? 'STRONG' : 'NORMAL';
 
         supplyZones.push({
           type: 'SUPPLY', side: 'SELL',
           high: obHigh, low: obLow, mid: obMid,
           wickHigh: base.high, index: i,
           epoch: base.epoch || (base.time ? Math.floor(base.time/1000) : null),
-          impulseSize,
-          pattern:  immediateImpulse ? 'ENGULFING' : 'IMPULSE',
-          strength: (immediateImpulse || impulseSize > avgRange * 2) ? 'STRONG' : 'NORMAL',
-          mitigated, tested: false,
+          impulseSize, pattern, strength, mitigated, tested: false,
         });
       }
     }
 
+    // Keep 5 freshest unmitigated + 1 mitigated for reference
     const filterOBs = (zones) => {
       const sorted    = zones.sort((a,b) => b.index - a.index);
-      const fresh     = sorted.filter(z => !z.mitigated).slice(0, 4);
+      const fresh     = sorted.filter(z => !z.mitigated).slice(0, 5);
       const mitigated = sorted.filter(z =>  z.mitigated).slice(0, 1);
       return [...fresh, ...mitigated];
     };
@@ -2015,100 +2061,106 @@ const SMC = {
     const last  = candles[candles.length - 1];
     const prev  = candles[candles.length - 2];
     const prev2 = candles[candles.length - 3];
-    const price = last.close;
     const avgRange = this.getAvgRange(candles);
 
-    // ══════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
     // PULLBACK A ZONA DE DEMANDA (COMPRAS)
-    // Flujo SMC: CHoCH alcista → OB formado → BOS → retroceso al OB
-    // Entry: 50% del cuerpo del OB (nivel óptimo)
-    // SL: debajo de la mecha inferior del OB
-    // ══════════════════════════════════════════════════════════════
+    // SMC Rule: Price enters OB body zone → shows bullish rejection → entry
+    // OB = last red candle before bullish impulse (from findZones)
+    // Entry: current close price (real-time, not historical level)
+    // SL: below OB wick low
+    // ══════════════════════════════════════════════════════════════════════
     for (const zone of demandZones) {
       if (zone.mitigated) continue;
 
-      // ── TOQUE: precio entra al OB (low ≤ zona.high, cualquier profundidad) ──
-      const lastTouches = last.low <= zone.high && last.high >= zone.low - avgRange * 0.5;
-      const prevTouches = prev.low <= zone.high && prev.high >= zone.low - avgRange * 0.5;
-      const touched = lastTouches || prevTouches;
-      if (!touched) continue;
+      // Check last 3 candles for OB touch (price must enter OB range)
+      const touches = [last, prev, prev2].some(c =>
+        c && c.low <= zone.high + avgRange * 0.3 && c.high >= zone.low - avgRange * 0.3
+      );
+      if (!touches) continue;
 
-      // ── CONFIRMACIÓN de rechazo alcista (vela de confirmación en el OB) ──
-      const wickBull     = (Math.min(last.open,last.close) - last.low) > Math.abs(last.close-last.open)*0.4;
-      const bullClose    = last.close > last.open && last.close > zone.mid;
-      const engulfBull   = prev.close<prev.open && last.close>last.open && last.close>prev.open;
-      const pinBar       = last.low < zone.low && last.close > zone.mid; // pin bar tocando el OB
-      const hasConf      = bullClose || wickBull || engulfBull || pinBar;
+      // ── Rejection confirmation candles ──
+      // Any bullish close shows buying pressure at the OB
+      const bullClose   = last.close > last.open;                                         // green close
+      const wickReject  = (Math.min(last.open,last.close) - last.low) >                  // strong lower wick
+                          Math.abs(last.close - last.open) * 0.35;
+      const engulf      = prev.close < prev.open &&                                       // bearish prev
+                          last.close > last.open && last.close > prev.open;               // engulfs prev
+      const pinBar      = last.low < zone.low && last.close >= zone.mid;                  // pin bar in OB
+      const prevGreenReject = prev.close > prev.open && prev.low <= zone.high &&          // prev candle rejected
+                              last.close > prev.close;                                     // last continues up
+
+      const hasConf = bullClose || wickReject || engulf || pinBar || prevGreenReject;
       if (!hasConf) continue;
 
-      // ── ENTRY: use CURRENT close price (not historical OB level) ──
-      // The OB was touched and confirmed. Entry is where price IS NOW.
-      // SL goes below the OB wick (not below current price).
-      const entryCurrent = +(last.close).toFixed(config.decimals);
-      const slLevel = +(( (zone.wickLow || zone.low) - avgRange * 0.15 )).toFixed(config.decimals);
-      const risk    = entryCurrent - slLevel;
-      if (risk <= 0 || risk > avgRange * 10) continue;
-      // Reject if current price is already more than 1 risk-unit ABOVE zone.high (too late)
-      if (entryCurrent > zone.high + avgRange * 0.5) continue;
+      // Entry = current close. Reject if price already flew away from OB
+      const entry = +(last.close).toFixed(config.decimals);
+      if (entry > zone.high + avgRange * 1.0) continue; // too far above OB
 
+      const slLevel = +((zone.wickLow || zone.low) - avgRange * 0.15).toFixed(config.decimals);
+      const risk = entry - slLevel;
+      if (risk <= 0 || risk > avgRange * 12) continue;
+
+      const conf = engulf ? 'ENGULFING' : pinBar ? 'PIN_BAR' : wickReject ? 'REJECTION_WICK' : 'BULLISH_CLOSE';
       return {
         type: 'DEMAND_ZONE', side: 'BUY', zone,
-        entry: entryCurrent, stop: slLevel,
-        tp1:  +(entryCurrent + risk * 1.5).toFixed(config.decimals),
-        tp2:  +(entryCurrent + risk * 2.5).toFixed(config.decimals),
-        tp3:  +(entryCurrent + risk * 4.0).toFixed(config.decimals),
-        touchedOB: true,
-        entryType: 'OB_CURRENT_CLOSE',
-        confirmation: engulfBull?'ENGULFING':pinBar?'PIN_BAR':wickBull?'REJECTION_WICK':'BULLISH_CLOSE'
+        entry, stop: slLevel,
+        tp1: +(entry + risk * 1.5).toFixed(config.decimals),
+        tp2: +(entry + risk * 2.5).toFixed(config.decimals),
+        tp3: +(entry + risk * 4.0).toFixed(config.decimals),
+        touchedOB: true, entryType: 'OB_CURRENT_CLOSE', confirmation: conf
       };
     }
 
-    // ══════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
     // PULLBACK A ZONA DE SUPPLY (VENTAS)
-    // Flujo SMC: CHoCH bajista → OB formado → BOS → retroceso al OB
-    // Entry: 50% del cuerpo del OB (nivel óptimo)
-    // SL: encima de la mecha superior del OB
-    // ══════════════════════════════════════════════════════════════
+    // SMC Rule: Price enters OB body zone → shows bearish rejection → entry
+    // OB = last green candle before bearish impulse (from findZones)
+    // Entry: current close price
+    // SL: above OB wick high
+    // ══════════════════════════════════════════════════════════════════════
     for (const zone of supplyZones) {
       if (zone.mitigated) continue;
 
-      // ── TOQUE: precio entra al OB (high ≥ zona.low) ──
-      const lastTouches = last.high >= zone.low && last.low <= zone.high + avgRange * 0.5;
-      const prevTouches = prev.high >= zone.low && prev.low <= zone.high + avgRange * 0.5;
-      const touched = lastTouches || prevTouches;
-      if (!touched) continue;
+      // Check last 3 candles for OB touch
+      const touches = [last, prev, prev2].some(c =>
+        c && c.high >= zone.low - avgRange * 0.3 && c.low <= zone.high + avgRange * 0.3
+      );
+      if (!touches) continue;
 
-      // ── CONFIRMACIÓN de rechazo bajista ──
-      const wickBear   = (last.high - Math.max(last.open,last.close)) > Math.abs(last.close-last.open)*0.4;
-      const bearClose  = last.close < last.open && last.close < zone.mid;
-      const engulfBear = prev.close>prev.open && last.close<last.open && last.close<prev.open;
-      const pinBarB    = last.high > zone.high && last.close < zone.mid; // pin bar en el OB
-      const hasConf    = bearClose || wickBear || engulfBear || pinBarB;
+      // ── Rejection confirmation ──
+      const bearClose   = last.close < last.open;
+      const wickReject  = (last.high - Math.max(last.open,last.close)) >
+                          Math.abs(last.close - last.open) * 0.35;
+      const engulf      = prev.close > prev.open &&
+                          last.close < last.open && last.close < prev.open;
+      const pinBar      = last.high > zone.high && last.close <= zone.mid;
+      const prevBearReject = prev.close < prev.open && prev.high >= zone.low &&
+                             last.close < prev.close;
+
+      const hasConf = bearClose || wickReject || engulf || pinBar || prevBearReject;
       if (!hasConf) continue;
 
-      // ── ENTRY: use CURRENT close price (not historical OB level) ──
-      const entryCurrent = +(last.close).toFixed(config.decimals);
-      const slLevel = +(( (zone.wickHigh || zone.high) + avgRange * 0.15 )).toFixed(config.decimals);
-      const risk    = slLevel - entryCurrent;
-      if (risk <= 0 || risk > avgRange * 10) continue;
-      // Reject if current price is already more than 0.5 avgRange BELOW zone.low (too late)
-      if (entryCurrent < zone.low - avgRange * 0.5) continue;
+      const entry = +(last.close).toFixed(config.decimals);
+      if (entry < zone.low - avgRange * 1.0) continue; // too far below OB
 
+      const slLevel = +((zone.wickHigh || zone.high) + avgRange * 0.15).toFixed(config.decimals);
+      const risk = slLevel - entry;
+      if (risk <= 0 || risk > avgRange * 12) continue;
+
+      const conf = engulf ? 'ENGULFING' : pinBar ? 'PIN_BAR' : wickReject ? 'REJECTION_WICK' : 'BEARISH_CLOSE';
       return {
         type: 'SUPPLY_ZONE', side: 'SELL', zone,
-        entry: entryCurrent, stop: slLevel,
-        tp1:  +(entryCurrent - risk * 1.5).toFixed(config.decimals),
-        tp2:  +(entryCurrent - risk * 2.5).toFixed(config.decimals),
-        tp3:  +(entryCurrent - risk * 4.0).toFixed(config.decimals),
-        touchedOB: true,
-        entryType: 'OB_CURRENT_CLOSE',
-        confirmation: engulfBear?'ENGULFING':pinBarB?'PIN_BAR':wickBear?'REJECTION_WICK':'BEARISH_CLOSE'
+        entry, stop: slLevel,
+        tp1: +(entry - risk * 1.5).toFixed(config.decimals),
+        tp2: +(entry - risk * 2.5).toFixed(config.decimals),
+        tp3: +(entry - risk * 4.0).toFixed(config.decimals),
+        touchedOB: true, entryType: 'OB_CURRENT_CLOSE', confirmation: conf
       };
     }
 
     return null;
   },
-
   // ═══════════════════════════════════════════════════════════════
   // ANÁLISIS M1_PRECISION
   // Lógica: H1 define tendencia → M15 define zona de interés → M1 da entrada
@@ -2369,17 +2421,31 @@ const SMC = {
 
     // ── FILTRO GLOBAL: H1 y M15 deben estar alineados para cualquier señal ──
     // Si H1 y M15 no están en la misma dirección → no operar
-    const h1m15Aligned = h1Loaded && m15Loaded &&
-      structureH1.trend === structureM15.trend &&
-      structureH1.trend !== 'NEUTRAL' &&
-      structureH1.trend !== 'LOADING';
+    // h1m15Aligned: H1 and M15 same direction, OR H1 strong + M15 NEUTRAL (not opposing)
+    const sameDirection = structureH1.trend === structureM15.trend &&
+                          structureH1.trend !== 'NEUTRAL' &&
+                          structureH1.trend !== 'LOADING';
+    const h1StrongM15Neutral = structureH1.trend !== 'NEUTRAL' &&
+                               structureH1.trend !== 'LOADING' &&
+                               structureM15.trend === 'NEUTRAL' &&
+                               structureH1.strength >= 55; // H1 must be very strong
+    const h1m15Aligned = h1Loaded && m15Loaded && (sameDirection || h1StrongM15Neutral);
 
     // ── FILTRO GLOBAL: necesitamos también confirmación de fuerza ──
     const h1Strong  = structureH1.strength  >= 40; // lowered — real markets often read 40-60
     const m15Strong = structureM15.strength >= 35; // lowered
     const marketReady = h1m15Aligned && h1Strong && m15Strong; // M15 must also have clear structure
 
-    if (!marketReady) {
+    // ── EXCEPCIÓN: CHoCH en M5 cuando M15 es NEUTRAL ──
+    // Cuando M15 está NEUTRAL pero M5 muestra CHoCH claro con BOS,
+    // el mercado está en transición de tendencia — permitir señal de alta calidad
+    const m5ChochReversal = !marketReady &&
+      h1Loaded && h1Strong &&
+      structureM15.trend === 'NEUTRAL' &&   // M15 neutral (transitando)
+      choch !== null && bos !== null &&      // CHoCH + BOS confirmados en M5
+      choch.side !== (opDir === 'BULLISH' ? 'BUY' : 'SELL'); // M5 va CONTRA H1 = reversión
+
+    if (!marketReady && !m5ChochReversal) {
       // Mercado no está claro: H1 y M15 no alineados → solo WAIT
       return {
         action: 'WAIT',
@@ -2397,8 +2463,12 @@ const SMC = {
       };
     }
 
-    // La dirección operativa está definida por H1 (tendencia mayor)
-    const opDir  = structureH1.trend; // 'BULLISH' o 'BEARISH'
+    // Dirección operativa:
+    // - Si marketReady: opDir = H1 (seguir tendencia)
+    // - Si m5ChochReversal: opDir = M5 CHoCH direction (contra H1, reversión)
+    const opDir  = m5ChochReversal
+      ? (choch.side === 'BUY' ? 'BULLISH' : 'BEARISH')
+      : structureH1.trend;
     const opSide = opDir === 'BULLISH' ? 'BUY' : 'SELL';
 
     // ── MTF_CONFLUENCE: H1+M15 alineados + OB pullback ──
@@ -4078,7 +4148,7 @@ function connectDeriv() {
               candles[candles.length - 1] = newCandle;
             } else if (newCandle.time > last.time) {
               candles.push(newCandle);
-              if (candles.length > 400) candles.shift(); // 400 candles = better structure history
+              if (candles.length > 600) candles.shift(); // 600 candles = ~50 hours of M5 history
               analyzeAsset(symbol);
             }
           }
@@ -4140,7 +4210,7 @@ function requestH1(symbol) {
     derivWs.send(JSON.stringify({
       ticks_history: symbol,
       adjust_start_time: 1,
-      count: 80,
+      count: 120,
       end: 'latest',
       granularity: 3600,
       style: 'candles'
@@ -4153,7 +4223,7 @@ function requestM15(symbol) {
     derivWs.send(JSON.stringify({
       ticks_history: symbol,
       adjust_start_time: 1,
-      count: 200,
+      count: 300,
       end: 'latest',
       granularity: 900,   // 15 min
       style: 'candles'
@@ -4637,9 +4707,9 @@ app.get('/api/analyze/:symbol', (req, res) => {
     price: data.price,
     signal: data.signal,
     lockedSignal: data.lockedSignal,
-    candles: data.candles.slice(-300),       // 300 M5 candles for better zoom-out
-    candlesH1: data.candlesH1?.slice(-80) || [],
-    candlesM15: data.candlesM15?.slice(-200) || [],
+    candles: data.candles.slice(-500),       // 500 M5 candles for full zoom-out
+    candlesH1: data.candlesH1?.slice(-120) || [],
+    candlesM15: data.candlesM15?.slice(-300) || [],
     candlesM1: data.candlesM1?.slice(-150) || [],
     // M5 zones
     demandZones:   data.demandZones   || [],
