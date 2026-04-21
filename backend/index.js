@@ -185,7 +185,7 @@ const LearningSystem = {
 // =============================================
 const SIGNAL_CONFIG = {
   // Score mínimo para generar señal
-  MIN_SCORE: 84, // v19: Unified with analyze() minScore
+  MIN_SCORE: 82, // v17.0: Alta calidad — solo señales fuertes
   
   // Score mínimo específico para Boom/Crash (más estricto)
   MIN_SCORE_BOOM_CRASH: 80, // v24: Ajustado
@@ -194,16 +194,16 @@ const SIGNAL_CONFIG = {
   ANALYSIS_COOLDOWN: 8000,  // 8s — real-time update on every new candle
   
   // Cooldown después de cerrar una señal antes de abrir otra
-  POST_SIGNAL_COOLDOWN: 300000, // 5 minutos entre señales
+  POST_SIGNAL_COOLDOWN: 1800000, // 30 minutos entre señales — calidad sobre cantidad
   
   // Cooldown específico para Boom/Crash
-  POST_SIGNAL_COOLDOWN_BOOM_CRASH: 300000, // 5 minutos
+  POST_SIGNAL_COOLDOWN_BOOM_CRASH: 1800000, // 30 minutos
   
   // ═══════════════════════════════════════════════════════════════
   // MTF CONFLUENCE - AHORA REQUERIDO PARA CALIDAD
   // true = H1 y M5 deben estar alineados (menos señales, mejor calidad)
   // ═══════════════════════════════════════════════════════════════
-  REQUIRE_MTF_CONFLUENCE: false, // H1+M15 already enforced by marketReady filter // v24: ¡HABILITADO! Para mejor win rate
+  REQUIRE_MTF_CONFLUENCE: true, // v24: ¡HABILITADO! Para mejor win rate
   
   // Modelos que SIEMPRE pueden operar sin MTF (tienen su propia lógica H1)
   MODELS_WITHOUT_MTF: [
@@ -213,7 +213,7 @@ const SIGNAL_CONFIG = {
   ],
   
   // Máximo de señales pendientes simultáneas totales
-  MAX_PENDING_TOTAL: 12, // v24: Reducido de 50 a 12 para mejor gestión
+  MAX_PENDING_TOTAL: 2  // Max 2 open signals total, // v24: Reducido de 50 a 12 para mejor gestión
   
   // Horas de operación por plan - en UTC
   // Horario base (todos los planes): 6AM-2PM Colombia = 11:00-19:00 UTC
@@ -869,7 +869,7 @@ function resubscribeToAsset(symbol) {
   derivWs.send(JSON.stringify({
     ticks_history: symbol,
     adjust_start_time: 1,
-    count: 200,
+    count: 300,
     end: 'latest',
     granularity: 300,
     style: 'candles',
@@ -2365,7 +2365,7 @@ const SMC = {
       structureH1.trend !== 'NEUTRAL';
 
     const signals = [];
-    const minScore = SIGNAL_CONFIG.MIN_SCORE; // Use config value
+    const minScore = 87; // v20: Strict threshold — fewer, higher quality signals
 
     // ── FILTRO GLOBAL: H1 y M15 deben estar alineados para cualquier señal ──
     // Si H1 y M15 no están en la misma dirección → no operar
@@ -2377,7 +2377,7 @@ const SMC = {
     // ── FILTRO GLOBAL: necesitamos también confirmación de fuerza ──
     const h1Strong  = structureH1.strength  >= 40; // lowered — real markets often read 40-60
     const m15Strong = structureM15.strength >= 35; // lowered
-    const marketReady = h1m15Aligned && h1Strong;
+    const marketReady = h1m15Aligned && h1Strong && m15Strong; // M15 must also have clear structure
 
     if (!marketReady) {
       // Mercado no está claro: H1 y M15 no alineados → solo WAIT
@@ -3779,11 +3779,6 @@ function checkSignalHits() {
     // Después de TP1: Mover SL a Entry (breakeven)
     if (signal.tp1Hit && !signal.trailingTP1) {
       signal.trailingTP1 = true;
-      // Reset structure alerts — we're in profit, no need to show warning
-      signal.criticalAlertSent = false;
-      signal.moderateAlertSent = false;
-      signal.structureAlert = null;
-      if (data.lockedSignal) data.lockedSignal.structureAlert = null;
       signal.originalStop = signal.stop;
       signal.stop = signal.entry;
       locked.stop = signal.entry;
@@ -4083,7 +4078,7 @@ function connectDeriv() {
               candles[candles.length - 1] = newCandle;
             } else if (newCandle.time > last.time) {
               candles.push(newCandle);
-              if (candles.length > 300) candles.shift(); // 300 keeps more OB history
+              if (candles.length > 400) candles.shift(); // 400 candles = better structure history
               analyzeAsset(symbol);
             }
           }
@@ -4327,6 +4322,19 @@ function analyzeAsset(symbol) {
     console.log(`⚠️ [${config.shortName}] Señal ${signal.model} rechazada - Ya hay señal pendiente`);
     return;
   }
+
+  // ── LÍMITE DIARIO: máximo 2 señales por activo por día ──
+  // Previene over-trading y quema de cuenta
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const todaySignals = signalHistory.filter(s =>
+    s.symbol === symbol &&
+    new Date(s.timestamp) >= todayStart
+  ).length;
+  if (todaySignals >= 2) {
+    console.log(`⏸️ [${config.shortName}] Límite diario alcanzado (${todaySignals}/2) — No más señales hoy`);
+    return;
+  }
   
   // ═══════════════════════════════════════════════════════════════
   // FILTRO CRÍTICO: Validar que el precio sigue cerca de la entrada
@@ -4337,6 +4345,13 @@ function analyzeAsset(symbol) {
   const signalEntry  = signal.entry;
   const signalRisk   = Math.abs(signalEntry - signal.stop);
   const priceDistance = Math.abs(currentPrice - signalEntry);
+
+  // ── Minimum R:R check: TP1 must be at least 1.5x the risk ──
+  const tp1Distance = Math.abs(signal.tp1 - signalEntry);
+  if (signalRisk > 0 && tp1Distance < signalRisk * 1.4) {
+    console.log(`⛔ [${config.shortName}] R:R insuficiente: TP1=${tp1Distance.toFixed(config.decimals)} < 1.4 × SL=${signalRisk.toFixed(config.decimals)}`);
+    return;
+  }
 
   if (signalRisk > 0 && priceDistance > signalRisk * 0.6) {
     const direction = signal.action === 'LONG'
@@ -4622,7 +4637,7 @@ app.get('/api/analyze/:symbol', (req, res) => {
     price: data.price,
     signal: data.signal,
     lockedSignal: data.lockedSignal,
-    candles: data.candles.slice(-200),       // 200 M5 candles for OB accuracy
+    candles: data.candles.slice(-300),       // 300 M5 candles for better zoom-out
     candlesH1: data.candlesH1?.slice(-80) || [],
     candlesM15: data.candlesM15?.slice(-200) || [],
     candlesM1: data.candlesM1?.slice(-150) || [],

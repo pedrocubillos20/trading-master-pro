@@ -18,8 +18,8 @@ const Chart = ({ candles, height, signal, timeframe='M5',
   const TF_CFG = {
     M1:  { maxOB: 0, showLabels: false, labelEvery: 1, defaultZoom: 80  },
     M5:  { maxOB: 3, showLabels: true,  labelEvery: 1, defaultZoom: 60  },
-    M15: { maxOB: 2, showLabels: true,  labelEvery: 2, defaultZoom: 50  },
-    H1:  { maxOB: 2, showLabels: true,  labelEvery: 3, defaultZoom: 40  },
+    M15: { maxOB: 2, showLabels: true,  labelEvery: 2, defaultZoom: 100 },
+    H1:  { maxOB: 2, showLabels: true,  labelEvery: 3, defaultZoom: 60  },
   };
 
   const draw = useCallback(() => {
@@ -344,14 +344,14 @@ const Chart = ({ candles, height, signal, timeframe='M5',
   const onMD=e=>{drag.current={active:true,startX:e.clientX,startOff:off.current};};
   const onMM=e=>{ if(!drag.current.active)return; const sl=(svgRef.current?.parentElement?.clientWidth||700)/zoom.current; off.current=Math.max(0,Math.min((candles?.length||0)-zoom.current,drag.current.startOff+Math.round((drag.current.startX-e.clientX)/Math.max(2,sl)))); draw(); };
   const onMU=()=>{drag.current.active=false;};
-  const onWh=e=>{e.preventDefault();zoom.current=Math.max(10,Math.min(200,zoom.current+(e.deltaY>0?8:-8)));draw();};
+  const onWh=e=>{e.preventDefault();zoom.current=Math.max(10,Math.min(300,zoom.current+(e.deltaY>0?10:-10)));draw();};
   const onTD=e=>{drag.current={active:true,startX:e.touches[0].clientX,startOff:off.current};};
   const onTM=e=>{if(!drag.current.active)return;const sl=(svgRef.current?.parentElement?.clientWidth||700)/zoom.current;off.current=Math.max(0,Math.min((candles?.length||0)-zoom.current,drag.current.startOff+Math.round((drag.current.startX-e.touches[0].clientX)/Math.max(2,sl))));draw();};
 
   return (
     <div className="relative w-full select-none" style={{height,background:'#07080f'}}>
       <div className="absolute top-2 left-2 z-10 flex gap-1">
-        {[{l:'+',fn:()=>{zoom.current=Math.max(10,zoom.current-15);draw();}},{l:'−',fn:()=>{zoom.current=Math.min(200,zoom.current+15);draw();}},{l:'↺',fn:()=>{zoom.current=(TF_CFG[timeframe]||TF_CFG.M5).defaultZoom;off.current=0;draw();}}].map(({l,fn})=>(
+        {[{l:'+',fn:()=>{zoom.current=Math.max(10,zoom.current-15);draw();}},{l:'−',fn:()=>{zoom.current=Math.min(300,zoom.current+20);draw();}},{l:'↺',fn:()=>{zoom.current=(TF_CFG[timeframe]||TF_CFG.M5).defaultZoom;off.current=0;draw();}}].map(({l,fn})=>(
           <button key={l} onClick={fn} className="w-6 h-6 rounded bg-white/8 hover:bg-white/15 text-white/40 hover:text-white text-xs flex items-center justify-center transition-all">{l}</button>
         ))}
       </div>
