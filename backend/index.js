@@ -213,8 +213,8 @@ const SIGNAL_CONFIG = {
   ],
   
   // Máximo de señales pendientes simultáneas totales
-  MAX_PENDING_TOTAL: 2  // Max 2 open signals total, // v24: Reducido de 50 a 12 para mejor gestión
-  
+  MAX_PENDING_TOTAL: 2,  // Max 2 open signals total
+
   // Horas de operación por plan - en UTC
   // Horario base (todos los planes): 6AM-2PM Colombia = 11:00-19:00 UTC
   // Horario nocturno (Premium/Elite): 8:30PM-1AM Colombia = 01:30-06:00 UTC
