@@ -1013,60 +1013,62 @@ const SMC = {
   analyzeStructure(swings) {
     if (swings.length < 4) return { trend: 'NEUTRAL', strength: 0, labels: [] };
 
-    // Use ALL swings but weight recent ones more heavily
-    const all   = swings;
-    const highs = all.filter(s => s.type === 'high');
-    const lows  = all.filter(s => s.type === 'low');
-
+    const highs = swings.filter(s => s.type === 'high');
+    const lows  = swings.filter(s => s.type === 'low');
     if (highs.length < 2 || lows.length < 2) return { trend: 'NEUTRAL', strength: 0, labels: [] };
 
     let hh = 0, hl = 0, lh = 0, ll = 0;
     const labels = [];
 
-    // Label every high
-    for (let i = 1; i < highs.length; i++) {
+    // ── Label EVERY high including the first (reference point) ──
+    // First high gets labeled vs second to give it context
+    for (let i = 0; i < highs.length; i++) {
+      if (i === 0) {
+        // First swing: label it relative to the next
+        if (highs.length > 1) {
+          const type = highs[0].price > highs[1].price ? 'HH' : 'LH';
+          labels.push({ type, price:highs[0].price, index:highs[0].index, time:highs[0].time, epoch:highs[0].epoch, ref:true });
+        }
+        continue;
+      }
       const isHH = highs[i].price > highs[i-1].price;
       if (isHH) { hh++; labels.push({ type:'HH', price:highs[i].price, index:highs[i].index, time:highs[i].time, epoch:highs[i].epoch }); }
       else       { lh++; labels.push({ type:'LH', price:highs[i].price, index:highs[i].index, time:highs[i].time, epoch:highs[i].epoch }); }
     }
 
-    // Label every low
-    for (let i = 1; i < lows.length; i++) {
+    // ── Label EVERY low including the first ──
+    for (let i = 0; i < lows.length; i++) {
+      if (i === 0) {
+        if (lows.length > 1) {
+          const type = lows[0].price < lows[1].price ? 'LL' : 'HL';
+          labels.push({ type, price:lows[0].price, index:lows[0].index, time:lows[0].time, epoch:lows[0].epoch, ref:true });
+        }
+        continue;
+      }
       const isHL = lows[i].price > lows[i-1].price;
       if (isHL) { hl++; labels.push({ type:'HL', price:lows[i].price, index:lows[i].index, time:lows[i].time, epoch:lows[i].epoch }); }
       else      { ll++; labels.push({ type:'LL', price:lows[i].price, index:lows[i].index, time:lows[i].time, epoch:lows[i].epoch }); }
     }
 
-    // ── KEY FIX: Recent structure matters more ──
-    // Check the LAST 3 swing labels — they define the current market direction
-    const recLabels = labels.slice(-4);
+    // ── Recent structure matters 3x more ──
+    const recLabels = labels.filter(l => !l.ref).slice(-6);
     const recBull = recLabels.filter(l => l.type==='HH'||l.type==='HL').length;
     const recBear = recLabels.filter(l => l.type==='LH'||l.type==='LL').length;
 
     const total = hh + hl + lh + ll;
     if (total === 0) return { trend:'NEUTRAL', strength:0, labels };
 
-    // Weighted: recent labels count 3x
-    const bullW = hh + hl + recBull * 2;
-    const bearW = lh + ll + recBear * 2;
+    const bullW = hh + hl + recBull * 3;
+    const bearW = lh + ll + recBear * 3;
     const totalW = bullW + bearW;
     const bullPct = bullW / totalW;
     const bearPct = bearW / totalW;
-
-    // Strength = how recent+consistent the trend is
     const strengthBase = Math.round(Math.max(bullPct, bearPct) * 130);
 
-    if (bullPct >= 0.52) {
-      return { trend:'BULLISH', strength:Math.min(100,strengthBase), hh,hl,lh,ll, labels };
-    }
-    if (bearPct >= 0.52) {
-      return { trend:'BEARISH', strength:Math.min(100,strengthBase), hh,hl,lh,ll, labels };
-    }
-
-    // Tie-break by most recent swing
-    if (recBull > recBear) return { trend:'BULLISH', strength:40, hh,hl,lh,ll, labels };
-    if (recBear > recBull) return { trend:'BEARISH', strength:40, hh,hl,lh,ll, labels };
-
+    if (bullPct >= 0.52) return { trend:'BULLISH', strength:Math.min(100,strengthBase), hh,hl,lh,ll, labels };
+    if (bearPct >= 0.52) return { trend:'BEARISH', strength:Math.min(100,strengthBase), hh,hl,lh,ll, labels };
+    if (recBull > recBear) return { trend:'BULLISH', strength:42, hh,hl,lh,ll, labels };
+    if (recBear > recBull) return { trend:'BEARISH', strength:42, hh,hl,lh,ll, labels };
     return { trend:'NEUTRAL', strength:20, labels };
   },
 
@@ -1242,7 +1244,7 @@ const SMC = {
     const shouldLog = Date.now() % 15000 < 1000;
     
     // Obtener swings M5
-    const swingsM5 = this.findSwings(candles, 3);
+    const swingsM5 = this.findSwings(candles, 2);
     const structureM5 = this.analyzeStructureBoomCrash(candles, assetType);
     
     // ════════════════════════════════════════════════════════════════════════════
@@ -1968,7 +1970,7 @@ const SMC = {
           const breakIdx = candles.findIndex((c, idx) =>
             idx > targetLow.index && c.close < targetLow.price
           );
-          if (breakIdx > 0 && breakIdx >= candles.length - 25) {
+          if (breakIdx > 0 && breakIdx >= candles.length - 60) {
             const level = targetLow.price;
             const epoch = candles[breakIdx]?.epoch || (candles[breakIdx]?.time ? Math.floor(candles[breakIdx].time/1000) : null);
             return {
@@ -1991,7 +1993,7 @@ const SMC = {
           const breakIdx = candles.findIndex((c, idx) =>
             idx > targetHigh.index && c.close > targetHigh.price
           );
-          if (breakIdx > 0 && breakIdx >= candles.length - 25) {
+          if (breakIdx > 0 && breakIdx >= candles.length - 60) {
             const level = targetHigh.price;
             const epoch = candles[breakIdx]?.epoch || (candles[breakIdx]?.time ? Math.floor(candles[breakIdx].time/1000) : null);
             return {
@@ -2303,7 +2305,7 @@ const SMC = {
       return { action: 'LOADING', score: 0, model: 'LOADING', reason: 'Cargando datos M5...' };
     }
     
-    const swingsM5 = this.findSwings(candlesM5, 3);
+    const swingsM5 = this.findSwings(candlesM5, 2); // lb=2 for M5 — detects smaller swings
     
     // Para Boom/Crash usar función de estructura específica
     const isBoomCrash = config.type === 'boom' || config.type === 'crash';
@@ -2421,29 +2423,38 @@ const SMC = {
 
     // ── FILTRO GLOBAL: H1 y M15 deben estar alineados para cualquier señal ──
     // Si H1 y M15 no están en la misma dirección → no operar
-    // h1m15Aligned: H1 and M15 same direction, OR H1 strong + M15 NEUTRAL (not opposing)
+    // h1m15Aligned: H1 and M15 same direction,
+    //   OR H1 strong + M15 NEUTRAL (clear trend, no opposition),
+    //   OR M15 fresh CHoCH (market just changed — respect that direction)
     const sameDirection = structureH1.trend === structureM15.trend &&
                           structureH1.trend !== 'NEUTRAL' &&
                           structureH1.trend !== 'LOADING';
     const h1StrongM15Neutral = structureH1.trend !== 'NEUTRAL' &&
                                structureH1.trend !== 'LOADING' &&
                                structureM15.trend === 'NEUTRAL' &&
-                               structureH1.strength >= 55; // H1 must be very strong
-    const h1m15Aligned = h1Loaded && m15Loaded && (sameDirection || h1StrongM15Neutral);
+                               structureH1.strength >= 55;
+    // M15 CHoCH = fresh structure break on M15 → valid even if H1 still shows old trend
+    const m15ChochOverride = !!(data.chochM15 &&
+                               data.chochM15.breakIndex >= (candlesM15?.length||0) - 20 &&
+                               structureM5.trend === (data.chochM15.side === 'BUY' ? 'BULLISH' : 'BEARISH'));
+    const h1m15Aligned = h1Loaded && m15Loaded && (sameDirection || h1StrongM15Neutral || m15ChochOverride);
 
     // ── FILTRO GLOBAL: necesitamos también confirmación de fuerza ──
     const h1Strong  = structureH1.strength  >= 40; // lowered — real markets often read 40-60
     const m15Strong = structureM15.strength >= 35; // lowered
     const marketReady = h1m15Aligned && h1Strong && m15Strong; // M15 must also have clear structure
 
-    // ── EXCEPCIÓN: CHoCH en M5 cuando M15 es NEUTRAL ──
-    // Cuando M15 está NEUTRAL pero M5 muestra CHoCH claro con BOS,
-    // el mercado está en transición de tendencia — permitir señal de alta calidad
-    const m5ChochReversal = !marketReady &&
+    // ── EXCEPCIÓN: CHoCH en M5/M15 cuando el mercado cambia de dirección ──
+    // Caso 1: M15 NEUTRAL + M5 CHoCH + BOS = transición de tendencia
+    // Caso 2: M15 CHoCH reciente + M5 confirma = reversión en marcha
+    const m15ChochFresh = !!(data.chochM15 &&
+      data.chochM15.breakIndex >= (candlesM15?.length||0) - 25 &&
+      structureM5.trend === (data.chochM15.side === 'BUY' ? 'BULLISH' : 'BEARISH'));
+
+    const m5ChochReversal = (!marketReady || m15ChochFresh) &&
       h1Loaded && h1Strong &&
-      structureM15.trend === 'NEUTRAL' &&   // M15 neutral (transitando)
-      choch !== null && bos !== null &&      // CHoCH + BOS confirmados en M5
-      choch.side !== (opDir === 'BULLISH' ? 'BUY' : 'SELL'); // M5 va CONTRA H1 = reversión
+      choch !== null && bos !== null &&
+      (structureM15.trend === 'NEUTRAL' || m15ChochFresh);
 
     if (!marketReady && !m5ChochReversal) {
       // Mercado no está claro: H1 y M15 no alineados → solo WAIT
@@ -2465,10 +2476,13 @@ const SMC = {
 
     // Dirección operativa:
     // - Si marketReady: opDir = H1 (seguir tendencia)
-    // - Si m5ChochReversal: opDir = M5 CHoCH direction (contra H1, reversión)
-    const opDir  = m5ChochReversal
-      ? (choch.side === 'BUY' ? 'BULLISH' : 'BEARISH')
-      : structureH1.trend;
+    // - Si m15ChochFresh: opDir = dirección del CHoCH en M15 (reversión confirmada)
+    // - Si m5ChochReversal con M15 NEUTRAL: opDir = M5 CHoCH direction
+    const opDir = m15ChochFresh
+      ? (data.chochM15.side === 'BUY' ? 'BULLISH' : 'BEARISH')
+      : m5ChochReversal && choch
+        ? (choch.side === 'BUY' ? 'BULLISH' : 'BEARISH')
+        : structureH1.trend;
     const opSide = opDir === 'BULLISH' ? 'BUY' : 'SELL';
 
     // ── MTF_CONFLUENCE: H1+M15 alineados + OB pullback ──
