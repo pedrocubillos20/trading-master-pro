@@ -203,7 +203,7 @@ const SIGNAL_CONFIG = {
   // MTF CONFLUENCE - AHORA REQUERIDO PARA CALIDAD
   // true = H1 y M5 deben estar alineados (menos señales, mejor calidad)
   // ═══════════════════════════════════════════════════════════════
-  REQUIRE_MTF_CONFLUENCE: true, // v24: ¡HABILITADO! Para mejor win rate
+  REQUIRE_MTF_CONFLUENCE: false, // H1+M15 already enforced by marketReady — no double block
   
   // Modelos que SIEMPRE pueden operar sin MTF (tienen su propia lógica H1)
   MODELS_WITHOUT_MTF: [
@@ -1755,102 +1755,96 @@ const SMC = {
     const avgRange  = this.getAvgRange(candles);
     const lastIndex = candles.length - 1;
 
-    for (let i = 1; i < candles.length - 3; i++) {
+    // ── Find swing extremities to use as OB anchors ──
+    // OBs are ONLY valid at fractal highs/lows (extremities of impulse moves)
+    const swings = this.findSwings(candles, 2);
+    const swingHighIdx = new Set(swings.filter(s=>s.type==='high').map(s=>s.index));
+    const swingLowIdx  = new Set(swings.filter(s=>s.type==='low').map(s=>s.index));
+
+    for (let i = 1; i < candles.length - 2; i++) {
       const base  = candles[i];
       const next1 = candles[Math.min(i + 1, lastIndex)];
       const next2 = candles[Math.min(i + 2, lastIndex)];
       const next3 = candles[Math.min(i + 3, lastIndex)];
-
       const baseBody = Math.abs(base.close - base.open);
       if (baseBody < avgRange * 0.08) continue; // skip doji
 
       // ══════════════════════════════════════════════════════════════
-      // DEMAND ORDER BLOCK (BUY)
-      // Rule 1: RED base + 1 GREEN candle whose BODY exceeds RED body
-      // Rule 2: RED base + 2 GREEN candles whose COMBINED close exceeds RED open
-      // Rule 3: RED base + strong impulse (fractal extremity)
+      // DEMAND OB (BUY): Last RED candle at a swing LOW before bullish impulse
+      // The OB must be AT or NEAR a swing low extremity
       // ══════════════════════════════════════════════════════════════
-      if (base.close < base.open) { // RED base candle
-        const n1Body     = Math.abs(next1.close - next1.open);
-        const n1Bull     = next1.close > next1.open;
-        const n2Bull     = next2.close > next2.open;
+      if (base.close < base.open) {
+        // Must be at a swing low OR within 3 candles of one
+        const nearSwingLow = swingLowIdx.has(i) ||
+          swingLowIdx.has(i-1) || swingLowIdx.has(i+1) ||
+          swingLowIdx.has(i-2) || swingLowIdx.has(i+2);
 
-        // Rule 1: Single green engulfs the red body
-        const singleEngulf = n1Bull && next1.close > base.open && next1.open <= base.close;
-
-        // Rule 2: Green body of next1 alone exceeds red body (doesn't need to start below)
-        const singleBodyExceeds = n1Bull && n1Body > baseBody * 0.8 && next1.close > base.open;
-
-        // Rule 3: Two green candles — combined move exceeds red body
+        const n1Body = Math.abs(next1.close - next1.open);
         const n2Body = Math.abs(next2.close - next2.open);
-        const twoGreenExceed = n1Bull && n2Bull &&
-          (n1Body + n2Body) > baseBody &&
-          next2.close > base.open;
+        const n1Bull = next1.close > next1.open;
+        const n2Bull = next2.close > next2.open;
 
-        // Rule 4: Strong impulse move (fractal low → next swing high)
-        const impulse3 = Math.max(next1.high, next2.high, next3.high) - base.low > avgRange * 1.5;
+        // Impulse rules (SMC exact):
+        // Rule 1: 1 green candle body > red body
+        const rule1 = n1Bull && n1Body > baseBody * 0.8 && next1.close > base.open;
+        // Rule 2: 2 green candles combined exceed red body
+        const rule2 = n1Bull && n2Bull && (n1Body + n2Body) > baseBody && next2.close > base.open;
+        // Rule 3: Strong impulse from extremity
+        const rule3 = nearSwingLow && Math.max(next1.high, next2.high, next3.high) - base.low > avgRange * 1.2;
 
-        if (!singleEngulf && !singleBodyExceeds && !twoGreenExceed && !impulse3) continue;
+        if (!rule1 && !rule2 && !rule3) continue;
+        if (!nearSwingLow && !rule1 && !rule2) continue; // must be near extremity OR engulfing
 
-        const obHigh = base.open;    // Top of red body
-        const obLow  = base.close;   // Bottom of red body
+        const obHigh = base.open;
+        const obLow  = base.close;
         const obMid  = (obHigh + obLow) / 2;
 
-        // Deduplicate: skip if very close to existing zone
         if (demandZones.some(z => Math.abs(z.mid - obMid) < avgRange * 0.5)) continue;
 
-        // Mitigation: price closed BELOW OB low after formation
+        // Mitigation: closed below OB low afterward
         let mitigated = false;
         for (let j = i + 2; j <= lastIndex; j++) {
           if (candles[j].close < obLow) { mitigated = true; break; }
         }
 
-        const futureC = candles.slice(i+1, Math.min(i+12, lastIndex+1));
-        const impulseHigh = futureC.length ? Math.max(...futureC.map(c=>c.high)) : obHigh;
-        const impulseSize = Math.max(0, impulseHigh - obHigh);
-
-        const pattern = singleEngulf ? 'ENGULFING' : twoGreenExceed ? '2-CANDLE' : 'IMPULSE';
-        const strength = (singleEngulf || impulseSize > avgRange * 2) ? 'STRONG' : 'NORMAL';
+        const futureC   = candles.slice(i+1, Math.min(i+12, lastIndex+1));
+        const impulseH  = futureC.length ? Math.max(...futureC.map(c=>c.high)) : obHigh;
+        const impulseSize = Math.max(0, impulseH - obHigh);
+        const pattern   = rule1 ? 'ENGULFING' : rule2 ? '2-CANDLE' : 'IMPULSE';
 
         demandZones.push({
-          type: 'DEMAND', side: 'BUY',
-          high: obHigh, low: obLow, mid: obMid,
-          wickLow: base.low, index: i,
+          type:'DEMAND', side:'BUY',
+          high:obHigh, low:obLow, mid:obMid,
+          wickLow:base.low, index:i,
           epoch: base.epoch || (base.time ? Math.floor(base.time/1000) : null),
-          impulseSize, pattern, strength, mitigated, tested: false,
+          impulseSize, pattern,
+          strength: (rule1 || impulseSize > avgRange*2) ? 'STRONG' : 'NORMAL',
+          mitigated, tested:false, atExtremity: nearSwingLow
         });
       }
 
       // ══════════════════════════════════════════════════════════════
-      // SUPPLY ORDER BLOCK (SELL)
-      // Rule 1: GREEN base + 1 RED candle whose BODY exceeds GREEN body
-      // Rule 2: GREEN base + 2 RED candles whose COMBINED close exceeds GREEN open
-      // Rule 3: GREEN base + strong bearish impulse
+      // SUPPLY OB (SELL): Last GREEN candle at a swing HIGH before bearish impulse
       // ══════════════════════════════════════════════════════════════
-      if (base.close > base.open) { // GREEN base candle
+      if (base.close > base.open) {
+        const nearSwingHigh = swingHighIdx.has(i) ||
+          swingHighIdx.has(i-1) || swingHighIdx.has(i+1) ||
+          swingHighIdx.has(i-2) || swingHighIdx.has(i+2);
+
         const n1Body = Math.abs(next1.close - next1.open);
+        const n2Body = Math.abs(next2.close - next2.open);
         const n1Bear = next1.close < next1.open;
         const n2Bear = next2.close < next2.open;
 
-        // Rule 1: Single red engulfs the green body
-        const singleEngulf = n1Bear && next1.close < base.open && next1.open >= base.close;
+        const rule1 = n1Bear && n1Body > baseBody * 0.8 && next1.close < base.open;
+        const rule2 = n1Bear && n2Bear && (n1Body + n2Body) > baseBody && next2.close < base.open;
+        const rule3 = nearSwingHigh && base.high - Math.min(next1.low, next2.low, next3.low) > avgRange * 1.2;
 
-        // Rule 2: Red body alone exceeds green body
-        const singleBodyExceeds = n1Bear && n1Body > baseBody * 0.8 && next1.close < base.open;
+        if (!rule1 && !rule2 && !rule3) continue;
+        if (!nearSwingHigh && !rule1 && !rule2) continue;
 
-        // Rule 3: Two red candles combined exceed green body
-        const n2Body = Math.abs(next2.close - next2.open);
-        const twoRedExceed = n1Bear && n2Bear &&
-          (n1Body + n2Body) > baseBody &&
-          next2.close < base.open;
-
-        // Rule 4: Strong bearish impulse
-        const impulse3 = base.high - Math.min(next1.low, next2.low, next3.low) > avgRange * 1.5;
-
-        if (!singleEngulf && !singleBodyExceeds && !twoRedExceed && !impulse3) continue;
-
-        const obHigh = base.close;   // Top of green body
-        const obLow  = base.open;    // Bottom of green body
+        const obHigh = base.close;
+        const obLow  = base.open;
         const obMid  = (obHigh + obLow) / 2;
 
         if (supplyZones.some(z => Math.abs(z.mid - obMid) < avgRange * 0.5)) continue;
@@ -1860,27 +1854,35 @@ const SMC = {
           if (candles[j].close > obHigh) { mitigated = true; break; }
         }
 
-        const futureC = candles.slice(i+1, Math.min(i+12, lastIndex+1));
-        const impulseLow  = futureC.length ? Math.min(...futureC.map(c=>c.low)) : obLow;
-        const impulseSize = Math.max(0, obLow - impulseLow);
-
-        const pattern = singleEngulf ? 'ENGULFING' : twoRedExceed ? '2-CANDLE' : 'IMPULSE';
-        const strength = (singleEngulf || impulseSize > avgRange * 2) ? 'STRONG' : 'NORMAL';
+        const futureC   = candles.slice(i+1, Math.min(i+12, lastIndex+1));
+        const impulseL  = futureC.length ? Math.min(...futureC.map(c=>c.low)) : obLow;
+        const impulseSize = Math.max(0, obLow - impulseL);
+        const pattern   = rule1 ? 'ENGULFING' : rule2 ? '2-CANDLE' : 'IMPULSE';
 
         supplyZones.push({
-          type: 'SUPPLY', side: 'SELL',
-          high: obHigh, low: obLow, mid: obMid,
-          wickHigh: base.high, index: i,
+          type:'SUPPLY', side:'SELL',
+          high:obHigh, low:obLow, mid:obMid,
+          wickHigh:base.high, index:i,
           epoch: base.epoch || (base.time ? Math.floor(base.time/1000) : null),
-          impulseSize, pattern, strength, mitigated, tested: false,
+          impulseSize, pattern,
+          strength: (rule1 || impulseSize > avgRange*2) ? 'STRONG' : 'NORMAL',
+          mitigated, tested:false, atExtremity: nearSwingHigh
         });
       }
     }
 
-    // Keep 5 freshest unmitigated + 1 mitigated for reference
+    // ── Keep only OBs from the MOST RECENT structure ──
+    // Priority: 1) at extremity + unmitigated  2) STRONG + unmitigated  3) recent
     const filterOBs = (zones) => {
-      const sorted    = zones.sort((a,b) => b.index - a.index);
-      const fresh     = sorted.filter(z => !z.mitigated).slice(0, 5);
+      const sorted = zones.sort((a,b) => {
+        // Extremity OBs always first
+        if (a.atExtremity !== b.atExtremity) return a.atExtremity ? -1 : 1;
+        // Then unmitigated
+        if (a.mitigated !== b.mitigated) return a.mitigated ? 1 : -1;
+        // Then most recent
+        return b.index - a.index;
+      });
+      const fresh     = sorted.filter(z => !z.mitigated).slice(0, 4);
       const mitigated = sorted.filter(z =>  z.mitigated).slice(0, 1);
       return [...fresh, ...mitigated];
     };
@@ -1954,59 +1956,75 @@ const SMC = {
   detectCHoCH(candles, swings) {
     if (swings.length < 4 || candles.length < 20) return null;
 
-    const highs = swings.filter(s => s.type === 'high').slice(-8);
-    const lows  = swings.filter(s => s.type === 'low').slice(-8);
-    const lastPrice = candles[candles.length - 1].close;
-    const avgRange = this.getAvgRange(candles);
+    const highs = swings.filter(s => s.type === 'high').slice(-10);
+    const lows  = swings.filter(s => s.type === 'low').slice(-10);
+    const candidates = []; // collect ALL valid CHoCHs, pick the most recent
 
-    // ── BEARISH CHoCH: HH structure broken — price breaks below a HL ──
-    // Pattern: HH → LH (trend weakening) → price closes below last HL = CHoCH
+    // ── BEARISH CHoCH: was bullish (HH/HL) → price breaks below a HL ──
     if (highs.length >= 2) {
-      const hadHigherHighs = highs.some((h,i) => i>0 && h.price > highs[i-1].price);
-      if (hadHigherHighs) {
+      const hadHH = highs.some((h,i) => i>0 && h.price > highs[i-1].price);
+      if (hadHH) {
         const sortedLows = [...lows].sort((a,b) => a.index - b.index);
-        for (let i = sortedLows.length - 2; i >= 0; i--) {
-          const targetLow = sortedLows[i];
-          const breakIdx = candles.findIndex((c, idx) =>
-            idx > targetLow.index && c.close < targetLow.price
-          );
-          if (breakIdx > 0 && breakIdx >= candles.length - 60) {
-            const level = targetLow.price;
-            const epoch = candles[breakIdx]?.epoch || (candles[breakIdx]?.time ? Math.floor(candles[breakIdx].time/1000) : null);
-            return {
-              type: 'BEARISH_CHOCH', side: 'SELL', level,
-              breakIndex: breakIdx, epoch,
-              obEpoch: candles[Math.max(0, breakIdx-3)]?.epoch || null, // OB cerca del CHoCH
-            };
+        for (let i = sortedLows.length - 1; i >= 1; i--) {
+          const targetLow = sortedLows[i-1]; // the HL that gets broken
+          // Find first candle AFTER the swing that closes BELOW it
+          for (let j = targetLow.index + 1; j < candles.length; j++) {
+            if (candles[j].close < targetLow.price) {
+              if (j >= candles.length - 80) { // within last 80 candles
+                const epoch = candles[j]?.epoch || (candles[j]?.time ? Math.floor(candles[j].time/1000) : null);
+                // OB = last GREEN candle at the swing HIGH before this move down
+                let obIndex = j - 1;
+                while (obIndex > targetLow.index && candles[obIndex].close < candles[obIndex].open) obIndex--;
+                candidates.push({
+                  type: 'BEARISH_CHOCH', side: 'SELL', level: targetLow.price,
+                  breakIndex: j, epoch, obCandleIndex: obIndex
+                });
+              }
+              break; // only first break per target
+            }
           }
         }
       }
     }
 
-    // ── BULLISH CHoCH: LL structure broken — price closes above last LH ──
+    // ── BULLISH CHoCH: was bearish (LH/LL) → price breaks above a LH ──
     if (lows.length >= 2) {
-      const hadLowerLows = lows.some((l,i) => i>0 && l.price < lows[i-1].price);
-      if (hadLowerLows) {
+      const hadLL = lows.some((l,i) => i>0 && l.price < lows[i-1].price);
+      if (hadLL) {
         const sortedHighs = [...highs].sort((a,b) => a.index - b.index);
-        for (let i = sortedHighs.length - 2; i >= 0; i--) {
-          const targetHigh = sortedHighs[i];
-          const breakIdx = candles.findIndex((c, idx) =>
-            idx > targetHigh.index && c.close > targetHigh.price
-          );
-          if (breakIdx > 0 && breakIdx >= candles.length - 60) {
-            const level = targetHigh.price;
-            const epoch = candles[breakIdx]?.epoch || (candles[breakIdx]?.time ? Math.floor(candles[breakIdx].time/1000) : null);
-            return {
-              type: 'BULLISH_CHOCH', side: 'BUY', level,
-              breakIndex: breakIdx, epoch,
-              obEpoch: candles[Math.max(0, breakIdx-3)]?.epoch || null,
-            };
+        for (let i = sortedHighs.length - 1; i >= 1; i--) {
+          const targetHigh = sortedHighs[i-1]; // the LH that gets broken
+          for (let j = targetHigh.index + 1; j < candles.length; j++) {
+            if (candles[j].close > targetHigh.price) {
+              if (j >= candles.length - 80) {
+                const epoch = candles[j]?.epoch || (candles[j]?.time ? Math.floor(candles[j].time/1000) : null);
+                // OB = last RED candle at the swing LOW before this move up
+                let obIndex = j - 1;
+                while (obIndex > targetHigh.index && candles[obIndex].close > candles[obIndex].open) obIndex--;
+                candidates.push({
+                  type: 'BULLISH_CHOCH', side: 'BUY', level: targetHigh.price,
+                  breakIndex: j, epoch, obCandleIndex: obIndex
+                });
+              }
+              break;
+            }
           }
         }
       }
     }
 
-    return null;
+    if (!candidates.length) return null;
+
+    // ── Return the MOST RECENT CHoCH (highest breakIndex) ──
+    candidates.sort((a,b) => b.breakIndex - a.breakIndex);
+    const best = candidates[0];
+
+    // Attach the OB candle epoch for reference
+    if (best.obCandleIndex >= 0 && candles[best.obCandleIndex]) {
+      const obc = candles[best.obCandleIndex];
+      best.obEpoch = obc.epoch || (obc.time ? Math.floor(obc.time/1000) : null);
+    }
+    return best;
   },
 
   detectBOS(candles, swings, structure) {
@@ -2486,22 +2504,26 @@ const SMC = {
     const opSide = opDir === 'BULLISH' ? 'BUY' : 'SELL';
 
     // ── MTF_CONFLUENCE: H1+M15 alineados + OB pullback ──
-    // Core flow: H1 tendencia → M15 confirmación → OB toque → entrada 50%
+    // Flow: H1 trend → M15 confirmation (or M15 CHoCH) → OB touch → entry
     if (pullback && pullback.side === opSide) {
-      let score = 88; // Base: ya pasó filtro H1+M15
+      let score = 88;
       if (pullback.side === 'BUY'  && premiumDiscount === 'DISCOUNT') score += 5;
       if (pullback.side === 'SELL' && premiumDiscount === 'PREMIUM')  score += 5;
-      if (m15Strong)       score += 4; // M15 tiene tendencia fuerte
-      if (tripleConfluence) score += 3; // M5 también alineado (bonus, no requerido)
-      if (choch)           score += 3; // CHoCH en M5 como confirmación adicional
+      if (m15Strong)        score += 4;
+      if (tripleConfluence) score += 3;
+      if (choch)            score += 3;
+      if (m15ChochFresh)    score += 4; // M15 CHoCH = high quality reversal entry
       if (pullback.confirmation === 'ENGULFING' || pullback.confirmation === 'PIN_BAR') score += 3;
       score = Math.min(score, 100);
 
+      const trendCtx = m15ChochFresh
+        ? `CHoCH M15(${data.chochM15?.side}) + M5 OB`
+        : `H1(${opDir})+M15(${structureM15.trend})`;
       signals.push({
         model: 'MTF_CONFLUENCE',
         baseScore: score,
         pullback,
-        reason: `H1(${opDir})+M15(${structureM15.trend}) + OB 50% ${pullback.confirmation||''} ${premiumDiscount !== 'EQUILIBRIUM' ? '+ '+premiumDiscount : ''}`
+        reason: `${trendCtx} + OB ${pullback.confirmation||''} ${premiumDiscount !== 'EQUILIBRIUM' ? '+ '+premiumDiscount : ''}`
       });
     }
     
@@ -2510,15 +2532,16 @@ const SMC = {
       let score = 86;
       if (tripleConfluence) score += 5;
       if (m15Strong)        score += 4;
+      if (m15ChochFresh)    score += 4; // M15 CHoCH confirms reversal
       if (pullback.confirmation === 'ENGULFING' || pullback.confirmation === 'PIN_BAR') score += 4;
       if (premiumDiscount === (opSide==='BUY'?'DISCOUNT':'PREMIUM')) score += 3;
-      score = Math.min(score, 98);
+      score = Math.min(score, 99);
 
       signals.push({
         model: 'CHOCH_PULLBACK',
         baseScore: score,
         pullback,
-        reason: `${choch.type} + OB 50% ${pullback.confirmation||''} + H1/M15 ${opDir}`
+        reason: `${choch.type}${m15ChochFresh?' + CHoCH M15':''} + OB ${pullback.confirmation||''} + ${opDir}`
       });
     }
     
