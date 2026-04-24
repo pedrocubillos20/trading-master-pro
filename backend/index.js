@@ -1874,16 +1874,17 @@ const SMC = {
     // ── Keep only OBs from the MOST RECENT structure ──
     // Priority: 1) at extremity + unmitigated  2) STRONG + unmitigated  3) recent
     const filterOBs = (zones) => {
-      const sorted = zones.sort((a,b) => {
-        // Extremity OBs always first
+      // Only consider OBs from last 120 candles — old zones are irrelevant
+      const recentEnough = zones.filter(z => z.index >= lastIndex - 120);
+      const sorted = recentEnough.sort((a,b) => {
         if (a.atExtremity !== b.atExtremity) return a.atExtremity ? -1 : 1;
-        // Then unmitigated
         if (a.mitigated !== b.mitigated) return a.mitigated ? 1 : -1;
-        // Then most recent
         return b.index - a.index;
       });
-      const fresh     = sorted.filter(z => !z.mitigated).slice(0, 4);
-      const mitigated = sorted.filter(z =>  z.mitigated).slice(0, 1);
+      // Show max 3 fresh (unmitigated) OBs — no mitigated ones in display
+      const fresh = sorted.filter(z => !z.mitigated).slice(0, 3);
+      // Only 1 mitigated if it's from the last 30 candles (context only)
+      const mitigated = sorted.filter(z => z.mitigated && z.index >= lastIndex - 30).slice(0, 1);
       return [...fresh, ...mitigated];
     };
 
@@ -2015,9 +2016,22 @@ const SMC = {
 
     if (!candidates.length) return null;
 
-    // ── Return the MOST RECENT CHoCH (highest breakIndex) ──
+    // ── Pick the MOST MEANINGFUL CHoCH ──
+    // Rule: prefer the most recent one that is NOT immediately contradicted by current price
+    // i.e. if market just broke bullish, don't return a bearish CHoCH from 5 candles ago
     candidates.sort((a,b) => b.breakIndex - a.breakIndex);
-    const best = candidates[0];
+
+    const currentPrice = candles[candles.length - 1].close;
+    const avgRange = this.getAvgRange(candles);
+
+    // Try to find the most recent CHoCH whose direction matches current price position
+    let best = candidates[0];
+    for (const c of candidates) {
+      if (c.side === 'BUY' && currentPrice > c.level) { best = c; break; } // bullish and price above the break
+      if (c.side === 'SELL' && currentPrice < c.level) { best = c; break; } // bearish and price below the break
+    }
+    // Fallback: if nothing matches, use most recent regardless
+    if (!best) best = candidates[0];
 
     // Attach the OB candle epoch for reference
     if (best.obCandleIndex >= 0 && candles[best.obCandleIndex]) {
@@ -2025,6 +2039,59 @@ const SMC = {
       best.obEpoch = obc.epoch || (obc.time ? Math.floor(obc.time/1000) : null);
     }
     return best;
+  },
+
+  // ── Find the exact OB formed at a CHoCH or BOS impulse ──
+  // The SMC rule: OB = LAST candle of opposite color BEFORE the impulse
+  // that created the structure break (CHoCH or BOS)
+  findStructureOB(candles, breakIndex, direction) {
+    if (!candles || breakIndex < 2) return null;
+    const avgRange = this.getAvgRange(candles);
+
+    if (direction === 'BUY') {
+      // Find last RED candle before the bullish impulse
+      // Go backward from breakIndex until we find the last RED candle
+      let lastRedIdx = -1;
+      for (let i = breakIndex - 1; i >= Math.max(0, breakIndex - 20); i--) {
+        if (candles[i].close < candles[i].open) { lastRedIdx = i; break; }
+      }
+      if (lastRedIdx < 0) return null;
+      const base = candles[lastRedIdx];
+      const obHigh = base.open;
+      const obLow  = base.close;
+      if (obHigh - obLow < avgRange * 0.05) return null; // skip doji
+      return {
+        type: 'DEMAND', side: 'BUY',
+        high: obHigh, low: obLow, mid: (obHigh+obLow)/2,
+        wickLow: base.low,
+        index: lastRedIdx,
+        epoch: base.epoch || (base.time ? Math.floor(base.time/1000) : null),
+        pattern: 'CHOCH_OB', strength: 'STRONG',
+        mitigated: false, atExtremity: true, isStructureOB: true
+      };
+    }
+    if (direction === 'SELL') {
+      // Find last GREEN candle before the bearish impulse
+      let lastGreenIdx = -1;
+      for (let i = breakIndex - 1; i >= Math.max(0, breakIndex - 20); i--) {
+        if (candles[i].close > candles[i].open) { lastGreenIdx = i; break; }
+      }
+      if (lastGreenIdx < 0) return null;
+      const base = candles[lastGreenIdx];
+      const obHigh = base.close;
+      const obLow  = base.open;
+      if (obHigh - obLow < avgRange * 0.05) return null;
+      return {
+        type: 'SUPPLY', side: 'SELL',
+        high: obHigh, low: obLow, mid: (obHigh+obLow)/2,
+        wickHigh: base.high,
+        index: lastGreenIdx,
+        epoch: base.epoch || (base.time ? Math.floor(base.time/1000) : null),
+        pattern: 'CHOCH_OB', strength: 'STRONG',
+        mitigated: false, atExtremity: true, isStructureOB: true
+      };
+    }
+    return null;
   },
 
   detectBOS(candles, swings, structure) {
@@ -2338,9 +2405,40 @@ const SMC = {
     const orderFlow = this.analyzeOrderFlow(candlesM5);
     const choch = this.detectCHoCH(candlesM5, swingsM5);
     const bos = this.detectBOS(candlesM5, swingsM5, structureM5);
+
+    // ── STRUCTURE OB: The OB formed at the CHoCH or BOS impulse ──
+    // This is the MOST IMPORTANT OB — it's where smart money entered to create the break
+    // Prepend it to the zone list so it's always shown first and used for entry
+    if (choch) {
+      const structOB = this.findStructureOB(candlesM5, choch.breakIndex, choch.side);
+      if (structOB) {
+        if (choch.side === 'BUY' && !demandZones.some(z => Math.abs(z.mid - structOB.mid) < avgRange * 0.3)) {
+          demandZones.unshift(structOB); // add to front
+          demandZones.splice(4); // keep max 4
+        }
+        if (choch.side === 'SELL' && !supplyZones.some(z => Math.abs(z.mid - structOB.mid) < avgRange * 0.3)) {
+          supplyZones.unshift(structOB);
+          supplyZones.splice(4);
+        }
+      }
+    }
+    if (bos && !choch) {
+      const structOB = this.findStructureOB(candlesM5, bos.breakIndex, bos.side);
+      if (structOB) {
+        if (bos.side === 'BUY' && !demandZones.some(z => Math.abs(z.mid - structOB.mid) < avgRange * 0.3)) {
+          demandZones.unshift(structOB);
+          demandZones.splice(4);
+        }
+        if (bos.side === 'SELL' && !supplyZones.some(z => Math.abs(z.mid - structOB.mid) < avgRange * 0.3)) {
+          supplyZones.unshift(structOB);
+          supplyZones.splice(4);
+        }
+      }
+    }
+
     const pullback = this.detectPullback(candlesM5, demandZones, supplyZones, config);
-    
-    state.swings = swingsM5; // ALL swings with correct indices, not just last 10
+
+    state.swings = swingsM5;
     state.structure = structureM5;
     state.demandZones = demandZones;
     state.supplyZones = supplyZones;

@@ -105,14 +105,26 @@ const Chart = ({ candles, height, signal, timeframe='M5',
           }
 
           // Label — compact, positioned at the OB candle
+          // isStructureOB = OB formed at the CHoCH/BOS impulse — most important
+          const isStructOB = z.isStructureOB || z.pattern === 'CHOCH_OB';
+          const obCol = isStructOB ? (isBull ? '#fbbf24' : '#f97316') : col; // gold for structure OBs
           const midY = yTop + boxH/2;
-          const lblText = miti ? (isBull?'OB↑✗':'OB↓✗') : (isBull?'OB↑':'OB↓');
-          const lblW = miti ? 28 : 22;
-          h += `<rect x="${(startX)|0}" y="${(midY-7)|0}" width="${lblW}" height="13" rx="2" fill="${col}" fill-opacity="${miti?'0.4':'0.9'}"/>`;
-          h += `<text x="${(startX+lblW/2)|0}" y="${(midY+4)|0}" text-anchor="middle" fill="${miti?'#aaa':'#000'}" font-size="7" font-weight="700" font-family="monospace">${lblText}</text>`;
+          let lblText = miti ? (isBull?'OB↑✗':'OB↓✗') : (isBull?'OB↑':'OB↓');
+          if (isStructOB) lblText = isBull ? 'OB↑★' : 'OB↓★';
+          const lblW = isStructOB ? 30 : (miti ? 28 : 22);
+
+          // Structure OBs: thicker border, brighter fill
+          if (isStructOB && !miti) {
+            h += `<rect x="${startX|0}" y="${yTop|0}" width="${(endX-startX)|0}" height="${boxH|0}" fill="${obCol}" fill-opacity="0.12" rx="1"/>`;
+            h += `<line x1="${startX|0}" y1="${yTop|0}" x2="${endX}" y2="${yTop|0}" stroke="${obCol}" stroke-width="2" opacity="0.95"/>`;
+            h += `<line x1="${startX|0}" y1="${(yTop+boxH)|0}" x2="${endX}" y2="${(yTop+boxH)|0}" stroke="${obCol}" stroke-width="1" stroke-dasharray="4,3" opacity="0.5"/>`;
+          }
+
+          h += `<rect x="${(startX)|0}" y="${(midY-7)|0}" width="${lblW}" height="13" rx="2" fill="${obCol}" fill-opacity="${miti?'0.4':'0.95'}"/>`;
+          h += `<text x="${(startX+lblW/2)|0}" y="${(midY+4)|0}" text-anchor="middle" fill="${miti?'#aaa':'#000'}" font-size="7" font-weight="800" font-family="monospace">${lblText}</text>`;
 
           // Pattern label — only on M5
-          if (!miti && timeframe === 'M5' && z.pattern) {
+          if (!miti && timeframe === 'M5' && z.pattern && !isStructOB) {
             h += `<text x="${(startX+3)|0}" y="${(yTop-3)|0}" fill="${col}" font-size="6" font-family="monospace" opacity="0.6">${z.pattern}</text>`;
           }
 
@@ -121,13 +133,14 @@ const Chart = ({ candles, height, signal, timeframe='M5',
           h += `<circle cx="${cx|0}" cy="${(isBull?yBot+5:yTop-5)|0}" r="2" fill="${col}" opacity="0.8"/>`;
         });
       };
-      drawOBs(visibleDemand.filter(z=>!z.mitigated).slice(0,cfg.maxOB), true);
-      drawOBs(visibleSupply.filter(z=>!z.mitigated).slice(0,cfg.maxOB), false);
-      // Show 1 mitigated for context (only M5)
-      if (timeframe === 'M5') {
-        drawOBs(visibleDemand.filter(z=>z.mitigated).slice(0,1), true);
-        drawOBs(visibleSupply.filter(z=>z.mitigated).slice(0,1), false);
-      }
+      // Structure OBs (from CHoCH/BOS) shown first and always
+      const structDemand = visibleDemand.filter(z=>z.isStructureOB&&!z.mitigated);
+      const structSupply = visibleSupply.filter(z=>z.isStructureOB&&!z.mitigated);
+      const regDemand    = visibleDemand.filter(z=>!z.isStructureOB&&!z.mitigated).slice(0, Math.max(1, cfg.maxOB - structDemand.length));
+      const regSupply    = visibleSupply.filter(z=>!z.isStructureOB&&!z.mitigated).slice(0, Math.max(1, cfg.maxOB - structSupply.length));
+      drawOBs([...structDemand, ...regDemand], true);
+      drawOBs([...structSupply, ...regSupply], false);
+      // NO mitigated OBs — they clutter the chart and create confusion
     }
 
     // ── HH/HL/LH/LL STRUCTURE LABELS ──
