@@ -917,13 +917,20 @@ function startMarketMonitoring() {
   marketCheckInterval = setInterval(checkAndResubscribeMarkets, 30000);
   console.log('✅ Monitor de mercados iniciado (verificación cada 30s)');
 
-  // ── Refrescar M15 y H1 cada 5 minutos para mantener estructura actualizada ──
+  // ── Refrescar M15 cada 1 minuto y H1 cada 5 minutos ──
+  // M15 candle = 15 min, but new OBs and CHoCH can form faster
+  // Refreshing every minute ensures labels, OBs and CHoCH are always current
   setInterval(() => {
     for (const symbol of MY_ASSETS) {
       try { requestM15(symbol); } catch(e) {}
+    }
+  }, 60 * 1000); // M15: every 1 min
+
+  setInterval(() => {
+    for (const symbol of MY_ASSETS) {
       try { requestH1(symbol); } catch(e) {}
     }
-  }, 5 * 60 * 1000);
+  }, 5 * 60 * 1000); // H1: every 5 min
 }
 
 const assetData = {};
@@ -2514,16 +2521,49 @@ const SMC = {
     let m15Loaded = false;
     if (candlesM15 && candlesM15.length >= 20) {
       m15Loaded = true;
-      const swingsM15 = this.findSwings(candlesM15, 3); // lb=3 for cleaner M15 swings
+      const swingsM15 = this.findSwings(candlesM15, 3);
       structureM15 = this.analyzeStructure(swingsM15);
       state.structureM15 = structureM15;
-      // M15 CHoCH and BOS for chart visualization
-      state.chochM15 = this.detectCHoCH(candlesM15, swingsM15);
-      state.bosM15   = this.detectBOS(candlesM15, swingsM15, structureM15);
-      // M15 Order Block zones for chart visualization
+      state.swingsM15 = swingsM15; // save for frontend labels
+
+      // M15 CHoCH and BOS
+      const chochM15 = this.detectCHoCH(candlesM15, swingsM15);
+      const bosM15   = this.detectBOS(candlesM15, swingsM15, structureM15);
+      state.chochM15 = chochM15;
+      state.bosM15   = bosM15;
+
+      // M15 Order Block zones
       const zonesM15 = this.findZones(candlesM15);
-      state.demandZonesM15 = zonesM15.demandZones;
-      state.supplyZonesM15 = zonesM15.supplyZones;
+      let demandM15 = zonesM15.demandZones;
+      let supplyM15 = zonesM15.supplyZones;
+
+      // ── Add Structure OBs from M15 CHoCH/BOS (same logic as M5) ──
+      const avgRangeM15 = this.getAvgRange(candlesM15);
+      if (chochM15) {
+        const structOB15 = this.findStructureOB(candlesM15, chochM15.breakIndex, chochM15.side);
+        if (structOB15) {
+          if (chochM15.side === 'BUY' && !demandM15.some(z => Math.abs(z.mid - structOB15.mid) < avgRangeM15 * 0.3)) {
+            demandM15.unshift(structOB15); demandM15.splice(4);
+          }
+          if (chochM15.side === 'SELL' && !supplyM15.some(z => Math.abs(z.mid - structOB15.mid) < avgRangeM15 * 0.3)) {
+            supplyM15.unshift(structOB15); supplyM15.splice(4);
+          }
+        }
+      }
+      if (bosM15 && !chochM15) {
+        const structOB15 = this.findStructureOB(candlesM15, bosM15.breakIndex, bosM15.side);
+        if (structOB15) {
+          if (bosM15.side === 'BUY' && !demandM15.some(z => Math.abs(z.mid - structOB15.mid) < avgRangeM15 * 0.3)) {
+            demandM15.unshift(structOB15); demandM15.splice(4);
+          }
+          if (bosM15.side === 'SELL' && !supplyM15.some(z => Math.abs(z.mid - structOB15.mid) < avgRangeM15 * 0.3)) {
+            supplyM15.unshift(structOB15); supplyM15.splice(4);
+          }
+        }
+      }
+
+      state.demandZonesM15 = demandM15;
+      state.supplyZonesM15 = supplyM15;
     }
     state.structureM15 = structureM15;
     state.m15Loaded = m15Loaded;
@@ -4864,6 +4904,7 @@ app.get('/api/analyze/:symbol', (req, res) => {
     structureM15Data: data.structureM15 || {},
     // Swings with epoch for time-based positioning on chart
     swingsM5: (data.swings||[]).map(s=>({ type:s.type, price:s.price, index:s.index, epoch: s.time ? Math.floor(s.time/1000) : null })),
+    swingsM15: (data.swingsM15||[]).map(s=>({ type:s.type, price:s.price, index:s.index, epoch: s.time ? Math.floor(s.time/1000) : null })),
     // Live analysis details for the "what we're looking for" panel
     liveState: {
       hasChoch:     !!data.choch,

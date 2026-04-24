@@ -387,6 +387,7 @@ export default function Dashboard({ user, onLogout }) {
   const [candlesM1, setCandlesM1]       = useState([]);
   // Per-timeframe zones and structure
   const [zonesData, setZonesData]       = useState({ m5:{d:[],s:[]}, m15:{d:[],s:[]}, h1:{d:[],s:[]} });
+  const [swingsM15, setSwingsM15]       = useState([]);
   const [structAll, setStructAll]       = useState({ m5:null, m15:null, h1:null });
   const [m1Steps, setM1Steps]           = useState(null);
   const [liveAnalysis, setLiveAnalysis] = useState(null);
@@ -407,6 +408,7 @@ export default function Dashboard({ user, onLogout }) {
   const resetAnalysis = async () => {
     // Clear local state immediately for instant visual feedback
     setZonesData({ m5:{d:[],s:[]}, m15:{d:[],s:[]}, h1:{d:[],s:[]} });
+    setSwingsM15([]);
     setStructAll({ m5:null, m15:null, h1:null });
     setM1Steps(null);
     // Tell backend to clear cooldowns + recompute
@@ -484,6 +486,7 @@ export default function Dashboard({ user, onLogout }) {
           });
           if(j.m1Steps) setM1Steps(j.m1Steps);
           if(j.chartOverlays) setChartOverlays(j.chartOverlays);
+          if(j.swingsM15?.length) setSwingsM15(j.swingsM15);
           if(j.signalExplanation) setSignalExp(j.signalExplanation);
           // Live analysis: what is the system currently waiting for
           if(j.signal) setLiveAnalysis({
