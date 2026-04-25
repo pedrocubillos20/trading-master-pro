@@ -2608,10 +2608,28 @@ const SMC = {
                                structureH1.trend !== 'LOADING' &&
                                structureM15.trend === 'NEUTRAL' &&
                                structureH1.strength >= 55;
-    // M15 CHoCH = fresh structure break on M15 → valid even if H1 still shows old trend
+    // ── CRITICAL SMC RULE: H1+M5 agreement = primary direction, no override ──
+    // If H1 BEARISH + M5 BEARISH: M15 bounce CHoCH = PULLBACK for SELL, NOT a buy signal
+    // If H1 BULLISH + M5 BULLISH: M15 dip CHoCH   = PULLBACK for BUY,  NOT a sell signal
+    const h1m5Agree = structureH1.trend === structureM5.trend &&
+                      structureH1.trend !== 'NEUTRAL' &&
+                      structureH1.trend !== 'LOADING';
+
+    // m15ChochOverride ONLY activates when H1 and M5 DISAGREE
+    // (genuine reversal scenario, not a retracement)
     const m15ChochOverride = !!(data.chochM15 &&
-                               data.chochM15.breakIndex >= (candlesM15?.length||0) - 40 &&
-                               structureM5.trend === (data.chochM15.side === 'BUY' ? 'BULLISH' : 'BEARISH'));
+      data.chochM15.breakIndex >= (candlesM15?.length||0) - 40 &&
+      !h1m5Agree && // ← Never override when H1+M5 both agree on direction
+      (() => {
+        const chochDir = data.chochM15.side;
+        const lastM5  = candlesM5?.[candlesM5.length - 1];
+        const prev5M5 = candlesM5?.[Math.max(0, candlesM5.length - 6)];
+        if (!lastM5 || !prev5M5) return false;
+        if (chochDir === 'BUY')  return lastM5.close > prev5M5.close || structureM5.strength < 45;
+        if (chochDir === 'SELL') return lastM5.close < prev5M5.close || structureM5.strength < 45;
+        return false;
+      })()
+    );
     // NEW: If M15 and M5 are BOTH strongly aligned (even against H1),
     // the intermediate timeframes are showing a real trend — allow signals
     const m15m5Aligned = m15Loaded &&
@@ -2637,9 +2655,21 @@ const SMC = {
     // ── EXCEPCIÓN: CHoCH en M5/M15 cuando el mercado cambia de dirección ──
     // Caso 1: M15 NEUTRAL + M5 CHoCH + BOS = transición de tendencia
     // Caso 2: M15 CHoCH reciente + M5 confirma = reversión en marcha
+    // m15ChochFresh: M15 CHoCH within 40 candles — also blocked when H1+M5 agree
+    // Same rule: H1+M5 BEARISH + M15 bounce CHoCH = PULLBACK not reversal
     const m15ChochFresh = !!(data.chochM15 &&
       data.chochM15.breakIndex >= (candlesM15?.length||0) - 40 &&
-      structureM5.trend === (data.chochM15.side === 'BUY' ? 'BULLISH' : 'BEARISH'));
+      !h1m5Agree && // same guard
+      (() => {
+        const chochDir = data.chochM15.side;
+        const lastM5  = candlesM5?.[candlesM5.length - 1];
+        const prev5M5 = candlesM5?.[Math.max(0, candlesM5.length - 6)];
+        if (!lastM5 || !prev5M5) return true;
+        if (chochDir === 'BUY')  return lastM5.close > prev5M5.close || structureM5.strength < 45;
+        if (chochDir === 'SELL') return lastM5.close < prev5M5.close || structureM5.strength < 45;
+        return true;
+      })()
+    );
 
     // m5ChochReversal: M5 CHoCH+BOS detected against H1+M15 trend
     // Triggers when:
@@ -4536,6 +4566,18 @@ function analyzeAsset(symbol) {
   // ═══════════════════════════════════════════
   if (now - data.lastAnalysis < SIGNAL_CONFIG.ANALYSIS_COOLDOWN) return;
   data.lastAnalysis = now;
+
+  // ── Professional SMC Analysis Log ──
+  const logStruct = (tf, s) => s?.trend ? `${tf}:${s.trend.slice(0,4)}(${s.strength||0}%)` : `${tf}:---`;
+  const logOBs = (d, s) => `D${(d||[]).filter(z=>!z.mitigated).length}/S${(s||[]).filter(z=>!z.mitigated).length}`;
+  const chochStr = data.choch ? `CHoCH${data.choch.side==='BUY'?'↑':'↓'}` : '---';
+  const bosStr   = data.bos   ? `BOS${data.bos.side==='BUY'?'↑':'↓'}` : '---';
+  console.log(
+    `📈 [${config.shortName}] ${logStruct('H1',data.structureH1)} | ${logStruct('M15',data.structureM15)} | ${logStruct('M5',data.structure)}` +
+    ` | OBs:${logOBs(data.demandZones,data.supplyZones)} | ${chochStr} ${bosStr}` +
+    ` | Price:${(data.price||0).toFixed(config.decimals)}` +
+    ` | ${data.premiumDiscount||'EQ'}`
+  );
   
   // ═══════════════════════════════════════════
   // FILTRO 2: Verificar horas de trading
