@@ -2607,9 +2607,16 @@ const SMC = {
                                structureH1.strength >= 55;
     // M15 CHoCH = fresh structure break on M15 → valid even if H1 still shows old trend
     const m15ChochOverride = !!(data.chochM15 &&
-                               data.chochM15.breakIndex >= (candlesM15?.length||0) - 20 &&
+                               data.chochM15.breakIndex >= (candlesM15?.length||0) - 40 &&
                                structureM5.trend === (data.chochM15.side === 'BUY' ? 'BULLISH' : 'BEARISH'));
-    const h1m15Aligned = h1Loaded && m15Loaded && (sameDirection || h1StrongM15Neutral || m15ChochOverride);
+    // NEW: If M15 and M5 are BOTH strongly aligned (even against H1),
+    // the intermediate timeframes are showing a real trend — allow signals
+    const m15m5Aligned = m15Loaded &&
+      structureM15.trend === structureM5.trend &&
+      structureM15.trend !== 'NEUTRAL' &&
+      structureM15.strength >= 40 && // M15 must have clear structure
+      structureM5.trend !== 'NEUTRAL';
+    const h1m15Aligned = h1Loaded && m15Loaded && (sameDirection || h1StrongM15Neutral || m15ChochOverride || m15m5Aligned);
 
     // ── FILTRO GLOBAL: necesitamos también confirmación de fuerza ──
     const h1Strong  = structureH1.strength  >= 40; // lowered — real markets often read 40-60
@@ -2620,7 +2627,7 @@ const SMC = {
     // Caso 1: M15 NEUTRAL + M5 CHoCH + BOS = transición de tendencia
     // Caso 2: M15 CHoCH reciente + M5 confirma = reversión en marcha
     const m15ChochFresh = !!(data.chochM15 &&
-      data.chochM15.breakIndex >= (candlesM15?.length||0) - 25 &&
+      data.chochM15.breakIndex >= (candlesM15?.length||0) - 40 &&
       structureM5.trend === (data.chochM15.side === 'BUY' ? 'BULLISH' : 'BEARISH'));
 
     const m5ChochReversal = (!marketReady || m15ChochFresh) &&
@@ -2650,11 +2657,18 @@ const SMC = {
     // - Si marketReady: opDir = H1 (seguir tendencia)
     // - Si m15ChochFresh: opDir = dirección del CHoCH en M15 (reversión confirmada)
     // - Si m5ChochReversal con M15 NEUTRAL: opDir = M5 CHoCH direction
+    // opDir priority:
+    // 1. Fresh M15 CHoCH (strongest reversal signal)
+    // 2. M15+M5 both aligned (intermediate reversal confirmed)  
+    // 3. M5 CHoCH reversal with neutral M15
+    // 4. Default: follow H1
     const opDir = m15ChochFresh
       ? (data.chochM15.side === 'BUY' ? 'BULLISH' : 'BEARISH')
-      : m5ChochReversal && choch
-        ? (choch.side === 'BUY' ? 'BULLISH' : 'BEARISH')
-        : structureH1.trend;
+      : m15m5Aligned && !sameDirection
+        ? structureM15.trend // M15+M5 agree → use M15 direction
+        : m5ChochReversal && choch
+          ? (choch.side === 'BUY' ? 'BULLISH' : 'BEARISH')
+          : structureH1.trend;
     const opSide = opDir === 'BULLISH' ? 'BUY' : 'SELL';
 
     // ── MTF_CONFLUENCE: H1+M15 alineados + OB pullback ──
@@ -2674,7 +2688,11 @@ const SMC = {
 
       const trendCtx = m15ChochFresh
         ? `CHoCH M15(${data.chochM15?.side}) + M5 OB`
-        : `H1(${opDir})+M15(${structureM15.trend})`;
+        : (m15m5Aligned && !sameDirection)
+          ? `M15+M5(${structureM15.trend}) vs H1(${structureH1.trend})`
+          : `H1(${opDir})+M15(${structureM15.trend})`;
+      // Counter-trend signals (M15+M5 vs H1) get -5 score penalty
+      if (m15m5Aligned && !sameDirection && !m15ChochFresh) score = Math.max(score - 5, 82);
       signals.push({
         model: 'MTF_CONFLUENCE',
         baseScore: score,
