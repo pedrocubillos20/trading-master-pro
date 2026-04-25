@@ -2152,103 +2152,119 @@ const SMC = {
   detectPullback(candles, demandZones, supplyZones, config) {
     if (candles.length < 5) return null;
 
-    const last  = candles[candles.length - 1];
-    const prev  = candles[candles.length - 2];
-    const prev2 = candles[candles.length - 3];
+    const last   = candles[candles.length - 1];
     const avgRange = this.getAvgRange(candles);
+
+    // ── Helper: check if any of the last N candles touched the OB ──
+    const touchedRecently = (zone, n, side) => {
+      const window = candles.slice(-n);
+      return window.some(c => {
+        if (side === 'BUY')  return c.low <= zone.high + avgRange * 0.5 && c.high >= zone.low - avgRange * 0.5;
+        if (side === 'SELL') return c.high >= zone.low - avgRange * 0.5 && c.low <= zone.high + avgRange * 0.5;
+        return false;
+      });
+    };
+
+    // ── Helper: check if any candle in last N shows rejection ──
+    const recentConf = (zone, n, side) => {
+      const window = candles.slice(-n);
+      if (side === 'BUY') {
+        return window.some(c => {
+          const wickBull = (Math.min(c.open,c.close)-c.low) > Math.abs(c.close-c.open)*0.3;
+          const bullClose = c.close > c.open;
+          const pinBar = c.low < zone.low && c.close > zone.mid;
+          return bullClose || wickBull || pinBar;
+        });
+      }
+      if (side === 'SELL') {
+        return window.some(c => {
+          const wickBear = (c.high-Math.max(c.open,c.close)) > Math.abs(c.close-c.open)*0.3;
+          const bearClose = c.close < c.open;
+          const pinBar = c.high > zone.high && c.close < zone.mid;
+          return bearClose || wickBear || pinBar;
+        });
+      }
+      return false;
+    };
 
     // ══════════════════════════════════════════════════════════════════════
     // PULLBACK A ZONA DE DEMANDA (COMPRAS)
-    // SMC Rule: Price enters OB body zone → shows bullish rejection → entry
-    // OB = last red candle before bullish impulse (from findZones)
-    // Entry: current close price (real-time, not historical level)
-    // SL: below OB wick low
     // ══════════════════════════════════════════════════════════════════════
     for (const zone of demandZones) {
       if (zone.mitigated) continue;
 
-      // Check last 3 candles for OB touch (price must enter OB range)
-      const touches = [last, prev, prev2].some(c =>
-        c && c.low <= zone.high + avgRange * 0.3 && c.high >= zone.low - avgRange * 0.3
-      );
-      if (!touches) continue;
+      // ── Touch check: last 10 candles (was 3 — missed CHoCH setups) ──
+      const touched = touchedRecently(zone, 10, 'BUY');
+      if (!touched) continue;
 
-      // ── Rejection confirmation candles ──
-      // Any bullish close shows buying pressure at the OB
-      const bullClose   = last.close > last.open;                                         // green close
-      const wickReject  = (Math.min(last.open,last.close) - last.low) >                  // strong lower wick
-                          Math.abs(last.close - last.open) * 0.35;
-      const engulf      = prev.close < prev.open &&                                       // bearish prev
-                          last.close > last.open && last.close > prev.open;               // engulfs prev
-      const pinBar      = last.low < zone.low && last.close >= zone.mid;                  // pin bar in OB
-      const prevGreenReject = prev.close > prev.open && prev.low <= zone.high &&          // prev candle rejected
-                              last.close > prev.close;                                     // last continues up
+      // ── Auto-accept if this is a structureOB from a recent CHoCH ──
+      // When CHoCH happened + OB is the one that caused it → entry is valid
+      const isStructOB = zone.isStructureOB || zone.pattern === 'CHOCH_OB';
+      const lastBullCandle = candles.slice(-8).some(c => c.close > c.open);
+      const hasConf = isStructOB
+        ? (lastBullCandle || recentConf(zone, 6, 'BUY')) // looser for structureOB
+        : recentConf(zone, 5, 'BUY');                    // normal OBs need confirmation
 
-      const hasConf = bullClose || wickReject || engulf || pinBar || prevGreenReject;
       if (!hasConf) continue;
 
-      // Entry = current close. Reject if price already flew away from OB
-      const entry = +(last.close).toFixed(config.decimals);
-      if (entry > zone.high + avgRange * 1.0) continue; // too far above OB
+      const entry   = +(last.close).toFixed(config.decimals);
+      const slLevel = +((zone.wickLow || zone.low) - avgRange * 0.2).toFixed(config.decimals);
+      const risk    = entry - slLevel;
+      if (risk <= 0 || risk > avgRange * 15) continue;
+      // Reject only if price moved very far away (2x avgRange above OB)
+      if (entry > zone.high + avgRange * 2.0) continue;
 
-      const slLevel = +((zone.wickLow || zone.low) - avgRange * 0.15).toFixed(config.decimals);
-      const risk = entry - slLevel;
-      if (risk <= 0 || risk > avgRange * 12) continue;
+      // Best confirmation from recent candles
+      const conf = candles.slice(-5).some(c => c.close>c.open && c.close>candles[candles.length-6]?.close)
+        ? 'BULLISH_CLOSE'
+        : isStructOB ? 'CHOCH_OB' : 'ZONE_TOUCH';
 
-      const conf = engulf ? 'ENGULFING' : pinBar ? 'PIN_BAR' : wickReject ? 'REJECTION_WICK' : 'BULLISH_CLOSE';
       return {
         type: 'DEMAND_ZONE', side: 'BUY', zone,
         entry, stop: slLevel,
-        tp1: +(entry + risk * 1.5).toFixed(config.decimals),
-        tp2: +(entry + risk * 2.5).toFixed(config.decimals),
-        tp3: +(entry + risk * 4.0).toFixed(config.decimals),
+        tp1: +(entry + risk*1.5).toFixed(config.decimals),
+        tp2: +(entry + risk*2.5).toFixed(config.decimals),
+        tp3: +(entry + risk*4.0).toFixed(config.decimals),
         touchedOB: true, entryType: 'OB_CURRENT_CLOSE', confirmation: conf
       };
     }
 
     // ══════════════════════════════════════════════════════════════════════
     // PULLBACK A ZONA DE SUPPLY (VENTAS)
-    // SMC Rule: Price enters OB body zone → shows bearish rejection → entry
-    // OB = last green candle before bearish impulse (from findZones)
-    // Entry: current close price
-    // SL: above OB wick high
     // ══════════════════════════════════════════════════════════════════════
     for (const zone of supplyZones) {
       if (zone.mitigated) continue;
 
-      // Check last 3 candles for OB touch
-      const touches = [last, prev, prev2].some(c =>
-        c && c.high >= zone.low - avgRange * 0.3 && c.low <= zone.high + avgRange * 0.3
-      );
-      if (!touches) continue;
+      // ── Touch check: last 10 candles ──
+      const touched = touchedRecently(zone, 10, 'SELL');
+      if (!touched) continue;
 
-      // ── Rejection confirmation ──
-      const bearClose   = last.close < last.open;
-      const wickReject  = (last.high - Math.max(last.open,last.close)) >
-                          Math.abs(last.close - last.open) * 0.35;
-      const engulf      = prev.close > prev.open &&
-                          last.close < last.open && last.close < prev.open;
-      const pinBar      = last.high > zone.high && last.close <= zone.mid;
-      const prevBearReject = prev.close < prev.open && prev.high >= zone.low &&
-                             last.close < prev.close;
+      // ── Confirmation ──
+      const isStructOB = zone.isStructureOB || zone.pattern === 'CHOCH_OB';
+      const lastBearCandle = candles.slice(-8).some(c => c.close < c.open);
+      const hasConf = isStructOB
+        ? (lastBearCandle || recentConf(zone, 6, 'SELL'))
+        : recentConf(zone, 5, 'SELL');
 
-      const hasConf = bearClose || wickReject || engulf || pinBar || prevBearReject;
       if (!hasConf) continue;
 
-      const entry = +(last.close).toFixed(config.decimals);
-      if (entry < zone.low - avgRange * 1.0) continue; // too far below OB
+      const entry   = +(last.close).toFixed(config.decimals);
+      const slLevel = +((zone.wickHigh || zone.high) + avgRange * 0.2).toFixed(config.decimals);
+      const risk    = slLevel - entry;
+      if (risk <= 0 || risk > avgRange * 15) continue;
+      // Reject only if price moved very far below OB (2x avgRange)
+      if (entry < zone.low - avgRange * 2.0) continue;
 
-      const slLevel = +((zone.wickHigh || zone.high) + avgRange * 0.15).toFixed(config.decimals);
-      const risk = slLevel - entry;
-      if (risk <= 0 || risk > avgRange * 12) continue;
+      const conf = candles.slice(-5).some(c => c.close<c.open && c.close<candles[candles.length-6]?.close)
+        ? 'BEARISH_CLOSE'
+        : isStructOB ? 'CHOCH_OB' : 'ZONE_TOUCH';
 
-      const conf = engulf ? 'ENGULFING' : pinBar ? 'PIN_BAR' : wickReject ? 'REJECTION_WICK' : 'BEARISH_CLOSE';
       return {
         type: 'SUPPLY_ZONE', side: 'SELL', zone,
         entry, stop: slLevel,
-        tp1: +(entry - risk * 1.5).toFixed(config.decimals),
-        tp2: +(entry - risk * 2.5).toFixed(config.decimals),
-        tp3: +(entry - risk * 4.0).toFixed(config.decimals),
+        tp1: +(entry - risk*1.5).toFixed(config.decimals),
+        tp2: +(entry - risk*2.5).toFixed(config.decimals),
+        tp3: +(entry - risk*4.0).toFixed(config.decimals),
         touchedOB: true, entryType: 'OB_CURRENT_CLOSE', confirmation: conf
       };
     }
@@ -2575,7 +2591,7 @@ const SMC = {
       structureH1.trend !== 'NEUTRAL';
 
     const signals = [];
-    const minScore = 87; // v20: Strict threshold — fewer, higher quality signals
+    const minScore = 85; // v21: 10-candle window + structureOB compensate for lower threshold
 
     // ── FILTRO GLOBAL: H1 y M15 deben estar alineados para cualquier señal ──
     // Si H1 y M15 no están en la misma dirección → no operar
@@ -2652,6 +2668,8 @@ const SMC = {
       if (choch)            score += 3;
       if (m15ChochFresh)    score += 4; // M15 CHoCH = high quality reversal entry
       if (pullback.confirmation === 'ENGULFING' || pullback.confirmation === 'PIN_BAR') score += 3;
+      if (pullback.confirmation === 'CHOCH_OB') score += 5; // structure OB entry = high quality
+      if (pullback.zone?.isStructureOB) score += 3; // structure OB bonus regardless of conf
       score = Math.min(score, 100);
 
       const trendCtx = m15ChochFresh
@@ -2666,12 +2684,55 @@ const SMC = {
     }
     
     // ── CHOCH_PULLBACK: CHoCH en M5 + retroceso al OB ──
+    // Also fires when: CHoCH is fresh (last 15 candles) + structureOB exists near price
+    // This catches cases where the touch happened 4-10 candles ago
+    if (choch && choch.side === opSide && !pullback) {
+      // Try to synthesize a pullback from the structureOB
+      const structOBs = opSide === 'BUY'
+        ? demandZones.filter(z => z.isStructureOB && !z.mitigated)
+        : supplyZones.filter(z => z.isStructureOB && !z.mitigated);
+      if (structOBs.length > 0) {
+        const ob = structOBs[0];
+        const price = data.price || lastClose;
+        const withinRange = opSide === 'BUY'
+          ? price <= ob.high + avgRange * 3 && price >= ob.low - avgRange * 3
+          : price >= ob.low - avgRange * 3 && price <= ob.high + avgRange * 3;
+        if (withinRange && choch.breakIndex >= (candlesM5?.length||0) - 20) {
+          const slLevel = opSide === 'BUY'
+            ? +((ob.wickLow||ob.low) - avgRange*0.2).toFixed(config.decimals)
+            : +((ob.wickHigh||ob.high) + avgRange*0.2).toFixed(config.decimals);
+          const risk = Math.abs(price - slLevel);
+          if (risk > 0 && risk <= avgRange * 15) {
+            const synthPullback = {
+              side: opSide, zone: ob,
+              entry: +(price).toFixed(config.decimals), stop: slLevel,
+              tp1: opSide==='BUY' ? +(price+risk*1.5).toFixed(config.decimals) : +(price-risk*1.5).toFixed(config.decimals),
+              tp2: opSide==='BUY' ? +(price+risk*2.5).toFixed(config.decimals) : +(price-risk*2.5).toFixed(config.decimals),
+              tp3: opSide==='BUY' ? +(price+risk*4.0).toFixed(config.decimals) : +(price-risk*4.0).toFixed(config.decimals),
+              touchedOB: true, entryType: 'CHOCH_STRUCTURE_OB', confirmation: 'CHOCH_OB'
+            };
+            let score = 87;
+            if (m15Strong) score += 3;
+            if (m15ChochFresh) score += 4;
+            if (tripleConfluence) score += 4;
+            score = Math.min(score, 97);
+            signals.push({
+              model: 'CHOCH_PULLBACK', baseScore: score, pullback: synthPullback,
+              reason: `${choch.type} + structureOB ${ob.pattern||''} + ${opDir}`
+            });
+          }
+        }
+      }
+    }
+
+    // ── CHOCH_PULLBACK: CHoCH en M5 + retroceso al OB ──
     if (choch && pullback && choch.side === opSide && pullback.side === opSide) {
       let score = 86;
       if (tripleConfluence) score += 5;
       if (m15Strong)        score += 4;
       if (m15ChochFresh)    score += 4; // M15 CHoCH confirms reversal
       if (pullback.confirmation === 'ENGULFING' || pullback.confirmation === 'PIN_BAR') score += 4;
+      if (pullback.confirmation === 'CHOCH_OB' || pullback.zone?.isStructureOB) score += 5;
       if (premiumDiscount === (opSide==='BUY'?'DISCOUNT':'PREMIUM')) score += 3;
       score = Math.min(score, 99);
 
