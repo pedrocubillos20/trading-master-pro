@@ -2591,7 +2591,10 @@ const SMC = {
       structureH1.trend !== 'NEUTRAL';
 
     const signals = [];
-    const minScore = 85; // v21: 10-candle window + structureOB compensate for lower threshold
+    // Dynamic minScore: counter-trend CHoCH setups use 83 (higher risk, still filtered)
+    const isCounterTrend = m5ChochReversal &&
+      choch && choch.side !== (structureH1.trend === 'BULLISH' ? 'BUY' : 'SELL');
+    const minScore = isCounterTrend ? 83 : 85; // v22: dynamic threshold for lower threshold
 
     // ── FILTRO GLOBAL: H1 y M15 deben estar alineados para cualquier señal ──
     // Si H1 y M15 no están en la misma dirección → no operar
@@ -2616,12 +2619,20 @@ const SMC = {
       structureM15.trend !== 'NEUTRAL' &&
       structureM15.strength >= 40 && // M15 must have clear structure
       structureM5.trend !== 'NEUTRAL';
-    const h1m15Aligned = h1Loaded && m15Loaded && (sameDirection || h1StrongM15Neutral || m15ChochOverride || m15m5Aligned);
+    // h1m15Aligned also includes m5ChochReversal (M5 CHoCH+BOS against H1 = valid setup)
+    const h1m15Aligned = h1Loaded && m15Loaded && (
+      sameDirection || h1StrongM15Neutral || m15ChochOverride || m15m5Aligned ||
+      (choch !== null && bos !== null && // M5 CHoCH+BOS reversal
+       bos.side === choch.side)          // both confirm same direction
+    );
 
     // ── FILTRO GLOBAL: necesitamos también confirmación de fuerza ──
     const h1Strong  = structureH1.strength  >= 40; // lowered — real markets often read 40-60
     const m15Strong = structureM15.strength >= 35; // lowered
-    const marketReady = h1m15Aligned && h1Strong && m15Strong; // M15 must also have clear structure
+    // marketReady: H1+M15 aligned AND H1 strong
+    // Exception: when m15ChochOverride (M15 CHoCH fresh + M5 confirms),
+    // don't require m15Strong — the CHoCH IS the structure signal
+    const marketReady = h1m15Aligned && h1Strong && (m15Strong || m15ChochOverride || m15m5Aligned);
 
     // ── EXCEPCIÓN: CHoCH en M5/M15 cuando el mercado cambia de dirección ──
     // Caso 1: M15 NEUTRAL + M5 CHoCH + BOS = transición de tendencia
@@ -2630,10 +2641,20 @@ const SMC = {
       data.chochM15.breakIndex >= (candlesM15?.length||0) - 40 &&
       structureM5.trend === (data.chochM15.side === 'BUY' ? 'BULLISH' : 'BEARISH'));
 
-    const m5ChochReversal = (!marketReady || m15ChochFresh) &&
-      h1Loaded && h1Strong &&
+    // m5ChochReversal: M5 CHoCH+BOS detected against H1+M15 trend
+    // Triggers when:
+    //   • M15 NEUTRAL + M5 CHoCH+BOS (classic transition)
+    //   • M15 BEARISH + M5 CHoCH+BOS (clear reversal from LL/HH extremity)
+    //   • m15ChochFresh (M15 already confirmed)
+    const m5ChochReversal = h1Loaded && h1Strong &&
       choch !== null && bos !== null &&
-      (structureM15.trend === 'NEUTRAL' || m15ChochFresh);
+      (
+        structureM15.trend === 'NEUTRAL' ||
+        m15ChochFresh ||
+        // New: M5 CHoCH goes AGAINST H1+M15 (reversal from extremity)
+        (choch.side !== (structureH1.trend === 'BULLISH' ? 'BUY' : 'SELL') &&
+         bos.side === choch.side) // CHoCH + BOS confirm same new direction
+      );
 
     if (!marketReady && !m5ChochReversal) {
       // Mercado no está claro: H1 y M15 no alineados → solo WAIT
@@ -2659,15 +2680,15 @@ const SMC = {
     // - Si m5ChochReversal con M15 NEUTRAL: opDir = M5 CHoCH direction
     // opDir priority:
     // 1. Fresh M15 CHoCH (strongest reversal signal)
-    // 2. M15+M5 both aligned (intermediate reversal confirmed)  
-    // 3. M5 CHoCH reversal with neutral M15
+    // 2. M15+M5 both aligned against H1 (intermediate reversal)
+    // 3. M5 CHoCH+BOS reversal (clear M5 setup)
     // 4. Default: follow H1
     const opDir = m15ChochFresh
       ? (data.chochM15.side === 'BUY' ? 'BULLISH' : 'BEARISH')
       : m15m5Aligned && !sameDirection
-        ? structureM15.trend // M15+M5 agree → use M15 direction
-        : m5ChochReversal && choch
-          ? (choch.side === 'BUY' ? 'BULLISH' : 'BEARISH')
+        ? structureM15.trend
+        : (m5ChochReversal && choch)
+          ? (choch.side === 'BUY' ? 'BULLISH' : 'BEARISH') // CHoCH direction
           : structureH1.trend;
     const opSide = opDir === 'BULLISH' ? 'BUY' : 'SELL';
 
@@ -2711,7 +2732,7 @@ const SMC = {
         : supplyZones.filter(z => z.isStructureOB && !z.mitigated);
       if (structOBs.length > 0) {
         const ob = structOBs[0];
-        const price = data.price || lastClose;
+        const price = data.price || candlesM5[candlesM5.length-1]?.close || 0;
         const withinRange = opSide === 'BUY'
           ? price <= ob.high + avgRange * 3 && price >= ob.low - avgRange * 3
           : price >= ob.low - avgRange * 3 && price <= ob.high + avgRange * 3;
