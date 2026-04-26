@@ -2,6 +2,84 @@ import React, { useState, useEffect, useRef, useCallback, useReducer } from 'rea
 import { useNavigate } from 'react-router-dom'
 import { API_URL } from './config/plans.js'
 
+/* ═══════════════════════════════════════════════════════════════════════
+   CONFLICT DETECTION ENGINE
+   ═══════════════════════════════════════════════════════════════════════ */
+function detectConflict(lockedSignal, analyze) {
+  if (!lockedSignal || !analyze) return null
+  const { action, tp1Hit } = lockedSignal
+  const isShort = action === 'SHORT' || action === 'SELL'
+  const isLong  = action === 'LONG'  || action === 'BUY'
+  const price   = analyze.price || lockedSignal.entry
+  const demandZones = analyze.demandZones || []
+  const supplyZones = analyze.supplyZones || []
+  const scanSignal  = analyze.signal
+  const conflicts = [], warnings = []
+
+  /* Precio dentro de zona contraria */
+  const inDemand = demandZones.some(z => !z.mitigated && price >= z.low && price <= z.high * 1.002)
+  const inSupply = supplyZones.some(z => !z.mitigated && price <= z.high && price >= z.low * 0.998)
+
+  if (isShort && inDemand) conflicts.push({
+    type:'ZONE', severity:'HIGH', icon:'⚠️',
+    title:'VENTA en zona de DEMANDA',
+    msg:'El precio está en un Order Block de demanda. Alta probabilidad de rechazo alcista.',
+    action:'Si el OB no se rompe con vela M5 de cierre → probable continuación ALCISTA.'
+  })
+  if (isLong && inSupply) conflicts.push({
+    type:'ZONE', severity:'HIGH', icon:'⚠️',
+    title:'COMPRA en zona de OFERTA',
+    msg:'El precio está en un Order Block de oferta. Alta probabilidad de rechazo bajista.',
+    action:'Si el OB no se rompe con vela M5 de cierre → probable continuación BAJISTA.'
+  })
+
+  /* Scanner opuesto */
+  if (scanSignal && scanSignal.action !== 'WAIT') {
+    if (isShort && (scanSignal.action==='LONG'||scanSignal.action==='BUY') && scanSignal.score>=80)
+      conflicts.push({
+        type:'SIGNAL', severity: scanSignal.score>=90?'HIGH':'MEDIUM', icon:'🔄',
+        title:`Scanner detecta COMPRA · ${scanSignal.score}%`,
+        msg:`Modelo ${scanSignal.model} identifica oportunidad ALCISTA mientras el trade activo es VENTA.`,
+        action:'Monitorear cierre de velas. Si el precio respeta la demanda y cierra alcista → la VENTA puede invalidarse.'
+      })
+    if (isLong && (scanSignal.action==='SHORT'||scanSignal.action==='SELL') && scanSignal.score>=80)
+      conflicts.push({
+        type:'SIGNAL', severity: scanSignal.score>=90?'HIGH':'MEDIUM', icon:'🔄',
+        title:`Scanner detecta VENTA · ${scanSignal.score}%`,
+        msg:`Modelo ${scanSignal.model} identifica oportunidad BAJISTA mientras el trade activo es COMPRA.`,
+        action:'Monitorear cierre de velas. Si el precio respeta la oferta y cierra bajista → la COMPRA puede invalidarse.'
+      })
+  }
+
+  /* MTF triple en contra */
+  const s5=analyze.structureM5?.trend, s15=analyze.structureM15?.trend, sH1=analyze.structureH1?.trend
+  if (isShort && sH1==='BULLISH' && s15==='BULLISH' && s5==='BULLISH')
+    warnings.push({ icon:'📊', msg:'Triple confluencia BULLISH (H1+M15+M5) en contra de la VENTA. Riesgo muy elevado.' })
+  if (isLong  && sH1==='BEARISH' && s15==='BEARISH' && s5==='BEARISH')
+    warnings.push({ icon:'📊', msg:'Triple confluencia BEARISH (H1+M15+M5) en contra de la COMPRA. Riesgo muy elevado.' })
+
+  /* TP1 tocado */
+  if (tp1Hit) warnings.push({ icon:'✅', msg:'TP1 alcanzado · SL en Breakeven · evaluar salida parcial o cierre.' })
+
+  /* Probabilidad de reversión */
+  let reversal = null
+  const hasZone   = conflicts.some(c=>c.type==='ZONE')
+  const hasSigConf= conflicts.some(c=>c.type==='SIGNAL')
+  if (hasZone || hasSigConf) {
+    const prob = Math.min(92, 55 + (hasSigConf ? (conflicts.find(c=>c.type==='SIGNAL')?.severity==='HIGH'?25:15) : 0) + (hasZone?12:0))
+    reversal = {
+      direction: isShort ? 'ALCISTA' : 'BAJISTA',
+      probability: prob,
+      condition: isShort
+        ? 'Condición para continuar ALCISTA: cierre de vela M5 por encima del OB de demanda sin romperlo'
+        : 'Condición para continuar BAJISTA: cierre de vela M5 por debajo del OB de oferta sin romperlo'
+    }
+  }
+
+  if (!conflicts.length && !warnings.length) return null
+  return { conflicts, warnings, reversal }
+}
+
 const C = {
   bg0:'#0d1117', bg1:'#161b22', bg2:'#1c2330', bg3:'#21262d',
   border:'#30363d', text:'#e6edf3', muted:'#7d8590',
@@ -202,7 +280,7 @@ function drawChart(canvas, state) {
 /* ═══════════════════════════════════════════════════════════════════════
    DRAGGABLE SIGNAL CARD
    ═══════════════════════════════════════════════════════════════════════ */
-function SignalCard({ signal, assetConfig, cardPos, setCardPos, cardVisible, setCardVisible }) {
+function SignalCard({ signal, assetConfig, cardPos, setCardPos, cardVisible, setCardVisible, hasConflict }) {
   const dragRef  = useRef(null)
   const isDragging = useRef(false)
   const dragStart  = useRef({x:0,y:0,cx:0,cy:0})
@@ -266,7 +344,16 @@ function SignalCard({ signal, assetConfig, cardPos, setCardPos, cardVisible, set
         <div style={{display:'flex',gap:8,alignItems:'center'}}>
           <span style={{fontSize:16}}>{assetConfig?.emoji||'📊'}</span>
           <div>
-            <div style={{fontSize:12,fontWeight:700,color:col}}>{isLong?'● COMPRA':'● VENTA'}</div>
+            <div style={{display:'flex',alignItems:'center',gap:6}}>
+              <div style={{fontSize:12,fontWeight:700,color:col}}>{isLong?'● COMPRA':'● VENTA'}</div>
+              {hasConflict&&(
+                <span style={{
+                  fontSize:9,fontWeight:800,padding:'1px 5px',borderRadius:3,
+                  background:'rgba(249,202,36,.15)',color:C.yellow,
+                  border:'1px solid rgba(249,202,36,.4)',animation:'pulse-teal 1.5s infinite'
+                }}>⚠️ CONFLICTO</span>
+              )}
+            </div>
             <div style={{fontSize:10,color:C.muted}}>{signal.model} · {signal.score}%</div>
           </div>
         </div>
@@ -567,8 +654,184 @@ function ElisaChat({symbol,onClose}){
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   CONSTANTS
+   CONFLICT ALERT PANEL — advertencia SMC contextual
    ═══════════════════════════════════════════════════════════════════════ */
+function ConflictAlert({ conflictData, onDismiss }) {
+  const [expanded, setExpanded] = useState(true)
+  if (!conflictData) return null
+
+  const { conflicts, warnings, reversal } = conflictData
+  const hasHigh = conflicts.some(c => c.severity === 'HIGH')
+  const borderCol = hasHigh ? '#f9ca24' : '#f0883e'
+  const bgCol     = hasHigh ? 'rgba(249,202,36,.06)' : 'rgba(240,136,62,.06)'
+
+  return (
+    <div style={{
+      position:'fixed', right:20, top:70, width:'min(340px,92vw)',
+      background:C.bg1, border:`2px solid ${borderCol}`,
+      borderRadius:10, zIndex:250, boxShadow:`0 4px 24px ${borderCol}33`,
+      overflow:'hidden'
+    }}>
+      {/* Header */}
+      <div style={{
+        background:bgCol, padding:'8px 12px',
+        display:'flex', alignItems:'center', gap:8, cursor:'pointer',
+        borderBottom:`1px solid ${borderCol}44`
+      }} onClick={() => setExpanded(e => !e)}>
+        <span style={{ fontSize:16 }}>{hasHigh ? '⚠️' : '🔔'}</span>
+        <div style={{ flex:1 }}>
+          <div style={{ fontSize:12, fontWeight:700, color: borderCol }}>
+            {hasHigh ? 'CONFLICTO CRÍTICO DETECTADO' : 'ADVERTENCIA SMC'}
+          </div>
+          <div style={{ fontSize:10, color:C.muted }}>
+            {conflicts.length} conflicto{conflicts.length!==1?'s':''} · {warnings.length} aviso{warnings.length!==1?'s':''}
+          </div>
+        </div>
+        <div style={{ display:'flex', gap:4 }}>
+          <span style={{ color:C.muted, fontSize:12 }}>{expanded ? '▲' : '▼'}</span>
+          <button onClick={e=>{e.stopPropagation();onDismiss&&onDismiss()}} style={{
+            background:'none', border:'none', color:C.muted,
+            cursor:'pointer', fontSize:14, lineHeight:1, padding:'0 2px'
+          }}>✕</button>
+        </div>
+      </div>
+
+      {expanded && (
+        <div style={{ padding:'10px 12px', display:'flex', flexDirection:'column', gap:8, maxHeight:400, overflowY:'auto' }}>
+
+          {/* Conflicts */}
+          {conflicts.map((c, i) => (
+            <div key={i} style={{
+              background: c.severity==='HIGH' ? 'rgba(249,202,36,.08)' : 'rgba(240,136,62,.08)',
+              border:`1px solid ${c.severity==='HIGH' ? '#f9ca2444' : '#f0883e44'}`,
+              borderLeft:`3px solid ${c.severity==='HIGH' ? '#f9ca24' : '#f0883e'}`,
+              borderRadius:6, padding:'8px 10px'
+            }}>
+              <div style={{ fontSize:11, fontWeight:700, color: c.severity==='HIGH' ? C.yellow : '#f0883e', marginBottom:4 }}>
+                {c.icon} {c.title}
+              </div>
+              <div style={{ fontSize:11, color:C.text, lineHeight:1.5, marginBottom:4 }}>{c.msg}</div>
+              <div style={{ fontSize:10, color:C.muted, lineHeight:1.4 }}>
+                <span style={{ color: c.severity==='HIGH' ? C.yellow : '#f0883e', fontWeight:600 }}>→ </span>
+                {c.action}
+              </div>
+            </div>
+          ))}
+
+          {/* Warnings */}
+          {warnings.map((w, i) => (
+            <div key={i} style={{
+              background:'rgba(63,185,80,.07)', border:'1px solid rgba(63,185,80,.2)',
+              borderLeft:`3px solid ${C.green}`, borderRadius:6, padding:'7px 10px',
+              fontSize:11, color:C.text, lineHeight:1.5
+            }}>
+              {w.icon} {w.msg}
+            </div>
+          ))}
+
+          {/* Reversal probability */}
+          {reversal && (
+            <div style={{
+              background:'rgba(0,212,170,.06)', border:`1px solid ${C.teal}44`,
+              borderRadius:8, padding:'10px 12px'
+            }}>
+              <div style={{ fontSize:11, fontWeight:700, color:C.teal, marginBottom:6 }}>
+                📈 Probabilidad de reversión {reversal.direction}
+              </div>
+              {/* Probability bar */}
+              <div style={{ height:6, background:C.bg2, borderRadius:3, marginBottom:6, overflow:'hidden' }}>
+                <div style={{
+                  height:'100%', borderRadius:3,
+                  width:`${reversal.probability}%`,
+                  background: reversal.probability>=80
+                    ? `linear-gradient(90deg,${C.yellow},${C.red})`
+                    : `linear-gradient(90deg,${C.teal},${C.green})`,
+                  transition:'width .4s'
+                }}/>
+              </div>
+              <div style={{ display:'flex', justifyContent:'space-between', fontSize:10, marginBottom:6 }}>
+                <span style={{ color:C.muted }}>Probabilidad estimada</span>
+                <span style={{ fontWeight:700, color: reversal.probability>=80 ? C.yellow : C.teal }}>
+                  {reversal.probability}%
+                </span>
+              </div>
+              <div style={{ fontSize:10, color:C.muted, lineHeight:1.5, fontStyle:'italic' }}>
+                {reversal.condition}
+              </div>
+            </div>
+          )}
+
+          {/* Recommendation */}
+          <div style={{
+            background:C.bg2, borderRadius:6, padding:'8px 10px',
+            fontSize:10, color:C.muted, lineHeight:1.6,
+            borderTop:`1px solid ${C.border}`
+          }}>
+            <span style={{ color:C.text, fontWeight:600 }}>Recomendación: </span>
+            {hasHigh
+              ? 'No abrir nuevas posiciones hasta que el precio confirme la dirección con cierre de vela fuera de la zona. Gestionar el riesgo de la posición activa.'
+              : 'Monitorear el cierre de las próximas 2-3 velas M5 para confirmar si la zona se respeta o se rompe.'}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   CONFLICT BADGE en gráfico — dibuja advertencia sobre el canvas
+   ═══════════════════════════════════════════════════════════════════════ */
+function drawConflictOverlay(canvas, conflictData) {
+  if (!canvas || !conflictData) return
+  const dpr  = window.devicePixelRatio || 1
+  const ctx  = canvas.getContext('2d')
+  const W    = canvas.width  / dpr
+  const H    = canvas.height / dpr
+  const hasHigh = conflictData.conflicts.some(c => c.severity === 'HIGH')
+  const col  = hasHigh ? '#f9ca24' : '#f0883e'
+
+  /* Badge top-center del gráfico */
+  const msg  = hasHigh
+    ? '⚠️  CONFLICTO: precio en zona contraria al trade activo'
+    : '🔔  ADVERTENCIA: señal contradictoria detectada'
+  const bw   = msg.length * 6.8 + 24
+  const bx   = W / 2 - bw / 2
+  const by   = 26
+
+  ctx.fillStyle = col + '22'
+  ctx.strokeStyle = col
+  ctx.lineWidth = 1.5
+  ctx.beginPath()
+  ctx.roundRect(bx, by, bw, 22, 5)
+  ctx.fill()
+  ctx.stroke()
+
+  ctx.fillStyle = col
+  ctx.font = 'bold 10px system-ui'
+  ctx.textAlign = 'center'
+  ctx.fillText(msg, W / 2, by + 14)
+
+  /* Probability si existe */
+  if (conflictData.reversal) {
+    const prob = conflictData.reversal.probability
+    const dir  = conflictData.reversal.direction
+    const ptxt = `Reversión ${dir}: ${prob}%`
+    const pw   = ptxt.length * 6.5 + 20
+    ctx.fillStyle = C.bg1 + 'ee'
+    ctx.strokeStyle = col + '88'
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.roundRect(W / 2 - pw / 2, by + 28, pw, 18, 4)
+    ctx.fill()
+    ctx.stroke()
+    ctx.fillStyle = col
+    ctx.font = 'bold 9px system-ui'
+    ctx.textAlign = 'center'
+    ctx.fillText(ptxt, W / 2, by + 40)
+  }
+}
+
+
 const ASSETS={
   stpRNG:{name:'Step Index',shortName:'Step',emoji:'📊'},
   frxXAUUSD:{name:'Oro (XAU/USD)',shortName:'Oro',emoji:'🥇'},
@@ -599,6 +862,8 @@ export default function Dashboard({user,subscription,onLogout}){
   const[countdown,setCountdown]=useState(60)
   const[showElisa,setShowElisa]=useState(false)
   const[sidebarOpen,setSidebarOpen]=useState(true)
+  const[conflictDismissed,setConflictDismissed]=useState(false)
+  const[prevConflictKey,setPrevConflictKey]=useState('')
 
   /* Chart zoom + pan */
   const[zoom,setZoom]=useState(1)
@@ -690,6 +955,22 @@ export default function Dashboard({user,subscription,onLogout}){
   const lockedSig=analyze?.lockedSignal||assetData?.lockedSignal
   const plan=subscription?.plan||user?.plan||'free'
   const planColor=plan==='elite'?C.teal:plan==='premium'?'#378ADD':plan==='basico'?C.green:C.muted
+
+  /* Conflict detection */
+  const conflictData = detectConflict(lockedSig, analyze)
+
+  /* Auto-reset dismiss when conflict changes */
+  useEffect(()=>{
+    if(!conflictData)return
+    const key=JSON.stringify(conflictData.conflicts.map(c=>c.type+c.title))
+    if(key!==prevConflictKey){setPrevConflictKey(key);setConflictDismissed(false)}
+  },[conflictData])
+
+  /* Draw conflict overlay on chart after each render */
+  useEffect(()=>{
+    if(!canvasRef.current||!conflictData)return
+    drawConflictOverlay(canvasRef.current, conflictData)
+  },[conflictData, zoom, offsetX, analyze])
 
   const StructTag=({label,trend})=>{
     const color=trend==='BULLISH'?C.teal:trend==='BEARISH'?C.red:C.muted
@@ -964,7 +1245,15 @@ export default function Dashboard({user,subscription,onLogout}){
       {lockedSig&&section==='dashboard'&&(
         <SignalCard signal={lockedSig} assetConfig={ASSETS[symbol]}
           cardPos={cardPos} setCardPos={setCardPos}
-          cardVisible={cardVisible} setCardVisible={setCardVisible}/>
+          cardVisible={cardVisible} setCardVisible={setCardVisible}
+          hasConflict={!!conflictData}/>
+      )}
+
+      {/* CONFLICT ALERT — panel lateral derecho */}
+      {conflictData&&!conflictDismissed&&section==='dashboard'&&(
+        <ConflictAlert
+          conflictData={conflictData}
+          onDismiss={()=>setConflictDismissed(true)}/>
       )}
 
       {showElisa&&<ElisaChat symbol={symbol} onClose={()=>setShowElisa(false)}/>}
