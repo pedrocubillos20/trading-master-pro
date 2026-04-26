@@ -191,13 +191,13 @@ const SIGNAL_CONFIG = {
   MIN_SCORE_BOOM_CRASH: 80, // v24: Ajustado
   
   // Cooldown entre análisis del mismo activo
-  ANALYSIS_COOLDOWN: 8000,  // 8s — real-time update on every new candle
+  ANALYSIS_COOLDOWN: 4000,  // 4s — análisis rápido en cada tick relevante
   
   // Cooldown después de cerrar una señal antes de abrir otra
-  POST_SIGNAL_COOLDOWN: 1800000, // 30 minutos entre señales — calidad sobre cantidad
+  POST_SIGNAL_COOLDOWN: 300000, // 5 minutos entre señales (era 30 min — demasiado agresivo)
   
   // Cooldown específico para Boom/Crash
-  POST_SIGNAL_COOLDOWN_BOOM_CRASH: 1800000, // 30 minutos
+  POST_SIGNAL_COOLDOWN_BOOM_CRASH: 600000, // 10 minutos para Boom/Crash
   
   // ═══════════════════════════════════════════════════════════════
   // MTF CONFLUENCE - AHORA REQUERIDO PARA CALIDAD
@@ -923,8 +923,9 @@ function startMarketMonitoring() {
   setInterval(() => {
     for (const symbol of MY_ASSETS) {
       try { requestM15(symbol); } catch(e) {}
+      try { requestM1(symbol); } catch(e) {}
     }
-  }, 60 * 1000); // M15: every 1 min
+  }, 60 * 1000); // M15 + M1: every 60 seconds — ensures OBs and CHoCH always current
 
   setInterval(() => {
     for (const symbol of MY_ASSETS) {
@@ -2590,12 +2591,6 @@ const SMC = {
       structureM15.trend === structureM5.trend &&
       structureH1.trend !== 'NEUTRAL';
 
-    const signals = [];
-    // Dynamic minScore: counter-trend CHoCH setups use 83 (higher risk, still filtered)
-    const isCounterTrend = m5ChochReversal &&
-      choch && choch.side !== (structureH1.trend === 'BULLISH' ? 'BUY' : 'SELL');
-    const minScore = isCounterTrend ? 83 : 85; // v22: dynamic threshold for lower threshold
-
     // ── FILTRO GLOBAL: H1 y M15 deben estar alineados para cualquier señal ──
     // Si H1 y M15 no están en la misma dirección → no operar
     // h1m15Aligned: H1 and M15 same direction,
@@ -2617,11 +2612,11 @@ const SMC = {
 
     // m15ChochOverride ONLY activates when H1 and M5 DISAGREE
     // (genuine reversal scenario, not a retracement)
-    const m15ChochOverride = !!(data.chochM15 &&
-      data.chochM15.breakIndex >= (candlesM15?.length||0) - 40 &&
+    const m15ChochOverride = !!(state.chochM15 &&
+      state.chochM15.breakIndex >= (candlesM15?.length||0) - 40 &&
       !h1m5Agree && // ← Never override when H1+M5 both agree on direction
       (() => {
-        const chochDir = data.chochM15.side;
+        const chochDir = state.chochM15.side;
         const lastM5  = candlesM5?.[candlesM5.length - 1];
         const prev5M5 = candlesM5?.[Math.max(0, candlesM5.length - 6)];
         if (!lastM5 || !prev5M5) return false;
@@ -2657,11 +2652,11 @@ const SMC = {
     // Caso 2: M15 CHoCH reciente + M5 confirma = reversión en marcha
     // m15ChochFresh: M15 CHoCH within 40 candles — also blocked when H1+M5 agree
     // Same rule: H1+M5 BEARISH + M15 bounce CHoCH = PULLBACK not reversal
-    const m15ChochFresh = !!(data.chochM15 &&
-      data.chochM15.breakIndex >= (candlesM15?.length||0) - 40 &&
+    const m15ChochFresh = !!(state.chochM15 &&
+      state.chochM15.breakIndex >= (candlesM15?.length||0) - 40 &&
       !h1m5Agree && // same guard
       (() => {
-        const chochDir = data.chochM15.side;
+        const chochDir = state.chochM15.side;
         const lastM5  = candlesM5?.[candlesM5.length - 1];
         const prev5M5 = candlesM5?.[Math.max(0, candlesM5.length - 6)];
         if (!lastM5 || !prev5M5) return true;
@@ -2685,6 +2680,13 @@ const SMC = {
         (choch.side !== (structureH1.trend === 'BULLISH' ? 'BUY' : 'SELL') &&
          bos.side === choch.side) // CHoCH + BOS confirm same new direction
       );
+
+    // ── signals array and minScore — declared HERE, after all prereqs are defined ──
+    const signals = [];
+    const isCounterTrend = m5ChochReversal &&
+      choch && choch.side !== (structureH1.trend === 'BULLISH' ? 'BUY' : 'SELL');
+    // minScore: counter-trend setups need slightly higher bar; floor is always SIGNAL_CONFIG.MIN_SCORE
+    const minScore = Math.max(SIGNAL_CONFIG.MIN_SCORE, isCounterTrend ? 84 : 83);
 
     if (!marketReady && !m5ChochReversal) {
       // Mercado no está claro: H1 y M15 no alineados → solo WAIT
@@ -2714,7 +2716,7 @@ const SMC = {
     // 3. M5 CHoCH+BOS reversal (clear M5 setup)
     // 4. Default: follow H1
     const opDir = m15ChochFresh
-      ? (data.chochM15.side === 'BUY' ? 'BULLISH' : 'BEARISH')
+      ? (state.chochM15.side === 'BUY' ? 'BULLISH' : 'BEARISH')
       : m15m5Aligned && !sameDirection
         ? structureM15.trend
         : (m5ChochReversal && choch)
@@ -2738,7 +2740,7 @@ const SMC = {
       score = Math.min(score, 100);
 
       const trendCtx = m15ChochFresh
-        ? `CHoCH M15(${data.chochM15?.side}) + M5 OB`
+        ? `CHoCH M15(${state.chochM15?.side}) + M5 OB`
         : (m15m5Aligned && !sameDirection)
           ? `M15+M5(${structureM15.trend}) vs H1(${structureH1.trend})`
           : `H1(${opDir})+M15(${structureM15.trend})`;
@@ -3123,15 +3125,15 @@ const SMC = {
         if (structureH1.trend === 'BEARISH') score += 5;
         if (structureM15 && structureM15.trend === 'BEARISH') score += 4;
         if (premiumDiscount === 'PREMIUM') score += 4;
-        // Must match opDir
-        if (opDir !== 'BEARISH') return; // Don't add — against direction
-        
-        signals.push({
-          model: 'INDUCEMENT',
-          baseScore: score,
-          pullback: indEntry,
-          reason: `Sweep máximos + rechazo${structureH1.trend === 'BEARISH' ? ' + H1↓' : ''}`
-        });
+        // Must match opDir — use conditional push, NOT return (return exits the whole function!)
+        if (opDir === 'BEARISH') {
+          signals.push({
+            model: 'INDUCEMENT',
+            baseScore: score,
+            pullback: indEntry,
+            reason: `Sweep máximos + rechazo${structureH1.trend === 'BEARISH' ? ' + H1↓' : ''}`
+          });
+        }
       }
     }
     
@@ -3154,15 +3156,15 @@ const SMC = {
         if (structureH1.trend === 'BULLISH') score += 5;
         if (structureM15 && structureM15.trend === 'BULLISH') score += 4;
         if (premiumDiscount === 'DISCOUNT') score += 4;
-        // Must match opDir
-        if (opDir !== 'BULLISH') return; // Don't add — against direction
-        
-        signals.push({
-          model: 'INDUCEMENT',
-          baseScore: score,
-          pullback: indEntry,
-          reason: `Sweep mínimos + rechazo${structureH1.trend === 'BULLISH' ? ' + H1↑' : ''}`
-        });
+        // Must match opDir — use conditional push, NOT return (return exits the whole function!)
+        if (opDir === 'BULLISH') {
+          signals.push({
+            model: 'INDUCEMENT',
+            baseScore: score,
+            pullback: indEntry,
+            reason: `Sweep mínimos + rechazo${structureH1.trend === 'BULLISH' ? ' + H1↑' : ''}`
+          });
+        }
       }
     }
     
@@ -4451,6 +4453,9 @@ function connectDeriv() {
             const last = candles[candles.length - 1];
             if (last.time === newCandle.time) {
               candles[candles.length - 1] = newCandle;
+              // ── FIX: re-analyze on EVERY M5 update, not just on new candle ──
+              // This ensures pullback detection fires when price re-enters an OB
+              analyzeAsset(symbol);
             } else if (newCandle.time > last.time) {
               candles.push(newCandle);
               if (candles.length > 600) candles.shift(); // 600 candles = ~50 hours of M5 history

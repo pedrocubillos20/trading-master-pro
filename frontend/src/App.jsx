@@ -1,80 +1,53 @@
-import React, { useState, useEffect } from 'react';
-import { createClient } from '@supabase/supabase-js';
-import Dashboard from './Dashboard';
-import Login from './Login';
-import AdminPanel from './AdminPanel';
+import React, { useState, useEffect } from 'react'
+import { Routes, Route, Navigate } from 'react-router-dom'
+import Login from './Login.jsx'
+import Dashboard from './Dashboard.jsx'
+import AdminPanel from './AdminPanel.jsx'
+import Pricing from './Pricing.jsx'
+import ModelosGuia from './ModelosGuia.jsx'
+import { API_URL } from './config/plans.js'
 
-// =============================================
-// CONFIGURACIÓN SUPABASE
-// =============================================
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || 'https://mtzycmqtxdvoazomipye.supabase.co';
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im10enljbXF0eGR2b2F6b21pcHllIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjU5NjI4NjEsImV4cCI6MjA4MTUzODg2MX0.C9TTNm-a1-BvPXG0T1eCj7AtQ6jZ6nKyvMVNi0pgJQk';
-
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-// =============================================
-// APP PRINCIPAL
-// =============================================
 export default function App() {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  // Detectar si es ruta de admin
-  const isAdminRoute = window.location.pathname === '/admin' || window.location.hash === '#/admin';
+  const [user, setUser] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('tmp_user') || 'null') }
+    catch { return null }
+  })
+  const [subscription, setSubscription] = useState(null)
 
   useEffect(() => {
-    // Verificar sesión actual
-    const checkSession = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        setUser(session?.user || null);
-      } catch (error) {
-        console.error('Session error:', error);
-      }
-      setLoading(false);
-    };
+    if (!user) return
+    fetch(`${API_URL}/api/subscription/${encodeURIComponent(user.email)}`)
+      .then(r => r.json())
+      .then(d => setSubscription(d.subscription))
+      .catch(() => {})
+  }, [user])
 
-    checkSession();
-
-    // Escuchar cambios de autenticación
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        console.log('Auth event:', event);
-        setUser(session?.user || null);
-      }
-    );
-
-    return () => subscription.unsubscribe();
-  }, []);
-
-  // Handler de logout
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    setUser(null);
-  };
-
-  // Si es ruta de admin, mostrar AdminPanel
-  if (isAdminRoute) {
-    return <AdminPanel />;
+  const login = (userData) => {
+    localStorage.setItem('tmp_user', JSON.stringify(userData))
+    setUser(userData)
   }
 
-  // Pantalla de carga
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-[#06060a] flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-12 h-12 border-3 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-white/50">Cargando...</p>
-        </div>
-      </div>
-    );
+  const logout = () => {
+    localStorage.removeItem('tmp_user')
+    setUser(null)
+    setSubscription(null)
   }
 
-  // Si no hay usuario, mostrar Login
-  if (!user) {
-    return <Login supabase={supabase} onLogin={setUser} />;
-  }
+  if (!user) return <Login onLogin={login} />
 
-  // Usuario autenticado, mostrar Dashboard
-  return <Dashboard user={user} onLogout={handleLogout} />;
+  return (
+    <Routes>
+      <Route path="/" element={
+        <Dashboard user={user} subscription={subscription} onLogout={logout} />
+      }/>
+      <Route path="/admin" element={
+        user?.email === 'admin@tradingpro.com'
+          ? <AdminPanel user={user} onLogout={logout} />
+          : <Navigate to="/" />
+      }/>
+      <Route path="/pricing" element={<Pricing user={user} subscription={subscription} />}/>
+      <Route path="/modelos" element={<ModelosGuia user={user} onBack={() => window.history.back()} />}/>
+      <Route path="*" element={<Navigate to="/" />}/>
+    </Routes>
+  )
 }
