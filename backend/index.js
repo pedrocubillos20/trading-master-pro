@@ -192,7 +192,7 @@ const SIGNAL_CONFIG = {
   MIN_SCORE_BOOM_CRASH: 80, // v24: Ajustado
   
   // Cooldown entre análisis del mismo activo
-  ANALYSIS_COOLDOWN: 4000,  // 4s — análisis rápido en cada tick relevante
+  ANALYSIS_COOLDOWN: 6000,  // FIX: 6s — era 4s, demasiado agresivo causaba CPU spikes en Railway
   
   // Cooldown después de cerrar una señal antes de abrir otra
   POST_SIGNAL_COOLDOWN: 480000, // FIX 8: 8 minutos — evita sobre-operar el mismo setup
@@ -911,29 +911,59 @@ function checkAndResubscribeMarkets() {
 }
 
 // Iniciar verificación periódica de mercados
+// FIX: guardar TODOS los IDs de intervalos para poder limpiarlos en reconexión
 let marketCheckInterval = null;
+let m15RefreshInterval  = null;
+let h1RefreshInterval   = null;
+let pingWatchdogInterval = null;
+
+function clearAllMonitorIntervals() {
+  if (marketCheckInterval)  { clearInterval(marketCheckInterval);  marketCheckInterval  = null; }
+  if (m15RefreshInterval)   { clearInterval(m15RefreshInterval);   m15RefreshInterval   = null; }
+  if (h1RefreshInterval)    { clearInterval(h1RefreshInterval);    h1RefreshInterval    = null; }
+  if (pingWatchdogInterval) { clearInterval(pingWatchdogInterval); pingWatchdogInterval = null; }
+}
+
 function startMarketMonitoring() {
-  if (marketCheckInterval) clearInterval(marketCheckInterval);
-  
+  // FIX: limpiar todos los intervalos previos antes de crear nuevos
+  // Sin esto, cada reconexión acumula 3-4 intervalos → el scanner se degrada
+  clearAllMonitorIntervals();
+
   // Verificar mercados cada 30 segundos
   marketCheckInterval = setInterval(checkAndResubscribeMarkets, 30000);
   console.log('✅ Monitor de mercados iniciado (verificación cada 30s)');
 
-  // ── Refrescar M15 cada 1 minuto y H1 cada 5 minutos ──
-  // M15 candle = 15 min, but new OBs and CHoCH can form faster
-  // Refreshing every minute ensures labels, OBs and CHoCH are always current
-  setInterval(() => {
+  // Refrescar M15 + M1 cada 60 segundos
+  m15RefreshInterval = setInterval(() => {
+    if (derivWs?.readyState !== WebSocket.OPEN) return;
     for (const symbol of MY_ASSETS) {
       try { requestM15(symbol); } catch(e) {}
-      try { requestM1(symbol); } catch(e) {}
+      try { requestM1(symbol);  } catch(e) {}
     }
-  }, 60 * 1000); // M15 + M1: every 60 seconds — ensures OBs and CHoCH always current
+  }, 60 * 1000);
 
-  setInterval(() => {
+  // Refrescar H1 cada 5 minutos
+  h1RefreshInterval = setInterval(() => {
+    if (derivWs?.readyState !== WebSocket.OPEN) return;
     for (const symbol of MY_ASSETS) {
       try { requestH1(symbol); } catch(e) {}
     }
-  }, 5 * 60 * 1000); // H1: every 5 min
+  }, 5 * 60 * 1000);
+
+  // Ping + Watchdog cada 25 segundos
+  // Si no llegan datos en 90s → forzar reconexión (conexión zombie)
+  pingWatchdogInterval = setInterval(() => {
+    if (derivWs?.readyState !== WebSocket.OPEN) return;
+    try { derivWs.send(JSON.stringify({ ping: 1 })); } catch(e) {}
+    const maxSilence = 90000;
+    const anyData = MY_ASSETS.some(s =>
+      Date.now() - (marketStatus[s]?.lastDataReceived || 0) < maxSilence
+    );
+    if (!anyData) {
+      console.log('🔁 Watchdog: sin datos en 90s — terminando conexión zombie');
+      try { derivWs.terminate(); } catch(e) {}
+    }
+  }, 25000);
 }
 
 const assetData = {};
@@ -4352,15 +4382,13 @@ function connectDeriv() {
       if (msg.candles && msg.echo_req?.granularity === 3600) {
         const symbol = msg.echo_req.ticks_history;
         if (assetData[symbol]) {
-          assetData[symbol].candlesH1 = msg.candles.map(c => ({
-            time: c.epoch * 1000,
-            open: +c.open,
-            high: +c.high,
-            low: +c.low,
-            close: +c.close
+          let h1 = msg.candles.map(c => ({
+            time: c.epoch * 1000, open: +c.open, high: +c.high, low: +c.low, close: +c.close
           }));
+          // FIX: cap H1 at 200 candles — sin cap crecen indefinidamente
+          if (h1.length > 200) h1 = h1.slice(-200);
+          assetData[symbol].candlesH1 = h1;
           assetData[symbol].h1Loaded = true;
-          // Actualizar estado del mercado
           marketStatus[symbol].lastDataReceived = Date.now();
           marketStatus[symbol].isActive = true;
           console.log(`📊 H1 ${ASSETS[symbol]?.shortName}: ${assetData[symbol].candlesH1.length} velas`);
@@ -4372,11 +4400,12 @@ function connectDeriv() {
       if (msg.candles && msg.echo_req?.granularity === 900) {
         const symbol = msg.echo_req.ticks_history;
         if (assetData[symbol]) {
-          assetData[symbol].candlesM15 = msg.candles.map(c => ({
-            time: c.epoch * 1000,
-            open: +c.open, high: +c.high, low: +c.low, close: +c.close,
-            epoch: c.epoch
+          let m15 = msg.candles.map(c => ({
+            time: c.epoch * 1000, open: +c.open, high: +c.high, low: +c.low, close: +c.close, epoch: c.epoch
           }));
+          // FIX: cap M15 at 300 candles
+          if (m15.length > 300) m15 = m15.slice(-300);
+          assetData[symbol].candlesM15 = m15;
           assetData[symbol].m15Loaded = true;
           console.log(`📊 M15 ${ASSETS[symbol]?.shortName}: ${assetData[symbol].candlesM15.length} velas`);
           analyzeAsset(symbol);
@@ -4387,11 +4416,12 @@ function connectDeriv() {
       if (msg.candles && msg.echo_req?.granularity === 60) {
         const symbol = msg.echo_req.ticks_history;
         if (assetData[symbol]) {
-          assetData[symbol].candlesM1 = msg.candles.map(c => ({
-            time: c.epoch * 1000,
-            open: +c.open, high: +c.high, low: +c.low, close: +c.close,
-            epoch: c.epoch
+          let m1 = msg.candles.map(c => ({
+            time: c.epoch * 1000, open: +c.open, high: +c.high, low: +c.low, close: +c.close, epoch: c.epoch
           }));
+          // FIX: cap M1 at 200 candles
+          if (m1.length > 200) m1 = m1.slice(-200);
+          assetData[symbol].candlesM1 = m1;
           assetData[symbol].m1Loaded = true;
           console.log(`📊 M1 ${ASSETS[symbol]?.shortName}: ${assetData[symbol].candlesM1.length} velas`);
           analyzeAsset(symbol);
@@ -4472,13 +4502,8 @@ function connectDeriv() {
   derivWs.on('close', () => {
     console.log('❌ Desconectado de Deriv');
     isConnected = false;
-    
-    // Limpiar monitor de mercados
-    if (marketCheckInterval) {
-      clearInterval(marketCheckInterval);
-      marketCheckInterval = null;
-    }
-    
+    // FIX: limpiar TODOS los intervalos, no solo marketCheckInterval
+    clearAllMonitorIntervals();
     reconnectAttempts++;
     const delay = Math.min(5000 * reconnectAttempts, 30000);
     console.log(`   🔄 Reconectando en ${delay/1000}s... (intento ${reconnectAttempts})`);
@@ -4771,8 +4796,16 @@ function analyzeAsset(symbol) {
   data.lastSignalTime = now;
   stats.total++;
   stats.pending++;
-  
-  if (signalHistory.length > 100) signalHistory.pop();
+
+  // FIX: límite de señales en memoria + limpiar huérfanas (PENDING > 4h = cerradas sin notificar)
+  const fourHours = 4 * 60 * 60 * 1000;
+  signalHistory = signalHistory.map(s => {
+    if (s.status === 'PENDING' && Date.now() - s.timestamp > fourHours) {
+      return { ...s, status: 'EXPIRED', closeReason: 'Auto-cerrada por timeout' };
+    }
+    return s;
+  });
+  if (signalHistory.length > 200) signalHistory = signalHistory.slice(0, 200);
   
   console.log(`💎 SEÑAL #${newSignal.id} | ${config.shortName} | ${signal.action} | ${signal.model} | ${signal.score}%`);
   console.log(`   H1: ${data.structureH1?.trend} | M15: ${data.structureM15?.trend} | M5: ${data.structure?.trend} | PD: ${data.premiumDiscount}`);
@@ -5989,23 +6022,13 @@ app.listen(PORT, () => {
   console.log('\n🔌 Conectando a Deriv WebSocket...');
   connectDeriv();
   ensureAdminElite();
-  
-  // Actualizar H1 cada 2 minutos — solo los 3 activos activos
-  setInterval(() => {
-    if (derivWs?.readyState === WebSocket.OPEN) {
-      for (const symbol of MY_ASSETS) {
-        requestH1(symbol);
-        requestM15(symbol);
-      }
-    }
-  }, 120000);
-  
-  // Ping cada 30 segundos
-  setInterval(() => {
-    if (derivWs?.readyState === WebSocket.OPEN) {
-      derivWs.send(JSON.stringify({ ping: 1 }));
-    }
-  }, 30000);
+  // FIX: se eliminan los intervalos duplicados aquí.
+  // startMarketMonitoring() (llamado dentro de connectDeriv → on('open'))
+  // ya maneja: H1/M15 refresh, M1 refresh, ping + watchdog.
+  // Tener estos intervalos duplicados aquí causaba:
+  //   1. Doble carga de peticiones al servidor de Deriv
+  //   2. Ping duplicado cada 25s + 30s
+  //   3. Degradación del scanner con el tiempo
 });
 
 export default app;
