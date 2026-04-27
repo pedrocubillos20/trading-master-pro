@@ -185,7 +185,8 @@ const LearningSystem = {
 // =============================================
 const SIGNAL_CONFIG = {
   // Score mínimo para generar señal
-  MIN_SCORE: 82, // v17.0: Alta calidad — solo señales fuertes
+  MIN_SCORE: 85, // v24.3: Solo señales de alta calidad — elimina entradas débiles
+  // BUG FIX: 82 era demasiado bajo — permite modelos INDUCEMENT y LG sin H1 firme
   
   // Score mínimo específico para Boom/Crash (más estricto)
   MIN_SCORE_BOOM_CRASH: 80, // v24: Ajustado
@@ -194,7 +195,8 @@ const SIGNAL_CONFIG = {
   ANALYSIS_COOLDOWN: 4000,  // 4s — análisis rápido en cada tick relevante
   
   // Cooldown después de cerrar una señal antes de abrir otra
-  POST_SIGNAL_COOLDOWN: 300000, // 5 minutos entre señales (era 30 min — demasiado agresivo)
+  POST_SIGNAL_COOLDOWN: 480000, // FIX 8: 8 minutos — evita sobre-operar el mismo setup
+  // Era 5 min, demasiado agresivo en mercados laterales
   
   // Cooldown específico para Boom/Crash
   POST_SIGNAL_COOLDOWN_BOOM_CRASH: 600000, // 10 minutos para Boom/Crash
@@ -2625,27 +2627,29 @@ const SMC = {
         return false;
       })()
     );
-    // NEW: If M15 and M5 are BOTH strongly aligned (even against H1),
-    // the intermediate timeframes are showing a real trend — allow signals
+    // FIX 3: m15m5Aligned fue el origen de los BUY contra H1 BEARISH.
+    // M15+M5 BULLISH cuando H1 BEARISH = PULLBACK dentro de tendencia bajista, NO reversión.
+    // Se elimina como override de h1m15Aligned. Solo vale si sameDirection o m15ChochOverride.
     const m15m5Aligned = m15Loaded &&
       structureM15.trend === structureM5.trend &&
       structureM15.trend !== 'NEUTRAL' &&
-      structureM15.strength >= 40 && // M15 must have clear structure
-      structureM5.trend !== 'NEUTRAL';
-    // h1m15Aligned also includes m5ChochReversal (M5 CHoCH+BOS against H1 = valid setup)
+      structureM5.trend !== 'NEUTRAL' &&
+      // CRÍTICO: solo si va en la misma dirección que H1
+      structureM15.trend === structureH1.trend;
+    // h1m15Aligned: requiere H1 alineado — se elimina m15m5Aligned como override independiente
     const h1m15Aligned = h1Loaded && m15Loaded && (
-      sameDirection || h1StrongM15Neutral || m15ChochOverride || m15m5Aligned ||
-      (choch !== null && bos !== null && // M5 CHoCH+BOS reversal
-       bos.side === choch.side)          // both confirm same direction
+      sameDirection || h1StrongM15Neutral || m15ChochOverride ||
+      // M5 CHoCH+BOS solo si la dirección coincide con H1
+      (choch !== null && bos !== null &&
+       bos.side === choch.side &&
+       choch.side === (structureH1.trend === 'BULLISH' ? 'BUY' : 'SELL'))
     );
 
     // ── FILTRO GLOBAL: necesitamos también confirmación de fuerza ──
     const h1Strong  = structureH1.strength  >= 40; // lowered — real markets often read 40-60
     const m15Strong = structureM15.strength >= 35; // lowered
-    // marketReady: H1+M15 aligned AND H1 strong
-    // Exception: when m15ChochOverride (M15 CHoCH fresh + M5 confirms),
-    // don't require m15Strong — the CHoCH IS the structure signal
-    const marketReady = h1m15Aligned && h1Strong && (m15Strong || m15ChochOverride || m15m5Aligned);
+    // FIX 4: marketReady — m15m5Aligned ahora ya incluye alineación H1, no es override independiente
+    const marketReady = h1m15Aligned && h1Strong && (m15Strong || m15ChochOverride);
 
     // ── EXCEPCIÓN: CHoCH en M5/M15 cuando el mercado cambia de dirección ──
     // Caso 1: M15 NEUTRAL + M5 CHoCH + BOS = transición de tendencia
@@ -2685,8 +2689,11 @@ const SMC = {
     const signals = [];
     const isCounterTrend = m5ChochReversal &&
       choch && choch.side !== (structureH1.trend === 'BULLISH' ? 'BUY' : 'SELL');
-    // minScore: counter-trend setups need slightly higher bar; floor is always SIGNAL_CONFIG.MIN_SCORE
-    const minScore = Math.max(SIGNAL_CONFIG.MIN_SCORE, isCounterTrend ? 84 : 83);
+    // FIX: Counter-trend trades son los más perdedores — exigir 92%
+    // Trades alineados con H1 usan el MIN_SCORE global (85)
+    const minScore = isCounterTrend
+      ? 92   // Counter-H1: solo si hay evidencia muy fuerte
+      : Math.max(SIGNAL_CONFIG.MIN_SCORE, 85);
 
     if (!marketReady && !m5ChochReversal) {
       // Mercado no está claro: H1 y M15 no alineados → solo WAIT
@@ -2706,52 +2713,35 @@ const SMC = {
       };
     }
 
-    // Dirección operativa:
-    // - Si marketReady: opDir = H1 (seguir tendencia)
-    // - Si m15ChochFresh: opDir = dirección del CHoCH en M15 (reversión confirmada)
-    // - Si m5ChochReversal con M15 NEUTRAL: opDir = M5 CHoCH direction
-    // opDir priority:
-    // 1. Fresh M15 CHoCH (strongest reversal signal)
-    // 2. M15+M5 both aligned against H1 (intermediate reversal)
-    // 3. M5 CHoCH+BOS reversal (clear M5 setup)
-    // 4. Default: follow H1
+    // FIX 7: opDir SIEMPRE sigue H1 salvo CHoCH confirmado en M15
+    // BUG raíz: m15m5Aligned && !sameDirection permitía BUY cuando H1=BEARISH
+    // Esto generó los trades perdedores #1,3,4,5 del historial
     const opDir = m15ChochFresh
       ? (state.chochM15.side === 'BUY' ? 'BULLISH' : 'BEARISH')
-      : m15m5Aligned && !sameDirection
-        ? structureM15.trend
-        : (m5ChochReversal && choch)
-          ? (choch.side === 'BUY' ? 'BULLISH' : 'BEARISH') // CHoCH direction
-          : structureH1.trend;
+      : (m5ChochReversal && choch && structureM15.trend === 'NEUTRAL')
+        ? (choch.side === 'BUY' ? 'BULLISH' : 'BEARISH') // solo si M15 neutral
+        : structureH1.trend; // DEFAULT: siempre seguir H1
     const opSide = opDir === 'BULLISH' ? 'BUY' : 'SELL';
 
-    // ── MTF_CONFLUENCE: H1+M15 alineados + OB pullback ──
-    // Flow: H1 trend → M15 confirmation (or M15 CHoCH) → OB touch → entry
+    // MTF_CONFLUENCE — exige que pullback coincida con opDir (= H1)
     if (pullback && pullback.side === opSide) {
       let score = 88;
       if (pullback.side === 'BUY'  && premiumDiscount === 'DISCOUNT') score += 5;
       if (pullback.side === 'SELL' && premiumDiscount === 'PREMIUM')  score += 5;
       if (m15Strong)        score += 4;
-      if (tripleConfluence) score += 3;
+      if (tripleConfluence) score += 4; // triple = bonus mayor
       if (choch)            score += 3;
-      if (m15ChochFresh)    score += 4; // M15 CHoCH = high quality reversal entry
+      if (m15ChochFresh)    score += 4;
       if (pullback.confirmation === 'ENGULFING' || pullback.confirmation === 'PIN_BAR') score += 3;
-      if (pullback.confirmation === 'CHOCH_OB') score += 5; // structure OB entry = high quality
-      if (pullback.zone?.isStructureOB) score += 3; // structure OB bonus regardless of conf
+      if (pullback.confirmation === 'CHOCH_OB') score += 5;
+      if (pullback.zone?.isStructureOB) score += 3;
+      // FIX: eliminar penalización inconsistente de m15m5Aligned counter-trend
+      // (ya no puede darse porque opDir siempre sigue H1)
       score = Math.min(score, 100);
 
       const trendCtx = m15ChochFresh
         ? `CHoCH M15(${state.chochM15?.side}) + M5 OB`
-        : (m15m5Aligned && !sameDirection)
-          ? `M15+M5(${structureM15.trend}) vs H1(${structureH1.trend})`
-          : `H1(${opDir})+M15(${structureM15.trend})`;
-      // Counter-trend signals (M15+M5 vs H1) get -5 score penalty
-      if (m15m5Aligned && !sameDirection && !m15ChochFresh) score = Math.max(score - 5, 82);
-      signals.push({
-        model: 'MTF_CONFLUENCE',
-        baseScore: score,
-        pullback,
-        reason: `${trendCtx} + OB ${pullback.confirmation||''} ${premiumDiscount !== 'EQUILIBRIUM' ? '+ '+premiumDiscount : ''}`
-      });
+        : `H1(${opDir})+M15(${structureM15.trend})`;
     }
     
     // ── CHOCH_PULLBACK: CHoCH en M5 + retroceso al OB ──
@@ -3099,72 +3089,64 @@ const SMC = {
     
     // BREAKER_BLOCK — ELIMINADO (entradas fuera del OB, SL demasiado amplio)
     
-    // 2. INDUCEMENT - Trampa de liquidez (igual highs/lows que son barridos)
-    // Detecta cuando el precio barre un nivel obvio y revierte
+    // 2. INDUCEMENT — FIX 5: wick ratio mínimo 0.7 (antes 0.5 = demasiado permisivo)
+    // + H1 DEBE estar alineado (antes solo sumaba +5, ahora es requisito)
     const recentHighs = candlesM5.slice(-20).map(c => c.high);
-    const recentLows = candlesM5.slice(-20).map(c => c.low);
+    const recentLows  = candlesM5.slice(-20).map(c => c.low);
     const highestRecent = Math.max(...recentHighs.slice(0, -3));
-    const lowestRecent = Math.min(...recentLows.slice(0, -3));
-    
+    const lowestRecent  = Math.min(...recentLows.slice(0, -3));
+
     // Barrido de máximos + reversión = SELL
     if (lastCandle.high > highestRecent && lastCandle.close < highestRecent) {
       const sweepWick = lastCandle.high - Math.max(lastCandle.open, lastCandle.close);
       const sweepBody = Math.abs(lastCandle.close - lastCandle.open);
-      
-      if (sweepWick > sweepBody * 0.5) {
+      // FIX: requiere mecha larga (0.7x cuerpo) Y H1 BEARISH obligatorio
+      const wickRatioOk = sweepWick > sweepBody * 0.7;
+      const h1Confirms  = structureH1.trend === 'BEARISH';
+      if (wickRatioOk && h1Confirms && opDir === 'BEARISH') {
         const indEntry = {
           side: 'SELL',
           entry: lastCandle.close,
-          stop: lastCandle.high + avgRange * 0.3,
-          tp1: lastCandle.close - avgRange * 2,
-          tp2: lastCandle.close - avgRange * 3.5,
-          tp3: lastCandle.close - avgRange * 5
+          stop:  lastCandle.high + avgRange * 0.3,
+          tp1:   lastCandle.close - avgRange * 2,
+          tp2:   lastCandle.close - avgRange * 3.5,
+          tp3:   lastCandle.close - avgRange * 5
         };
-        
-        let score = 82;
-        if (structureH1.trend === 'BEARISH') score += 5;
-        if (structureM15 && structureM15.trend === 'BEARISH') score += 4;
-        if (premiumDiscount === 'PREMIUM') score += 4;
-        // Must match opDir — use conditional push, NOT return (return exits the whole function!)
-        if (opDir === 'BEARISH') {
-          signals.push({
-            model: 'INDUCEMENT',
-            baseScore: score,
-            pullback: indEntry,
-            reason: `Sweep máximos + rechazo${structureH1.trend === 'BEARISH' ? ' + H1↓' : ''}`
-          });
-        }
+        let score = 83; // Base más baja — requiere más confirmación
+        if (structureM15?.trend === 'BEARISH') score += 5; // M15 confirma
+        if (premiumDiscount === 'PREMIUM')     score += 4;
+        if (tripleConfluence)                  score += 3;
+        signals.push({
+          model: 'INDUCEMENT', baseScore: score, pullback: indEntry,
+          reason: `Sweep máximos + rechazo + H1↓${structureM15?.trend==='BEARISH'?' + M15↓':''}`
+        });
       }
     }
-    
+
     // Barrido de mínimos + reversión = BUY
     if (lastCandle.low < lowestRecent && lastCandle.close > lowestRecent) {
       const sweepWick = Math.min(lastCandle.open, lastCandle.close) - lastCandle.low;
       const sweepBody = Math.abs(lastCandle.close - lastCandle.open);
-      
-      if (sweepWick > sweepBody * 0.5) {
+      // FIX: requiere mecha larga Y H1 BULLISH obligatorio
+      const wickRatioOk = sweepWick > sweepBody * 0.7;
+      const h1Confirms  = structureH1.trend === 'BULLISH';
+      if (wickRatioOk && h1Confirms && opDir === 'BULLISH') {
         const indEntry = {
           side: 'BUY',
           entry: lastCandle.close,
-          stop: lastCandle.low - avgRange * 0.3,
-          tp1: lastCandle.close + avgRange * 2,
-          tp2: lastCandle.close + avgRange * 3.5,
-          tp3: lastCandle.close + avgRange * 5
+          stop:  lastCandle.low - avgRange * 0.3,
+          tp1:   lastCandle.close + avgRange * 2,
+          tp2:   lastCandle.close + avgRange * 3.5,
+          tp3:   lastCandle.close + avgRange * 5
         };
-        
-        let score = 82;
-        if (structureH1.trend === 'BULLISH') score += 5;
-        if (structureM15 && structureM15.trend === 'BULLISH') score += 4;
-        if (premiumDiscount === 'DISCOUNT') score += 4;
-        // Must match opDir — use conditional push, NOT return (return exits the whole function!)
-        if (opDir === 'BULLISH') {
-          signals.push({
-            model: 'INDUCEMENT',
-            baseScore: score,
-            pullback: indEntry,
-            reason: `Sweep mínimos + rechazo${structureH1.trend === 'BULLISH' ? ' + H1↑' : ''}`
-          });
-        }
+        let score = 83;
+        if (structureM15?.trend === 'BULLISH') score += 5;
+        if (premiumDiscount === 'DISCOUNT')    score += 4;
+        if (tripleConfluence)                  score += 3;
+        signals.push({
+          model: 'INDUCEMENT', baseScore: score, pullback: indEntry,
+          reason: `Sweep mínimos + rechazo + H1↑${structureM15?.trend==='BULLISH'?' + M15↑':''}`
+        });
       }
     }
     
@@ -3199,69 +3181,62 @@ const SMC = {
       }
     }
     
-    // 4. LIQUIDITY_GRAB - Barrido rápido de liquidez con rechazo inmediato (v24)
+    // 4. LIQUIDITY_GRAB — FIX 6: requiere triple confluencia + riesgo máximo 4x avgRange
     const prev2Candle = candlesM5[candlesM5.length - 3];
-    const prevCandle = candlesM5[candlesM5.length - 2];
-    
+    const prevCandle  = candlesM5[candlesM5.length - 2];
+
     if (prev2Candle && prevCandle) {
-      // Patrón: vela rompe nivel, siguiente vela revierte fuerte
       const brokeHigh = prevCandle.high > prev2Candle.high && prevCandle.close < prev2Candle.high;
-      const brokeLow = prevCandle.low < prev2Candle.low && prevCandle.close > prev2Candle.low;
-      
-      // Confirmación: vela actual continúa la reversión
+      const brokeLow  = prevCandle.low  < prev2Candle.low  && prevCandle.close > prev2Candle.low;
+
       if (brokeHigh && lastCandle.close < prevCandle.close && opSide === 'SELL') {
-        // LIQUIDITY_GRAB SHORT: H1+M15 must be BEARISH
-        const avgR = avgRange;
-        const risk = prevCandle.high + avgR*0.3 - lastCandle.close;
-        if (risk > 0 && risk < avgR * 6) {
-          const lgEntry = {
-            side: 'SELL',
-            entry:  +(lastCandle.close).toFixed(config.decimals),
-            stop:   +(prevCandle.high + avgR * 0.25).toFixed(config.decimals),
-            tp1:    +(lastCandle.close - risk*1.5).toFixed(config.decimals),
-            tp2:    +(lastCandle.close - risk*2.5).toFixed(config.decimals),
-            tp3:    +(lastCandle.close - risk*4.0).toFixed(config.decimals),
-            entryType: 'LIQUIDITY_GRAB'
-          };
-          const pdBonus = premiumDiscount === 'PREMIUM';
-          let score = 85;
-          if (tripleConfluence) score += 4;
-          if (pdBonus) score += 4;
-          score = Math.min(score, 96);
-          signals.push({
-            model: 'LIQUIDITY_GRAB',
-            baseScore: score,
-            pullback: lgEntry,
-            reason: `Sweep alcista + H1/M15 BEARISH${pdBonus?' + PREMIUM':''}`
-          });
+        // FIX: requiere H1 BEARISH Y M15 BEARISH (antes solo H1+M15 BEARISH implícito)
+        if (structureH1.trend === 'BEARISH' && structureM15?.trend === 'BEARISH') {
+          const risk = prevCandle.high + avgRange*0.3 - lastCandle.close;
+          if (risk > 0 && risk < avgRange * 4) { // FIX: era 6x, ahora 4x máximo
+            const lgEntry = {
+              side:  'SELL',
+              entry: +(lastCandle.close).toFixed(config.decimals),
+              stop:  +(prevCandle.high + avgRange*0.25).toFixed(config.decimals),
+              tp1:   +(lastCandle.close - risk*1.5).toFixed(config.decimals),
+              tp2:   +(lastCandle.close - risk*2.5).toFixed(config.decimals),
+              tp3:   +(lastCandle.close - risk*4.0).toFixed(config.decimals),
+              entryType: 'LIQUIDITY_GRAB'
+            };
+            let score = 84;
+            if (tripleConfluence)             score += 6; // triple = bonus grande
+            if (premiumDiscount==='PREMIUM')  score += 4;
+            score = Math.min(score, 96);
+            signals.push({
+              model: 'LIQUIDITY_GRAB', baseScore: score, pullback: lgEntry,
+              reason: `Sweep alcista + H1↓ + M15↓${premiumDiscount==='PREMIUM'?' + PREMIUM':''}`
+            });
+          }
         }
       }
-      
+
       if (brokeLow && lastCandle.close > prevCandle.close && opSide === 'BUY') {
-        // LIQUIDITY_GRAB LONG: H1+M15 must be BULLISH
-        const avgR = avgRange;
-        const risk = lastCandle.close - (prevCandle.low - avgR*0.25);
-        if (risk > 0 && risk < avgR * 6) {
-          const lgEntry = {
-            side: 'BUY',
-            entry:  +(lastCandle.close).toFixed(config.decimals),
-            stop:   +(prevCandle.low - avgR * 0.25).toFixed(config.decimals),
-            tp1:    +(lastCandle.close + risk*1.5).toFixed(config.decimals),
-            tp2:    +(lastCandle.close + risk*2.5).toFixed(config.decimals),
-            tp3:    +(lastCandle.close + risk*4.0).toFixed(config.decimals),
-            entryType: 'LIQUIDITY_GRAB'
-          };
-          const pdBonus = premiumDiscount === 'DISCOUNT';
-          let score = 85;
-          if (tripleConfluence) score += 4;
-          if (pdBonus) score += 4;
-          score = Math.min(score, 96);
-          signals.push({
-            model: 'LIQUIDITY_GRAB',
-            baseScore: score,
-            pullback: lgEntry,
-            reason: `Sweep bajista + H1/M15 BULLISH${pdBonus?' + DISCOUNT':''}`
-          });
+        if (structureH1.trend === 'BULLISH' && structureM15?.trend === 'BULLISH') {
+          const risk = lastCandle.close - (prevCandle.low - avgRange*0.25);
+          if (risk > 0 && risk < avgRange * 4) {
+            const lgEntry = {
+              side:  'BUY',
+              entry: +(lastCandle.close).toFixed(config.decimals),
+              stop:  +(prevCandle.low - avgRange*0.25).toFixed(config.decimals),
+              tp1:   +(lastCandle.close + risk*1.5).toFixed(config.decimals),
+              tp2:   +(lastCandle.close + risk*2.5).toFixed(config.decimals),
+              tp3:   +(lastCandle.close + risk*4.0).toFixed(config.decimals),
+              entryType: 'LIQUIDITY_GRAB'
+            };
+            let score = 84;
+            if (tripleConfluence)             score += 6;
+            if (premiumDiscount==='DISCOUNT') score += 4;
+            score = Math.min(score, 96);
+            signals.push({
+              model: 'LIQUIDITY_GRAB', baseScore: score, pullback: lgEntry,
+              reason: `Sweep bajista + H1↑ + M15↑${premiumDiscount==='DISCOUNT'?' + DISCOUNT':''}`
+            });
+          }
         }
       }
     }
