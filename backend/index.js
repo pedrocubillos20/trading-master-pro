@@ -861,9 +861,19 @@ function isMarketOpenNow(symbol) {
 }
 
 // Función para resubscribir a un activo específico
+// FIX: flag para evitar resuscripciones duplicadas durante el arranque
+let initialSubscriptionDone = false;
+const subscriptionCooldown  = {};  // symbol → timestamp de última sub
+
 function resubscribeToAsset(symbol) {
   if (!derivWs || derivWs.readyState !== WebSocket.OPEN) return;
-  
+  // FIX "Already subscribed": si la última suscripción fue hace <45s, omitir
+  const lastSub = subscriptionCooldown[symbol] || 0;
+  if (Date.now() - lastSub < 45000) {
+    console.log(`⏳ [${ASSETS[symbol]?.shortName}] Resuscripción omitida (cooldown 45s)`);
+    return;
+  }
+  subscriptionCooldown[symbol] = Date.now();
   console.log(`🔄 [${ASSETS[symbol]?.shortName}] Resubscribiendo...`);
   marketStatus[symbol].lastSubscriptionAttempt = Date.now();
   marketStatus[symbol].subscriptionAttempts++;
@@ -887,6 +897,8 @@ function resubscribeToAsset(symbol) {
 // Verificar mercados inactivos y resubscribir
 function checkAndResubscribeMarkets() {
   if (!isConnected) return;
+  // FIX: no resubscribir durante los primeros 60s del arranque — evita "already subscribed"
+  if (!initialSubscriptionDone) return;
   
   const now = Date.now();
   const inactivityThreshold = 60000; // 1 minuto sin datos = inactivo
@@ -2686,10 +2698,16 @@ const SMC = {
     );
 
     // ── FILTRO GLOBAL: necesitamos también confirmación de fuerza ──
-    const h1Strong  = structureH1.strength  >= 40; // lowered — real markets often read 40-60
-    const m15Strong = structureM15.strength >= 35; // lowered
-    // FIX 4: marketReady — m15m5Aligned ahora ya incluye alineación H1, no es override independiente
-    const marketReady = h1m15Aligned && h1Strong && (m15Strong || m15ChochOverride);
+    const h1Strong  = structureH1.strength  >= 40;
+    const m15Strong = structureM15.strength >= 35;
+    // FIX 2: Oro score=0 — H1 BEAR 100% + M15 NEUTRAL (20%) + M5 BEAR 79%
+    // h1StrongM15Neutral=true → h1m15Aligned=true PERO marketReady=false porque m15Strong=false
+    // Solución: cuando H1 es muy fuerte (≥70%) Y M5 confirma la dirección → marketReady=true
+    // Esto captura exactamente: H1 BEAR 100% + M15 NEUTRAL + M5 BEAR → operar en dirección H1
+    const h1VeryStrongM5Confirms = structureH1.strength >= 70 &&
+      structureH1.trend !== 'NEUTRAL' &&
+      structureM5.trend === structureH1.trend; // M5 confirma H1
+    const marketReady = h1m15Aligned && h1Strong && (m15Strong || m15ChochOverride || h1VeryStrongM5Confirms);
 
     // ── EXCEPCIÓN: CHoCH en M5/M15 cuando el mercado cambia de dirección ──
     // Caso 1: M15 NEUTRAL + M5 CHoCH + BOS = transición de tendencia
@@ -2911,7 +2929,7 @@ const SMC = {
     // FIX: threshold counter-trend baja a 87 si BOS M5 confirma dirección
     // ═══════════════════════════════════════════════════════════════
     {
-      const last5 = candlesM5.slice(-5); // últimas 5 velas para detectar rechazo
+      const last5 = candlesM5.slice(-15); // FIX: ventana 15 velas (era 5 — demasiado corta)
 
       // ── SELL: buscar vela de rechazo en últimas 5 velas dentro de supply zone ──
       for (const zone of supplyZones) {
@@ -3037,7 +3055,63 @@ const SMC = {
         break;
       }
     }
-    // Usar OB_ENTRY en su lugar
+    // ── FIX 4: CHoCH M5 + ZONA — trigger directo cuando M5 hace CHoCH confirmado ──
+    // Caso de los logs: M5=BEARISH 94% + CHoCH↓ @8020.6 + Supply=3 zones → Score 47 → WAIT
+    // El OB_REJECTION no disparó porque no había vela reciente tocando el supply
+    // Este bloque genera señal cuando CHoCH M5 está confirmado + zona existe en la dirección
+    if (choch && bos && choch.side === bos.side &&
+        choch.breakIndex >= (candlesM5.length - 25)) {
+
+      const isChochSell = choch.side === 'SELL';
+      const isChochBuy  = choch.side === 'BUY';
+      const zones = isChochSell ? supplyZones : demandZones;
+      const relevantZone = zones.find(z => !z.mitigated);
+
+      if (relevantZone) {
+        const price = lastCandle.close;
+        // Solo si el precio está razonablemente cerca de la zona (no demasiado lejos)
+        const distToZone = isChochSell
+          ? Math.abs(price - relevantZone.low)   // distancia al piso del supply
+          : Math.abs(price - relevantZone.high);  // distancia al techo del demand
+        const maxDist = avgRange * 15; // máximo 15x avgRange de distancia
+
+        if (distToZone < maxDist) {
+          let score = 82;
+          if (relevantZone.isStructureOB)                  score += 6;
+          if (structureM5.strength >= 80)                  score += 5; // M5 CHoCH muy fuerte
+          if (structureH1.trend === (isChochSell?'BEARISH':'BULLISH')) score += 6; // H1 confirma
+          else                                             score -= 4; // H1 contra → penalizar
+          if (structureM15?.trend === (isChochSell?'BEARISH':'BULLISH')) score += 5;
+          if (premiumDiscount === (isChochSell?'PREMIUM':'DISCOUNT'))  score += 3;
+          // Bonus si precio ya está dentro de la zona
+          const inZone = isChochSell
+            ? price >= relevantZone.low && price <= relevantZone.high
+            : price >= relevantZone.low && price <= relevantZone.high;
+          if (inZone) score += 4;
+          score = Math.min(score, 95);
+
+          const risk = isChochSell
+            ? Math.max(relevantZone.high - price + avgRange*0.2, avgRange*0.5)
+            : Math.max(price - relevantZone.low + avgRange*0.2, avgRange*0.5);
+
+          signals.push({
+            model: 'OB_REJECTION',
+            baseScore: score,
+            pullback: {
+              side:  isChochSell ? 'SELL' : 'BUY',
+              entry: price,
+              stop:  isChochSell
+                ? +(relevantZone.high + avgRange*0.15).toFixed(config.decimals)
+                : +(relevantZone.low  - avgRange*0.15).toFixed(config.decimals),
+              tp1: isChochSell ? +(price-risk*1.5).toFixed(config.decimals) : +(price+risk*1.5).toFixed(config.decimals),
+              tp2: isChochSell ? +(price-risk*2.5).toFixed(config.decimals) : +(price+risk*2.5).toFixed(config.decimals),
+              tp3: isChochSell ? +(price-risk*4.0).toFixed(config.decimals) : +(price+risk*4.0).toFixed(config.decimals)
+            },
+            reason: `CHoCH M5${isChochSell?'↓':'↑'} + BOS confirmado + OB${relevantZone.isStructureOB?' ★':''}${inZone?' en zona':' cerca zona'}`
+          });
+        }
+      }
+    }
     // ═══════════════════════════════════════════════════════════════
     /*
     for (const zone of demandZones) {
@@ -4513,6 +4587,9 @@ function connectDeriv() {
       }
     }
     console.log('\n✅ Suscripciones enviadas (M1 · M5 · M15 · H1) - Esperando datos...\n');
+    // FIX: marcar suscripción inicial como completa después de 60s
+    // Evita que checkAndResubscribeMarkets dispare duplicados durante el arranque
+    setTimeout(() => { initialSubscriptionDone = true; }, 60000);
   });
   
   derivWs.on('message', (rawData) => {
