@@ -2244,8 +2244,15 @@ const SMC = {
       const slLevel = +((zone.wickLow || zone.low) - avgRange * 0.2).toFixed(config.decimals);
       const risk    = entry - slLevel;
       if (risk <= 0 || risk > avgRange * 15) continue;
-      // Reject only if price moved very far away (2x avgRange above OB)
-      if (entry > zone.high + avgRange * 2.0) continue;
+
+      // FIX ENTRADA TEMPRANA: precio debe estar DENTRO del OB o muy cerca del borde superior
+      // Antes: entry > zone.high + avgRange*2.0 → aceptaba entradas hasta 2x avgRange ENCIMA del OB
+      // Eso causó la entrada en 4697 en vez de esperar el OB en 4691-4692
+      // Ahora: precio dentro del OB o máximo 0.4x avgRange por encima del techo
+      const priceInOB      = entry >= zone.low && entry <= zone.high;
+      const priceJustAbove = entry > zone.high && entry <= zone.high + avgRange * 0.4;
+      const priceJustBelow = entry < zone.low  && entry >= zone.low  - avgRange * 0.3;
+      if (!priceInOB && !priceJustAbove && !priceJustBelow) continue;
 
       // Best confirmation from recent candles
       const conf = candles.slice(-5).some(c => c.close>c.open && c.close>candles[candles.length-6]?.close)
@@ -2285,8 +2292,11 @@ const SMC = {
       const slLevel = +((zone.wickHigh || zone.high) + avgRange * 0.2).toFixed(config.decimals);
       const risk    = slLevel - entry;
       if (risk <= 0 || risk > avgRange * 15) continue;
-      // Reject only if price moved very far below OB (2x avgRange)
-      if (entry < zone.low - avgRange * 2.0) continue;
+      // FIX: precio debe estar DENTRO del OB de oferta o muy cerca del borde inferior
+      const priceInOB      = entry >= zone.low && entry <= zone.high;
+      const priceJustBelow = entry < zone.low  && entry >= zone.low  - avgRange * 0.4;
+      const priceJustAbove = entry > zone.high && entry <= zone.high + avgRange * 0.3;
+      if (!priceInOB && !priceJustBelow && !priceJustAbove) continue;
 
       const conf = candles.slice(-5).some(c => c.close<c.open && c.close<candles[candles.length-6]?.close)
         ? 'BEARISH_CLOSE'
@@ -2785,11 +2795,14 @@ const SMC = {
       if (structOBs.length > 0) {
         const ob = structOBs[0];
         const price = data.price || candlesM5[candlesM5.length-1]?.close || 0;
-        const withinRange = opSide === 'BUY'
-          ? price <= ob.high + avgRange * 3 && price >= ob.low - avgRange * 3
-          : price >= ob.low - avgRange * 3 && price <= ob.high + avgRange * 3;
-        if (withinRange && choch.breakIndex >= (candlesM5?.length||0) - 20) {
-          const slLevel = opSide === 'BUY'
+        // FIX: requiere que el precio esté DENTRO del OB o máximo 0.5x avgRange por encima/debajo
+        // Antes: ±3x avgRange → permitía entrar muy lejos del OB (6+ puntos de distancia en Oro)
+        const priceInOB = opSide === 'BUY'
+          ? price >= ob.low - avgRange*0.3 && price <= ob.high + avgRange*0.5
+          : price >= ob.low - avgRange*0.5 && price <= ob.high + avgRange*0.3;
+        if (!priceInOB) continue; // Skip — precio no llegó al OB todavía
+        if (choch.breakIndex < (candlesM5?.length||0) - 20) continue; // CHoCH muy viejo
+        const slLevel = opSide === 'BUY'
             ? +((ob.wickLow||ob.low) - avgRange*0.2).toFixed(config.decimals)
             : +((ob.wickHigh||ob.high) + avgRange*0.2).toFixed(config.decimals);
           const risk = Math.abs(price - slLevel);
@@ -2891,7 +2904,139 @@ const SMC = {
     const lastCandle = candlesM5[candlesM5.length - 1];
     
     // ═══════════════════════════════════════════════════════════════
-    // ZONE_TOUCH - DESACTIVADO (No está en los 12 modelos oficiales)
+    // ═══════════════════════════════════════════════════════════════
+    // OB_REJECTION — Rechazo en zona de OB (supply o demand)
+    // FIX: busca en las últimas 5 velas, no solo la actual
+    // FIX: CHoCH M5 confirmado agrega bonus grande para superar umbral
+    // FIX: threshold counter-trend baja a 87 si BOS M5 confirma dirección
+    // ═══════════════════════════════════════════════════════════════
+    {
+      const last5 = candlesM5.slice(-5); // últimas 5 velas para detectar rechazo
+
+      // ── SELL: buscar vela de rechazo en últimas 5 velas dentro de supply zone ──
+      for (const zone of supplyZones) {
+        if (zone.mitigated) continue;
+
+        // Buscar la vela de rechazo más fuerte dentro de las últimas 5
+        let bestBear = null, bestScore = 0;
+        for (let ci = last5.length - 1; ci >= 0; ci--) {
+          const c = last5[ci];
+          const touchedZone = c.high >= zone.low * 0.998; // mecha tocó la zona
+          const strongBear  = c.close < c.open;
+          const candleSize  = Math.abs(c.close - c.open);
+          const bigCandle   = candleSize > avgRange * 0.6; // más permisivo: era 0.7
+          if (touchedZone && strongBear && bigCandle) {
+            const s = candleSize + (c.high >= zone.high ? 2 : 0); // bonus si tocó techo
+            if (s > bestScore) { bestScore = s; bestBear = { c, ci }; }
+          }
+        }
+        if (!bestBear) continue;
+
+        const { c: rejCandle, ci: rejIdx } = bestBear;
+        const closedBelow  = rejCandle.close < zone.low;
+        const wick         = rejCandle.high - Math.max(rejCandle.open, rejCandle.close);
+        const candleSize   = Math.abs(rejCandle.close - rejCandle.open);
+        const giantCandle  = candleSize > avgRange * 2.0; // vela enorme (27 puntos en Step)
+        const m5Bearish    = structureM5?.trend === 'BEARISH'; // M5 CHoCH confirmado
+        const chochConfirm = choch && choch.side === 'SELL' && choch.breakIndex >= (candlesM5.length - 15);
+
+        let score = 82;
+        if (closedBelow)           score += 6;  // cerró fuera = confirmación fuerte
+        if (wick > candleSize*0.4) score += 3;  // mecha superior
+        if (zone.isStructureOB)    score += 6;  // OB estructural
+        if (giantCandle)           score += 5;  // vela muy grande = SM distribuyendo
+        if (m5Bearish)             score += 6;  // M5 CHoCH bajista confirmado
+        if (chochConfirm)          score += 4;  // CHoCH reciente en M5
+        if (bos && bos.side==='SELL') score += 3; // BOS bajista confirmado
+        if (structureH1.trend  === 'BEARISH') score += 5;
+        if (structureM15?.trend === 'BEARISH') score += 4;
+        if (premiumDiscount === 'PREMIUM') score += 3;
+        // Penalización contra-tendencia (pero menor que antes si M5 confirma)
+        if (structureH1.trend === 'BULLISH') {
+          if (zone.isStructureOB && m5Bearish) score -= 3; // penalización mínima
+          else if (zone.isStructureOB)         score -= 5;
+          else                                 score -= 10; // no OB estructural = riesgo alto
+        }
+        score = Math.min(score, 97);
+
+        const entry = lastCandle.close; // entrada en precio actual
+        const risk  = Math.max(zone.high - entry + avgRange * 0.2, avgRange * 0.5);
+        signals.push({
+          model: 'OB_REJECTION',
+          baseScore: score,
+          pullback: {
+            side:  'SELL', entry,
+            stop:  +(zone.high + avgRange * 0.15).toFixed(config.decimals),
+            tp1:   +(entry - risk * 1.5).toFixed(config.decimals),
+            tp2:   +(entry - risk * 2.5).toFixed(config.decimals),
+            tp3:   +(entry - risk * 4.0).toFixed(config.decimals)
+          },
+          reason: `Rechazo OB oferta${zone.isStructureOB?' ★':''}${giantCandle?' + vela gigante':''}${m5Bearish?' + CHoCH M5↓':''}${premiumDiscount==='PREMIUM'?' + PREMIUM':''}`
+        });
+        break;
+      }
+
+      // ── BUY: buscar vela de rechazo en últimas 5 velas dentro de demand zone ──
+      for (const zone of demandZones) {
+        if (zone.mitigated) continue;
+
+        let bestBull = null, bestScore = 0;
+        for (let ci = last5.length - 1; ci >= 0; ci--) {
+          const c = last5[ci];
+          const touchedZone = c.low <= zone.high * 1.002;
+          const strongBull  = c.close > c.open;
+          const candleSize  = Math.abs(c.close - c.open);
+          const bigCandle   = candleSize > avgRange * 0.6;
+          if (touchedZone && strongBull && bigCandle) {
+            const s = candleSize + (c.low <= zone.low ? 2 : 0);
+            if (s > bestScore) { bestScore = s; bestBull = { c, ci }; }
+          }
+        }
+        if (!bestBull) continue;
+
+        const { c: rejCandle } = bestBull;
+        const closedAbove  = rejCandle.close > zone.high;
+        const wick         = Math.min(rejCandle.open, rejCandle.close) - rejCandle.low;
+        const candleSize   = Math.abs(rejCandle.close - rejCandle.open);
+        const giantCandle  = candleSize > avgRange * 2.0;
+        const m5Bullish    = structureM5?.trend === 'BULLISH';
+        const chochConfirm = choch && choch.side === 'BUY' && choch.breakIndex >= (candlesM5.length - 15);
+
+        let score = 82;
+        if (closedAbove)           score += 6;
+        if (wick > candleSize*0.4) score += 3;
+        if (zone.isStructureOB)    score += 6;
+        if (giantCandle)           score += 5;
+        if (m5Bullish)             score += 6;
+        if (chochConfirm)          score += 4;
+        if (bos && bos.side==='BUY') score += 3;
+        if (structureH1.trend  === 'BULLISH') score += 5;
+        if (structureM15?.trend === 'BULLISH') score += 4;
+        if (premiumDiscount === 'DISCOUNT') score += 3;
+        if (structureH1.trend === 'BEARISH') {
+          if (zone.isStructureOB && m5Bullish) score -= 3;
+          else if (zone.isStructureOB)         score -= 5;
+          else                                 score -= 10;
+        }
+        score = Math.min(score, 97);
+
+        const entry = lastCandle.close;
+        const risk  = Math.max(entry - zone.low + avgRange * 0.2, avgRange * 0.5);
+        signals.push({
+          model: 'OB_REJECTION',
+          baseScore: score,
+          pullback: {
+            side:  'BUY', entry,
+            stop:  +(zone.low - avgRange * 0.15).toFixed(config.decimals),
+            tp1:   +(entry + risk * 1.5).toFixed(config.decimals),
+            tp2:   +(entry + risk * 2.5).toFixed(config.decimals),
+            tp3:   +(entry + risk * 4.0).toFixed(config.decimals)
+          },
+          reason: `Rechazo OB demanda${zone.isStructureOB?' ★':''}${giantCandle?' + vela gigante':''}${m5Bullish?' + CHoCH M5↑':''}${premiumDiscount==='DISCOUNT'?' + DISCOUNT':''}`
+        });
+        break;
+      }
+    }
     // Usar OB_ENTRY en su lugar
     // ═══════════════════════════════════════════════════════════════
     /*
@@ -3332,6 +3477,21 @@ const SMC = {
     
     signals.sort((a, b) => b.baseScore - a.baseScore);
     const best = signals[0];
+
+    // OB_REJECTION puede operar counter-trend:
+    // - Si M5 hizo CHoCH en la misma dirección → umbral 85 (mismo que tendencia)
+    // - Si solo tiene OB estructural sin CHoCH M5 → umbral 90
+    // - Esto captura exactamente el caso: H1 BULLISH + OB rechazo + CHoCH M5 BEARISH
+    const obRejM5Confirms = best.model === 'OB_REJECTION' && (() => {
+      const isShort = best.pullback?.side === 'SELL';
+      const isLong  = best.pullback?.side === 'BUY';
+      const m5Agrees = (isShort && structureM5?.trend === 'BEARISH') ||
+                       (isLong  && structureM5?.trend === 'BULLISH');
+      return m5Agrees;
+    })();
+    const effectiveMinScore = best.model === 'OB_REJECTION'
+      ? (obRejM5Confirms ? 85 : 90)  // M5 CHoCH confirma → mismo umbral que tendencia
+      : minScore;
     
     // 🔍 LOG: Mostrar score de la mejor señal
     console.log(`🎯 [${config.shortName}] Mejor: ${best.model} | Score Base: ${best.baseScore} | Side: ${best.pullback?.side}`);
@@ -3341,19 +3501,17 @@ const SMC = {
     // ═══════════════════════════════════════════
     // Nota: Usamos config.shortName en lugar de symbol (que no existe en este contexto)
     const learningAdj = LearningSystem.getScoreAdjustment(best.model, config.shortName);
-    const finalScore = Math.min(100, Math.max(0, best.baseScore + learningAdj));
-    
-    // Log SIEMPRE para ver el score final
-    console.log(`📊 [${config.shortName}] Score Final: ${finalScore} vs Min: ${minScore} → ${finalScore >= minScore ? '✅ PASA' : '❌ NO PASA'}`);
-    
-    // v14.1: Si el score es mayor a minScore, generar señal
-    if (finalScore < minScore) {
-      console.log(`❌ [${config.shortName}] Rechazada internamente: ${finalScore} < ${minScore}`);
+    const finalScore  = Math.min(100, Math.max(0, best.baseScore + learningAdj));
+
+    console.log(`📊 [${config.shortName}] Score Final: ${finalScore} vs Min: ${effectiveMinScore} → ${finalScore >= effectiveMinScore ? '✅ PASA' : '❌ NO PASA'} | Modelo: ${best.model}`);
+
+    if (finalScore < effectiveMinScore) {
+      console.log(`❌ [${config.shortName}] Rechazada: ${finalScore} < ${effectiveMinScore}${best.model==='OB_REJECTION'?' (OB_REJECTION necesita ≥90)':''}`);
       return {
         action: 'WAIT',
         score: finalScore,
         model: best.model,
-        reason: `Score ${finalScore}% < ${minScore}% min`,
+        reason: `Score ${finalScore}% < ${effectiveMinScore}% min`,
         analysis: {
           structureM5: structureM5.trend,
           structureH1: structureH1.trend,
