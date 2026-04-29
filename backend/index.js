@@ -2921,9 +2921,10 @@ const SMC = {
         const priceInOB = opSide === 'BUY'
           ? price >= ob.low - avgRange*0.3 && price <= ob.high + avgRange*0.5
           : price >= ob.low - avgRange*0.5 && price <= ob.high + avgRange*0.3;
-        if (!priceInOB) continue; // Skip — precio no llegó al OB todavía
-        if (choch.breakIndex < (candlesM5?.length||0) - 20) continue; // CHoCH muy viejo
-        const slLevel = opSide === 'BUY'
+        const chochFresh = choch.breakIndex >= (candlesM5?.length||0) - 20;
+        // FIX: `continue` es ilegal fuera de un loop — usar if/else
+        if (priceInOB && chochFresh) {
+          const slLevel = opSide === 'BUY'
             ? +((ob.wickLow||ob.low) - avgRange*0.2).toFixed(config.decimals)
             : +((ob.wickHigh||ob.high) + avgRange*0.2).toFixed(config.decimals);
           const risk = Math.abs(price - slLevel);
@@ -2946,7 +2947,7 @@ const SMC = {
               reason: `${choch.type} + structureOB ${ob.pattern||''} + ${opDir}`
             });
           }
-        }
+        } // end priceInOB && chochFresh
       }
     }
 
