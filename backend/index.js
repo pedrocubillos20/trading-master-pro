@@ -6331,22 +6331,19 @@ app.post('/api/markets/resubscribe-all', (req, res) => {
 });
 
 app.get('/api/health', (req, res) => {
-  const learningStats = LearningSystem.getStats();
-  res.json({ 
+  // FIX: responder INMEDIATAMENTE sin llamadas externas
+  // Railway mata el proceso si no responde en el timeout configurado
+  res.json({
     status: 'ok',
-    version: '14.0-ELISA-AI',
-    deriv: isConnected ? 'connected' : 'disconnected',
-    openai: !!openai,
+    version: '24.3',
+    deriv:    isConnected ? 'connected' : 'disconnected',
+    openai:   !!openai,
     supabase: !!supabase,
     telegram: !!(TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID),
-    assets: MY_ASSETS.length,
-    signals: signalHistory.length,
-    learning: {
-      active: true,
-      tradesRecorded: learningStats.totalTrades,
-      winRate: learningStats.winRate
-    },
-    smcModels: SMC_MODELS_DATA.models ? Object.keys(SMC_MODELS_DATA.models).length : 0
+    assets:   MY_ASSETS.length,
+    signals:  signalHistory.length,
+    uptime:   Math.floor(process.uptime()),
+    memory:   Math.floor(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB'
   });
 });
 
