@@ -215,8 +215,7 @@ const SIGNAL_CONFIG = {
   ],
   
   // Máximo de señales pendientes simultáneas totales
-  MAX_PENDING_TOTAL: 3,       // 1 por par × 3 pares = máximo 3 abiertas
-  MAX_PENDING_PER_ASSET: 1,   // Máximo 1 señal abierta por par (Step, Oro, V100 son independientes)
+  MAX_PENDING_TOTAL: 2,  // Max 2 open signals total
 
   // Horas de operación por plan - en UTC
   // Horario base (todos los planes): 6AM-2PM Colombia = 11:00-19:00 UTC
@@ -1021,114 +1020,12 @@ let signalIdCounter = 1;
 const stats = {
   total: 0, wins: 0, losses: 0, pending: 0,
   tp1Hits: 0, tp2Hits: 0, tp3Hits: 0,
-  byModel: {}, byAsset: {},
+  byModel: {}, byAsset: {}, 
   learning: { scoreAdjustments: {} }
 };
 
 for (const symbol of MY_ASSETS) {
   stats.byAsset[symbol] = { wins: 0, losses: 0, total: 0 };
-}
-
-// ════════════════════════════════════════════════════════════════════
-// PERSISTENCIA SUPABASE — carga historial al arrancar, guarda en tiempo real
-// Tabla requerida: trading_signals (ver README.md para SQL)
-// ════════════════════════════════════════════════════════════════════
-async function loadHistoryFromSupabase() {
-  if (!supabase) return;
-  try {
-    const { data, error } = await supabase
-      .from('trading_signals')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(200);
-    if (error) { console.log('⚠️ No se pudo cargar historial:', error.message); return; }
-    if (!data?.length) { console.log('ℹ️ Sin historial previo en Supabase'); return; }
-
-    signalHistory = data.map(r => ({
-      id:          r.signal_id,
-      symbol:      r.symbol,
-      assetName:   r.asset_name,
-      action:      r.action,
-      model:       r.model,
-      score:       r.score,
-      entry:       r.entry_price,
-      stop:        r.stop_loss,
-      tp1:         r.tp1,
-      tp2:         r.tp2,
-      tp3:         r.tp3,
-      status:      r.status,
-      closePrice:  r.close_price,
-      tpHit:       r.tp_hit,
-      tp1Hit:      r.tp_hit >= 1,
-      tp2Hit:      r.tp_hit >= 2,
-      reason:      r.reason,
-      timestamp:   new Date(r.signal_time).getTime(),
-      createdAt:   r.created_at
-    }));
-
-    // Reconstruir stats desde historial cargado
-    stats.total   = signalHistory.filter(s => s.status !== 'PENDING').length;
-    stats.wins    = signalHistory.filter(s => s.status === 'WIN').length;
-    stats.losses  = signalHistory.filter(s => s.status === 'LOSS').length;
-    stats.pending = signalHistory.filter(s => s.status === 'PENDING').length;
-    stats.tp1Hits = signalHistory.filter(s => s.tp1Hit).length;
-    stats.tp2Hits = signalHistory.filter(s => s.tp2Hit).length;
-
-    // Reconstruir scoreAdjustments del learning system
-    signalHistory.filter(s => s.status !== 'PENDING').forEach(s => {
-      if (!stats.learning.scoreAdjustments[s.model]) stats.learning.scoreAdjustments[s.model] = 0;
-      stats.learning.scoreAdjustments[s.model] += s.status === 'WIN' ? 2 : -3;
-      stats.learning.scoreAdjustments[s.model] = Math.max(-15, Math.min(10, stats.learning.scoreAdjustments[s.model]));
-    });
-
-    // Actualizar ID counter
-    const maxId = Math.max(...signalHistory.map(s => parseInt(s.id)||0), 0);
-    signalIdCounter = maxId + 1;
-
-    console.log(`✅ Historial cargado: ${signalHistory.length} señales | Wins: ${stats.wins} | Losses: ${stats.losses} | WR: ${stats.total > 0 ? Math.round(stats.wins/stats.total*100) : 0}%`);
-  } catch(e) {
-    console.log('⚠️ Error cargando historial:', e.message);
-  }
-}
-
-async function saveSignalToSupabase(signal) {
-  if (!supabase) return;
-  try {
-    await supabase.from('trading_signals').upsert({
-      signal_id:   signal.id,
-      symbol:      signal.symbol,
-      asset_name:  signal.assetName,
-      action:      signal.action,
-      model:       signal.model,
-      score:       signal.score,
-      entry_price: signal.entry,
-      stop_loss:   signal.stop,
-      tp1:         signal.tp1,
-      tp2:         signal.tp2,
-      tp3:         signal.tp3,
-      status:      signal.status || 'PENDING',
-      close_price: signal.closePrice || null,
-      tp_hit:      signal.tpHit || 0,
-      reason:      signal.reason,
-      signal_time: new Date(signal.timestamp).toISOString(),
-      structure_m5: signal.structureM5,
-      structure_h1: signal.structureH1,
-      premium_discount: signal.premiumDiscount
-    }, { onConflict: 'signal_id' });
-  } catch(e) {
-    console.log('⚠️ Error guardando señal en Supabase:', e.message);
-  }
-}
-
-async function updateSignalStatusInSupabase(signalId, status, closePrice, tpHit) {
-  if (!supabase) return;
-  try {
-    await supabase.from('trading_signals')
-      .update({ status, close_price: closePrice, tp_hit: tpHit, updated_at: new Date().toISOString() })
-      .eq('signal_id', signalId);
-  } catch(e) {
-    console.log('⚠️ Error actualizando señal:', e.message);
-  }
 }
 
 // =============================================
@@ -2921,10 +2818,9 @@ const SMC = {
         const priceInOB = opSide === 'BUY'
           ? price >= ob.low - avgRange*0.3 && price <= ob.high + avgRange*0.5
           : price >= ob.low - avgRange*0.5 && price <= ob.high + avgRange*0.3;
-        const chochFresh = choch.breakIndex >= (candlesM5?.length||0) - 20;
-        // FIX: `continue` es ilegal fuera de un loop — usar if/else
-        if (priceInOB && chochFresh) {
-          const slLevel = opSide === 'BUY'
+        if (!priceInOB) continue; // Skip — precio no llegó al OB todavía
+        if (choch.breakIndex < (candlesM5?.length||0) - 20) continue; // CHoCH muy viejo
+        const slLevel = opSide === 'BUY'
             ? +((ob.wickLow||ob.low) - avgRange*0.2).toFixed(config.decimals)
             : +((ob.wickHigh||ob.high) + avgRange*0.2).toFixed(config.decimals);
           const risk = Math.abs(price - slLevel);
@@ -2947,7 +2843,7 @@ const SMC = {
               reason: `${choch.type} + structureOB ${ob.pattern||''} + ${opDir}`
             });
           }
-        } // end priceInOB && chochFresh
+        }
       }
     }
 
@@ -4582,21 +4478,15 @@ function checkSignalHits() {
 function closeSignal(id, status, symbol, tpHit = null) {
   const signal = signalHistory.find(s => s.id === id);
   if (!signal || signal.status !== 'PENDING') return;
-
-  signal.status   = status;
+  
+  signal.status = status;
   signal.closedAt = new Date().toISOString();
-  signal.tpHit    = status === 'WIN' ? (tpHit || 1) : null;
-  signal.closePrice = status === 'WIN'
-    ? (tpHit===3 ? signal.tp3 : tpHit===2 ? signal.tp2 : signal.tp1)
-    : signal.stop;
-
+  signal.tpHit = status === 'WIN' ? (tpHit || 1) : null;
+  
   if (symbol && assetData[symbol]) {
     assetData[symbol].lockedSignal = null;
-    assetData[symbol].lastSignalClosed = Date.now();
+    assetData[symbol].lastSignalClosed = Date.now(); // v13.2: Registrar tiempo de cierre para cooldown
   }
-
-  // PERSISTENCIA: actualizar estado en Supabase
-  updateSignalStatusInSupabase(signal.id, status, signal.closePrice, signal.tpHit || 0).catch(() => {});
   
   stats.byModel[signal.model] = stats.byModel[signal.model] || { wins: 0, losses: 0 };
   stats.byAsset[signal.symbol] = stats.byAsset[signal.symbol] || { wins: 0, losses: 0, total: 0 };
@@ -4893,10 +4783,9 @@ function requestM1(symbol) {
       adjust_start_time: 1,
       count: 120,
       end: 'latest',
-      granularity: 60,
-      style: 'candles'
-      // FIX: sin subscribe:1 — los refreshes de M1 son solo histórico
-      // La suscripción en tiempo real va en el OHLC stream del M5 (granularity 300)
+      granularity: 60,    // 1 min
+      style: 'candles',
+      subscribe: 1        // suscribir para actualizaciones en tiempo real
     }));
   }
 }
@@ -4964,24 +4853,10 @@ function analyzeAsset(symbol) {
   
   // ═══════════════════════════════════════════
   // FILTRO 4: Máximo de señales pendientes
-  // FIX: verificar ANTES del análisis SMC para no desperdiciar CPU
-  // FIX: añadir límite por par (1 señal por activo)
   // ═══════════════════════════════════════════
-  const totalPending    = signalHistory.filter(s => s.status === 'PENDING').length;
-  const pendingThisAsset = signalHistory.filter(s => s.status === 'PENDING' && s.symbol === symbol).length;
-
-  // Bloquear si hay señal abierta en ESTE par
-  if (pendingThisAsset >= SIGNAL_CONFIG.MAX_PENDING_PER_ASSET) {
-    console.log(`⏸️ [${config.shortName}] Ya tiene señal abierta (${pendingThisAsset}/${SIGNAL_CONFIG.MAX_PENDING_PER_ASSET})`);
-    // Aún analizar para mantener estructura y zonas frescas en el frontend
-    const signal = SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
-    data.signal = signal;
-    return;
-  }
-
-  // Bloquear si se alcanzó el límite global
+  const totalPending = signalHistory.filter(s => s.status === 'PENDING').length;
   if (totalPending >= SIGNAL_CONFIG.MAX_PENDING_TOTAL) {
-    console.log(`⏸️ [${config.shortName}] Límite global alcanzado (${totalPending}/${SIGNAL_CONFIG.MAX_PENDING_TOTAL})`);
+    console.log(`⏸️ [${config.shortName}] Máximo de señales pendientes (${totalPending}/${SIGNAL_CONFIG.MAX_PENDING_TOTAL})`);
     const signal = SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
     data.signal = signal;
     return;
@@ -5156,9 +5031,6 @@ function analyzeAsset(symbol) {
   data.lastSignalTime = now;
   stats.total++;
   stats.pending++;
-
-  // PERSISTENCIA: guardar señal nueva en Supabase inmediatamente
-  saveSignalToSupabase(newSignal).catch(() => {});
 
   // FIX: límite de señales en memoria + limpiar huérfanas (PENDING > 4h = cerradas sin notificar)
   const fourHours = 4 * 60 * 60 * 1000;
@@ -6332,19 +6204,22 @@ app.post('/api/markets/resubscribe-all', (req, res) => {
 });
 
 app.get('/api/health', (req, res) => {
-  // FIX: responder INMEDIATAMENTE sin llamadas externas
-  // Railway mata el proceso si no responde en el timeout configurado
-  res.json({
+  const learningStats = LearningSystem.getStats();
+  res.json({ 
     status: 'ok',
-    version: '24.3',
-    deriv:    isConnected ? 'connected' : 'disconnected',
-    openai:   !!openai,
+    version: '14.0-ELISA-AI',
+    deriv: isConnected ? 'connected' : 'disconnected',
+    openai: !!openai,
     supabase: !!supabase,
     telegram: !!(TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID),
-    assets:   MY_ASSETS.length,
-    signals:  signalHistory.length,
-    uptime:   Math.floor(process.uptime()),
-    memory:   Math.floor(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB'
+    assets: MY_ASSETS.length,
+    signals: signalHistory.length,
+    learning: {
+      active: true,
+      tradesRecorded: learningStats.totalTrades,
+      winRate: learningStats.winRate
+    },
+    smcModels: SMC_MODELS_DATA.models ? Object.keys(SMC_MODELS_DATA.models).length : 0
   });
 });
 
@@ -6382,9 +6257,7 @@ app.listen(PORT, () => {
   console.log('\n🔌 Conectando a Deriv WebSocket...');
   connectDeriv();
   ensureAdminElite();
-  // PERSISTENCIA: cargar historial desde Supabase al arrancar
-  // Esto evita que los datos se pierdan al hacer deploy
-  loadHistoryFromSupabase().catch(e => console.log('⚠️ Sin historial previo:', e.message));
+  // FIX: se eliminan los intervalos duplicados aquí.
   // startMarketMonitoring() (llamado dentro de connectDeriv → on('open'))
   // ya maneja: H1/M15 refresh, M1 refresh, ping + watchdog.
   // Tener estos intervalos duplicados aquí causaba:
