@@ -2800,7 +2800,6 @@ const SMC = {
       const trendCtx = m15ChochFresh
         ? `CHoCH M15(${state.chochM15?.side}) + M5 OB`
         : `H1(${opDir})+M15(${structureM15.trend})`;
-    }
     
     // ── CHOCH_PULLBACK: CHoCH en M5 + retroceso al OB ──
     // Also fires when: CHoCH is fresh (last 15 candles) + structureOB exists near price
