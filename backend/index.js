@@ -2818,13 +2818,13 @@ const SMC = {
         const priceInOB = opSide === 'BUY'
           ? price >= ob.low - avgRange*0.3 && price <= ob.high + avgRange*0.5
           : price >= ob.low - avgRange*0.5 && price <= ob.high + avgRange*0.3;
-        if (!priceInOB) continue; // Skip — precio no llegó al OB todavía
-        if (choch.breakIndex < (candlesM5?.length||0) - 20) continue; // CHoCH muy viejo
+        if (!priceInOB) return;
+        if (choch.breakIndex < (candlesM5?.length||0) - 20) return;
         const slLevel = opSide === 'BUY'
             ? +((ob.wickLow||ob.low) - avgRange*0.2).toFixed(config.decimals)
             : +((ob.wickHigh||ob.high) + avgRange*0.2).toFixed(config.decimals);
           const risk = Math.abs(price - slLevel);
-          if (risk > 0 && risk <= avgRange * 15) {
+          if (risk > 0 && risk <= avgRange * 5) {
             const synthPullback = {
               side: opSide, zone: ob,
               entry: +(price).toFixed(config.decimals), stop: slLevel,
