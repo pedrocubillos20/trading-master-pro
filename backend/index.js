@@ -1172,16 +1172,19 @@ const SMC = {
     const swings = [];
     if (candles.length < lookback * 2 + 1) return swings;
 
-    // Adaptive lookback: on larger candle sets use slightly bigger window for cleaner swings
-    const lb = Math.max(2, Math.min(lookback, Math.floor(candles.length / 20)));
+    // FIX: NO adaptive lookback — adaptive was using candles.length/20
+    // which with 300 candles gives lookback=15, missing most real M5 swings
+    // Use FIXED lookback: 2 for M5 (catches every real pivot), 3 for H1/M15
+    const lb = Math.max(2, Math.min(lookback, 5));
 
     for (let i = lb; i < candles.length - lb; i++) {
       const c = candles[i];
       const left  = candles.slice(i - lb, i);
       const right = candles.slice(i + 1, i + lb + 1);
 
-      const isHigh = left.every(x => x.high <= c.high) && right.every(x => x.high < c.high);
-      const isLow  = left.every(x => x.low  >= c.low)  && right.every(x => x.low  > c.low);
+      // Strict: must be strictly higher/lower than ALL neighbors
+      const isHigh = left.every(x => x.high <= c.high) && right.every(x => x.high <= c.high);
+      const isLow  = left.every(x => x.low  >= c.low)  && right.every(x => x.low  >= c.low);
 
       if (isHigh) swings.push({ type: 'high', price: c.high, index: i,
         time: c.time, epoch: c.epoch || (c.time ? Math.floor(c.time/1000) : null) });
@@ -2138,58 +2141,76 @@ const SMC = {
   detectCHoCH(candles, swings) {
     if (swings.length < 4 || candles.length < 20) return null;
 
-    const highs = swings.filter(s => s.type === 'high').slice(-10);
-    const lows  = swings.filter(s => s.type === 'low').slice(-10);
-    const candidates = []; // collect ALL valid CHoCHs, pick the most recent
+    const highs = swings.filter(s => s.type === 'high').slice(-8);
+    const lows  = swings.filter(s => s.type === 'low').slice(-8);
+    if (highs.length < 2 || lows.length < 2) return null;
 
-    // ── BEARISH CHoCH: was bullish (HH/HL) → price breaks below a HL ──
-    if (highs.length >= 2) {
-      const hadHH = highs.some((h,i) => i>0 && h.price > highs[i-1].price);
-      if (hadHH) {
-        const sortedLows = [...lows].sort((a,b) => a.index - b.index);
-        for (let i = sortedLows.length - 1; i >= 1; i--) {
-          const targetLow = sortedLows[i-1]; // the HL that gets broken
-          // Find first candle AFTER the swing that closes BELOW it
-          for (let j = targetLow.index + 1; j < candles.length; j++) {
-            if (candles[j].close < targetLow.price) {
-              if (j >= candles.length - 80) { // within last 80 candles
-                const epoch = candles[j]?.epoch || (candles[j]?.time ? Math.floor(candles[j].time/1000) : null);
-                // OB = last GREEN candle at the swing HIGH before this move down
-                let obIndex = j - 1;
-                while (obIndex > targetLow.index && candles[obIndex].close < candles[obIndex].open) obIndex--;
-                candidates.push({
-                  type: 'BEARISH_CHOCH', side: 'SELL', level: targetLow.price,
-                  breakIndex: j, epoch, obCandleIndex: obIndex
-                });
-              }
-              break; // only first break per target
+    const candidates = [];
+
+    // ── BEARISH CHoCH ──
+    // Rule SMC: estructura BULLISH previa (últimos 3 highs/lows muestran HH+HL)
+    // → precio cierra DEBAJO del ÚLTIMO HL formado
+    // FIX: solo mirar el HL MÁS RECIENTE, no cualquier low histórico
+    const recentHighs = highs.slice(-4).sort((a,b)=>a.index-b.index);
+    const recentLows  = lows.slice(-4).sort((a,b)=>a.index-b.index);
+
+    const recentHHs = recentHighs.filter((h,i) => i>0 && h.price > recentHighs[i-1].price);
+    const priorStructBull = recentHHs.length >= 1; // al menos 1 HH reciente = estructura bullish
+
+    if (priorStructBull && recentLows.length >= 2) {
+      // Target: el HL más reciente ANTES del último high
+      // (el que se rompe hacia abajo = CHoCH bajista)
+      const lastHigh = recentHighs[recentHighs.length - 1];
+      const hlsBeforeLastHigh = recentLows.filter(l => l.index < lastHigh.index);
+      if (hlsBeforeLastHigh.length >= 1) {
+        const targetHL = hlsBeforeLastHigh[hlsBeforeLastHigh.length - 1]; // el HL más reciente antes del HH
+        // Buscar la primera vela DESPUÉS del HH que cierre POR DEBAJO del HL
+        for (let j = lastHigh.index + 1; j < candles.length; j++) {
+          if (candles[j].close < targetHL.price) {
+            const recency = candles.length - 1 - j;
+            if (recency <= 60) { // dentro de las últimas 60 velas
+              const epoch = candles[j]?.epoch || (candles[j]?.time ? Math.floor(candles[j].time/1000) : null);
+              let obIndex = j - 1;
+              while (obIndex > targetHL.index && candles[obIndex].close < candles[obIndex].open) obIndex--;
+              candidates.push({
+                type: 'BEARISH_CHOCH', side: 'SELL',
+                level: targetHL.price, breakIndex: j,
+                epoch, obCandleIndex: obIndex,
+                priority: candles.length - j // más reciente = mayor prioridad
+              });
             }
+            break;
           }
         }
       }
     }
 
-    // ── BULLISH CHoCH: was bearish (LH/LL) → price breaks above a LH ──
-    if (lows.length >= 2) {
-      const hadLL = lows.some((l,i) => i>0 && l.price < lows[i-1].price);
-      if (hadLL) {
-        const sortedHighs = [...highs].sort((a,b) => a.index - b.index);
-        for (let i = sortedHighs.length - 1; i >= 1; i--) {
-          const targetHigh = sortedHighs[i-1]; // the LH that gets broken
-          for (let j = targetHigh.index + 1; j < candles.length; j++) {
-            if (candles[j].close > targetHigh.price) {
-              if (j >= candles.length - 80) {
-                const epoch = candles[j]?.epoch || (candles[j]?.time ? Math.floor(candles[j].time/1000) : null);
-                // OB = last RED candle at the swing LOW before this move up
-                let obIndex = j - 1;
-                while (obIndex > targetHigh.index && candles[obIndex].close > candles[obIndex].open) obIndex--;
-                candidates.push({
-                  type: 'BULLISH_CHOCH', side: 'BUY', level: targetHigh.price,
-                  breakIndex: j, epoch, obCandleIndex: obIndex
-                });
-              }
-              break;
+    // ── BULLISH CHoCH ──
+    // Rule SMC: estructura BEARISH previa (LH+LL)
+    // → precio cierra ENCIMA del ÚLTIMO LH formado
+    const recentLLs = recentLows.filter((l,i) => i>0 && l.price < recentLows[i-1].price);
+    const priorStructBear = recentLLs.length >= 1; // al menos 1 LL reciente = estructura bearish
+
+    if (priorStructBear && recentHighs.length >= 2) {
+      const lastLow = recentLows[recentLows.length - 1];
+      const lhsBeforeLastLow = recentHighs.filter(h => h.index < lastLow.index);
+      if (lhsBeforeLastLow.length >= 1) {
+        const targetLH = lhsBeforeLastLow[lhsBeforeLastLow.length - 1]; // LH más reciente antes del LL
+        for (let j = lastLow.index + 1; j < candles.length; j++) {
+          if (candles[j].close > targetLH.price) {
+            const recency = candles.length - 1 - j;
+            if (recency <= 60) {
+              const epoch = candles[j]?.epoch || (candles[j]?.time ? Math.floor(candles[j].time/1000) : null);
+              let obIndex = j - 1;
+              while (obIndex > targetLH.index && candles[obIndex].close > candles[obIndex].open) obIndex--;
+              candidates.push({
+                type: 'BULLISH_CHOCH', side: 'BUY',
+                level: targetLH.price, breakIndex: j,
+                epoch, obCandleIndex: obIndex,
+                priority: candles.length - j
+              });
             }
+            break;
           }
         }
       }
@@ -2197,24 +2218,10 @@ const SMC = {
 
     if (!candidates.length) return null;
 
-    // ── Pick the MOST MEANINGFUL CHoCH ──
-    // Rule: prefer the most recent one that is NOT immediately contradicted by current price
-    // i.e. if market just broke bullish, don't return a bearish CHoCH from 5 candles ago
-    candidates.sort((a,b) => b.breakIndex - a.breakIndex);
+    // Elegir el CHoCH más reciente
+    candidates.sort((a,b) => a.priority - b.priority);
+    const best = candidates[0];
 
-    const currentPrice = candles[candles.length - 1].close;
-    const avgRange = this.getAvgRange(candles);
-
-    // Try to find the most recent CHoCH whose direction matches current price position
-    let best = candidates[0];
-    for (const c of candidates) {
-      if (c.side === 'BUY' && currentPrice > c.level) { best = c; break; } // bullish and price above the break
-      if (c.side === 'SELL' && currentPrice < c.level) { best = c; break; } // bearish and price below the break
-    }
-    // Fallback: if nothing matches, use most recent regardless
-    if (!best) best = candidates[0];
-
-    // Attach the OB candle epoch for reference
     if (best.obCandleIndex >= 0 && candles[best.obCandleIndex]) {
       const obc = candles[best.obCandleIndex];
       best.obEpoch = obc.epoch || (obc.time ? Math.floor(obc.time/1000) : null);
@@ -2277,28 +2284,46 @@ const SMC = {
 
   detectBOS(candles, swings, structure) {
     if (swings.length < 3 || candles.length < 5) return null;
-    const lastPrice = candles[candles.length - 1].close;
-    const last = candles[candles.length - 1];
 
+    // FIX: BOS = when price closes BEYOND the PREVIOUS swing high/low
+    // Not just the last candle vs last swing — need to find where the break actually occurred
     if (structure.trend === 'BULLISH') {
-      const highs = swings.filter(s => s.type === 'high').slice(-3);
-      if (highs.length >= 1) {
-        const swingHigh = highs[highs.length - 1];
-        if (lastPrice > swingHigh.price) {
-          const epoch = last?.epoch || (last?.time ? Math.floor(last.time/1000) : null);
-          return { type: 'BULLISH_BOS', side: 'BUY', level: swingHigh.price, epoch,
-            breakIndex: candles.length - 1 };
+      const highs = swings.filter(s => s.type === 'high').slice(-5);
+      if (highs.length >= 2) {
+        // Target: the previous swing high (second-to-last) — breaking it = BOS continuation
+        const targetHigh = highs[highs.length - 2]; // previous HH
+        // Find where price first broke above it
+        let breakIdx = -1;
+        for (let j = targetHigh.index + 1; j < candles.length; j++) {
+          if (candles[j].close > targetHigh.price) {
+            breakIdx = j;
+            break;
+          }
+        }
+        if (breakIdx > 0 && breakIdx >= candles.length - 50) {
+          const c = candles[breakIdx];
+          return { type: 'BULLISH_BOS', side: 'BUY', level: targetHigh.price,
+            epoch: c?.epoch || (c?.time ? Math.floor(c.time/1000) : null),
+            breakIndex: breakIdx };
         }
       }
     }
     if (structure.trend === 'BEARISH') {
-      const lows = swings.filter(s => s.type === 'low').slice(-3);
-      if (lows.length >= 1) {
-        const swingLow = lows[lows.length - 1];
-        if (lastPrice < swingLow.price) {
-          const epoch = last?.epoch || (last?.time ? Math.floor(last.time/1000) : null);
-          return { type: 'BEARISH_BOS', side: 'SELL', level: swingLow.price, epoch,
-            breakIndex: candles.length - 1 };
+      const lows = swings.filter(s => s.type === 'low').slice(-5);
+      if (lows.length >= 2) {
+        const targetLow = lows[lows.length - 2]; // previous LL
+        let breakIdx = -1;
+        for (let j = targetLow.index + 1; j < candles.length; j++) {
+          if (candles[j].close < targetLow.price) {
+            breakIdx = j;
+            break;
+          }
+        }
+        if (breakIdx > 0 && breakIdx >= candles.length - 50) {
+          const c = candles[breakIdx];
+          return { type: 'BEARISH_BOS', side: 'SELL', level: targetLow.price,
+            epoch: c?.epoch || (c?.time ? Math.floor(c.time/1000) : null),
+            breakIndex: breakIdx };
         }
       }
     }

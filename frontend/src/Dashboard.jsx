@@ -238,8 +238,10 @@ function drawChart(canvas, state) {
     ctx.fillStyle=color;ctx.font='bold 8px system-ui';ctx.textAlign='left'
     ctx.fillText(`${tag} ${lvl.level.toFixed(2)}`,lx+4,y+4)
   }
-  drawLvl(bos,C.text,'BOS M5'); drawLvl(choch,C.yellow,'CHoCH M5')
-  drawLvl(bosM15,'rgba(140,140,255,.9)','BOS M15'); drawLvl(chochM15,'rgba(255,200,60,.8)','CHoCH M15')
+  drawLvl(bos,  C.text,                   bos?.side==='BUY'?'BOS↑ M5':'BOS↓ M5')
+  drawLvl(choch, C.yellow,                choch?.type==='BULLISH_CHOCH'?'CHoCH↑ M5':'CHoCH↓ M5')
+  drawLvl(bosM15,   'rgba(140,140,255,.9)', bosM15?.side==='BUY'?'BOS↑ M15':'BOS↓ M15')
+  drawLvl(chochM15, 'rgba(255,200,60,.8)',  chochM15?.type==='BULLISH_CHOCH'?'CHoCH↑ M15':'CHoCH↓ M15')
 
   /* Swing labels */
   ;(structure.labels||[]).forEach(lb=>{
