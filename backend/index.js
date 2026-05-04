@@ -2890,19 +2890,25 @@ const SMC = {
       if (pullback.side === 'BUY'  && premiumDiscount === 'DISCOUNT') score += 5;
       if (pullback.side === 'SELL' && premiumDiscount === 'PREMIUM')  score += 5;
       if (m15Strong)        score += 4;
-      if (tripleConfluence) score += 4; // triple = bonus mayor
+      if (tripleConfluence) score += 4;
       if (choch)            score += 3;
       if (m15ChochFresh)    score += 4;
       if (pullback.confirmation === 'ENGULFING' || pullback.confirmation === 'PIN_BAR') score += 3;
       if (pullback.confirmation === 'CHOCH_OB') score += 5;
       if (pullback.zone?.isStructureOB) score += 3;
-      // FIX: eliminar penalización inconsistente de m15m5Aligned counter-trend
-      // (ya no puede darse porque opDir siempre sigue H1)
       score = Math.min(score, 100);
 
       const trendCtx = m15ChochFresh
         ? `CHoCH M15(${state.chochM15?.side}) + M5 OB`
         : `H1(${opDir})+M15(${structureM15.trend})`;
+
+      // ✅ FIX CRÍTICO: signals.push faltaba — MTF_CONFLUENCE nunca generaba señales
+      signals.push({
+        model: 'MTF_CONFLUENCE',
+        baseScore: score,
+        pullback,
+        reason: `${trendCtx} + OB ${pullback.confirmation || ''} ${premiumDiscount !== 'EQUILIBRIUM' ? '+ ' + premiumDiscount : ''}`.trim()
+      });
     }
     
     // ── CHOCH_PULLBACK: CHoCH en M5 + retroceso al OB ──
