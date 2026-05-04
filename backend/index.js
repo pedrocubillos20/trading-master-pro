@@ -195,11 +195,12 @@ const SIGNAL_CONFIG = {
   ANALYSIS_COOLDOWN: 6000,  // FIX: 6s — era 4s, demasiado agresivo causaba CPU spikes en Railway
   
   // Cooldown después de cerrar una señal antes de abrir otra
-  POST_SIGNAL_COOLDOWN: 480000, // FIX 8: 8 minutos — evita sobre-operar el mismo setup
-  // Era 5 min, demasiado agresivo en mercados laterales
-  
-  // Cooldown específico para Boom/Crash
-  POST_SIGNAL_COOLDOWN_BOOM_CRASH: 600000, // 10 minutos para Boom/Crash
+  // 5 min = permite 2-3 operaciones por activo en una sesión de 8h
+  // sin abrir operaciones basura consecutivas
+  POST_SIGNAL_COOLDOWN: 300000, // 5 minutos
+
+  // Boom/Crash: más tiempo porque los spikes son menos frecuentes
+  POST_SIGNAL_COOLDOWN_BOOM_CRASH: 600000, // 10 minutos
   
   // ═══════════════════════════════════════════════════════════════
   // MTF CONFLUENCE - AHORA REQUERIDO PARA CALIDAD
@@ -1033,6 +1034,11 @@ for (const symbol of MY_ASSETS) {
 // PERSISTENCIA SUPABASE — carga historial al arrancar, guarda en tiempo real
 // Tabla requerida: trading_signals (ver README.md para SQL)
 // ════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════
+// LIMPIEZA DE SEÑALES HUÉRFANAS al cargar historial
+// Una señal "huérfana" es PENDING en Supabase pero el servidor no la tiene en memoria
+// Esto causa el bug: "ACTIVAS: 1 pero no se ve en el gráfico"
+// ════════════════════════════════════════════════════════════════════
 async function loadHistoryFromSupabase() {
   if (!supabase) return;
   try {
@@ -1084,6 +1090,26 @@ async function loadHistoryFromSupabase() {
     // Actualizar ID counter
     const maxId = Math.max(...signalHistory.map(s => parseInt(s.id)||0), 0);
     signalIdCounter = maxId + 1;
+
+    // FIX "señal abierta pero no activa": restaurar lockedSignal en cada asset
+    // Al reiniciar, assetData está vacío pero signalHistory tiene las PENDING
+    // Sin esto: stats dice "ACTIVAS: 1" pero el gráfico no muestra nada
+    const pendingSignals = signalHistory.filter(s => s.status === 'PENDING');
+    const maxAge = 4 * 60 * 60 * 1000; // 4 horas máximo
+    pendingSignals.forEach(s => {
+      const age = Date.now() - s.timestamp;
+      if (age > maxAge) {
+        // Señal muy vieja → expirar (el mercado ya la cerró)
+        s.status = 'EXPIRED';
+        updateSignalStatusInSupabase(s.id, 'EXPIRED', null, 0).catch(() => {});
+        stats.pending = Math.max(0, stats.pending - 1);
+        console.log(`⏰ Señal #${s.id} expirada (${Math.round(age/60000)}min sin cerrar)`);
+      } else if (assetData[s.symbol]) {
+        // Restaurar en el asset para que el gráfico la muestre
+        assetData[s.symbol].lockedSignal = { ...s };
+        console.log(`🔄 Señal #${s.id} restaurada en ${s.symbol} (${s.action} @ ${s.entry})`);
+      }
+    });
 
     console.log(`✅ Historial cargado: ${signalHistory.length} señales | Wins: ${stats.wins} | Losses: ${stats.losses} | WR: ${stats.total > 0 ? Math.round(stats.wins/stats.total*100) : 0}%`);
   } catch(e) {
