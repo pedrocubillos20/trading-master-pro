@@ -3004,33 +3004,8 @@ const SMC = {
     
     const last3 = candlesM5.slice(-3);
     // ═══════════════════════════════════════════════════════════════
-    // LIQUIDITY_SWEEP - DESACTIVADO (No está en los 12 modelos oficiales)
-    // Usar LIQUIDITY_GRAB en su lugar
-    // ═══════════════════════════════════════════════════════════════
-    /*
-    for (const level of liquidityLevels) {
-      const swept = last3.some(c => {
-        if (level.type === 'EQUAL_HIGHS') return c.high > level.price && c.close < level.price;
-        if (level.type === 'EQUAL_LOWS') return c.low < level.price && c.close > level.price;
-        return false;
-      });
-      
-      if (swept && pullback) {
-        const side = level.type === 'EQUAL_HIGHS' ? 'SELL' : 'BUY';
-        if (pullback.side === side) {
-          let score = 78;
-          if (mtfConfluence) score = 85;
-          signals.push({
-            model: 'LIQUIDITY_SWEEP',
-            baseScore: score,
-            pullback,
-            reason: `Sweep ${level.type}${mtfConfluence ? ' + MTF' : ''}`
-          });
-        }
-      }
-    }
-    */
-    
+    // LIQUIDITY_SWEEP — ELIMINADO (reemplazado por LIQUIDITY_GRAB)
+
     // v24.0: BOS_CONTINUATION requiere MTF para mejor calidad
     if (bos && pullback && bos.side === pullback.side) {
       // Verificar que Premium/Discount sea correcto
@@ -3255,71 +3230,7 @@ const SMC = {
         }
       }
     }
-    // ═══════════════════════════════════════════════════════════════
-    /*
-    for (const zone of demandZones) {
-      const touchingZone = lastCandle.low <= zone.high * 1.002 && lastCandle.low >= zone.low * 0.998;
-      const closeAboveZone = lastCandle.close > zone.mid;
-      const wickSize = lastCandle.close - lastCandle.low;
-      const bodySize = Math.abs(lastCandle.close - lastCandle.open);
-      const hasRejection = wickSize > bodySize * 0.3;
-      
-      if (touchingZone && closeAboveZone && hasRejection) {
-        let score = 60;
-        if (premiumDiscount === 'DISCOUNT') score += 5;
-        if (mtfConfluence && structureH1.trend === 'BULLISH') score += 8;
-        if (wickSize > bodySize * 0.5) score += 3;
-        
-        const zonePb = {
-          side: 'BUY',
-          entry: lastCandle.close,
-          stop: zone.low - avgRange * 0.5,
-          tp1: lastCandle.close + avgRange * 1.5,
-          tp2: lastCandle.close + avgRange * 2.5,
-          tp3: lastCandle.close + avgRange * 4
-        };
-        
-        signals.push({
-          model: 'ZONE_TOUCH',
-          baseScore: score,
-          pullback: zonePb,
-          reason: `Zona demanda${premiumDiscount === 'DISCOUNT' ? ' + DISCOUNT' : ''}${mtfConfluence ? ' + MTF' : ''}`
-        });
-      }
-    }
-    
-    for (const zone of supplyZones) {
-      const touchingZone = lastCandle.high >= zone.low * 0.998 && lastCandle.high <= zone.high * 1.002;
-      const closeBelowZone = lastCandle.close < zone.mid;
-      const wickSize = lastCandle.high - lastCandle.close;
-      const bodySize = Math.abs(lastCandle.close - lastCandle.open);
-      const hasRejection = wickSize > bodySize * 0.3;
-      
-      if (touchingZone && closeBelowZone && hasRejection) {
-        let score = 60;
-        if (premiumDiscount === 'PREMIUM') score += 5;
-        if (mtfConfluence && structureH1.trend === 'BEARISH') score += 8;
-        if (wickSize > bodySize * 0.5) score += 3;
-        
-        const zonePb = {
-          side: 'SELL',
-          entry: lastCandle.close,
-          stop: zone.high + avgRange * 0.5,
-          tp1: lastCandle.close - avgRange * 1.5,
-          tp2: lastCandle.close - avgRange * 2.5,
-          tp3: lastCandle.close - avgRange * 4
-        };
-        
-        signals.push({
-          model: 'ZONE_TOUCH',
-          baseScore: score,
-          pullback: zonePb,
-          reason: `Zona supply${premiumDiscount === 'PREMIUM' ? ' + PREMIUM' : ''}${mtfConfluence ? ' + MTF' : ''}`
-        });
-      }
-    }
-    */
-    
+    // ═══════════════════════════════════════════
     // FVG_ENTRY: must align with opDir (H1+M15), not just M5
     for (const fvg of fvgZones) {
       const fvgSide = fvg.side === 'BUY' ? 'BUY' : 'SELL';
@@ -3342,144 +3253,8 @@ const SMC = {
     }
     
     // ═══════════════════════════════════════════
-    // NUEVOS MODELOS SMC v14.0
+    // MODELOS SMC AVANZADOS v24.3
     // ═══════════════════════════════════════════
-    
-    // OB_ENTRY - DESACTIVADO (genera falsas señales en contra de la tendencia H1)
-    // Usar MTF_CONFLUENCE o CHOCH_PULLBACK que requieren confluencia completa
-    /*
-    if (pullback && (pullback.type === 'DEMAND_ZONE' || pullback.type === 'SUPPLY_ZONE')) {
-      const pdCorrect = (pullback.side === 'BUY' && premiumDiscount === 'DISCOUNT') ||
-                        (pullback.side === 'SELL' && premiumDiscount === 'PREMIUM');
-      if (mtfConfluence || pdCorrect) {
-        let score = 76;
-        if (pdCorrect) score += 6;
-        if (mtfConfluence) score += 8;
-        signals.push({ model: 'OB_ENTRY', baseScore: score, pullback,
-          reason: `Order Block ${pullback.side}${pdCorrect ? ' + P/D' : ''}${mtfConfluence ? ' + MTF' : ''}` });
-      }
-    }
-    */
-    
-    // ═══════════════════════════════════════════════════════════════
-    // STRUCTURE_BREAK - DESACTIVADO (No está en los 12 modelos oficiales)
-    // Usar BOS_CONTINUATION en su lugar
-    // ═══════════════════════════════════════════════════════════════
-    /*
-    if (bos && !pullback) {
-      const breakEntry = {
-        side: bos.side,
-        entry: bos.level,
-        stop: bos.side === 'BUY' ? bos.level - avgRange * 1.5 : bos.level + avgRange * 1.5,
-        tp1: bos.side === 'BUY' ? bos.level + avgRange * 1.5 : bos.level - avgRange * 1.5,
-        tp2: bos.side === 'BUY' ? bos.level + avgRange * 2.5 : bos.level - avgRange * 2.5,
-        tp3: bos.side === 'BUY' ? bos.level + avgRange * 4 : bos.level - avgRange * 4
-      };
-      
-      let score = 70;
-      if (mtfConfluence) score += 5;
-      
-      signals.push({
-        model: 'STRUCTURE_BREAK',
-        baseScore: score,
-        pullback: breakEntry,
-        reason: `${bos.type} directo${mtfConfluence ? ' + MTF' : ''}`
-      });
-    }
-    */
-    
-    // ═══════════════════════════════════════════════════════════════
-    // REVERSAL_PATTERN - DESACTIVADO (No está en los 12 modelos oficiales)
-    // ═══════════════════════════════════════════════════════════════
-    /*
-    if (choch && structureM5.strength >= 60) {
-      const recentCandles = candlesM5.slice(-5);
-      const hasMinorRetracement = recentCandles.some(c => {
-        if (choch.side === 'BUY') return c.low < choch.level;
-        return c.high > choch.level;
-      });
-      
-      if (hasMinorRetracement && !pullback) {
-        const revEntry = {
-          side: choch.side,
-          entry: lastCandle.close,
-          stop: choch.side === 'BUY' ? lastCandle.close - avgRange * 2 : lastCandle.close + avgRange * 2,
-          tp1: choch.side === 'BUY' ? lastCandle.close + avgRange * 1.5 : lastCandle.close - avgRange * 1.5,
-          tp2: choch.side === 'BUY' ? lastCandle.close + avgRange * 2.5 : lastCandle.close - avgRange * 2.5,
-          tp3: choch.side === 'BUY' ? lastCandle.close + avgRange * 4 : lastCandle.close - avgRange * 4
-        };
-        
-        let score = 71;
-        if (mtfConfluence || structureH1.trend === choch.side.replace('BUY', 'BULLISH').replace('SELL', 'BEARISH')) score += 5;
-        
-        signals.push({
-          model: 'REVERSAL_PATTERN',
-          baseScore: score,
-          pullback: revEntry,
-          reason: `${choch.type} + Retroceso${mtfConfluence ? ' + MTF' : ''}`
-        });
-      }
-    }
-    */
-    
-    // ═══════════════════════════════════════════════════════════════
-    // PREMIUM_DISCOUNT - DESACTIVADO (No está en los 12 modelos oficiales)
-    // ═══════════════════════════════════════════════════════════════
-    /*
-    if (!pullback && structureM5.trend !== 'NEUTRAL') {
-      const inDiscount = premiumDiscount === 'DISCOUNT';
-      const inPremium = premiumDiscount === 'PREMIUM';
-      const trendMatch = (structureM5.trend === 'BULLISH' && inDiscount) ||
-                         (structureM5.trend === 'BEARISH' && inPremium);
-      
-      if (trendMatch) {
-        const pdEntry = {
-          side: inDiscount ? 'BUY' : 'SELL',
-          entry: lastCandle.close,
-          stop: inDiscount ? lastCandle.close - avgRange * 2 : lastCandle.close + avgRange * 2,
-          tp1: inDiscount ? lastCandle.close + avgRange * 1.5 : lastCandle.close - avgRange * 1.5,
-          tp2: inDiscount ? lastCandle.close + avgRange * 2.5 : lastCandle.close - avgRange * 2.5,
-          tp3: inDiscount ? lastCandle.close + avgRange * 4 : lastCandle.close - avgRange * 4
-        };
-        
-        let score = 70;
-        if (mtfConfluence) score += 6;
-        
-        signals.push({
-          model: 'PREMIUM_DISCOUNT',
-          baseScore: score,
-          pullback: pdEntry,
-          reason: `M5 ${structureM5.trend} en ${premiumDiscount}${mtfConfluence ? ' + MTF' : ''}`
-        });
-      }
-    }
-    */
-    
-    // v13.2: ORDER_FLOW DESACTIVADO - Generaba demasiadas señales falsas
-    // Si quieres reactivarlo, descomenta el bloque siguiente
-    /*
-    if (orderFlow.momentum !== 'NEUTRAL' && orderFlow.strength >= 50 && pullback) {
-      const flowMatch = (orderFlow.momentum === 'BULLISH' && pullback.side === 'BUY') ||
-                        (orderFlow.momentum === 'BEARISH' && pullback.side === 'SELL');
-      
-      const h1Supports = !h1Loaded || structureH1.trend === orderFlow.momentum || structureH1.trend === 'NEUTRAL';
-      
-      if (flowMatch && h1Supports) {
-        signals.push({
-          model: 'ORDER_FLOW',
-          baseScore: 70,
-          pullback,
-          reason: `Flow ${orderFlow.momentum} (${orderFlow.strength.toFixed(0)}%)`
-        });
-      }
-    }
-    */
-    
-    // ═══════════════════════════════════════════
-    // MODELOS SMC AVANZADOS v14.3
-    // ═══════════════════════════════════════════
-    
-    // BREAKER_BLOCK — ELIMINADO (entradas fuera del OB, SL demasiado amplio)
     
     // 2. INDUCEMENT — FIX 5: wick ratio mínimo 0.7 (antes 0.5 = demasiado permisivo)
     // + H1 DEBE estar alineado (antes solo sumaba +5, ahora es requisito)

@@ -162,37 +162,84 @@ function drawChart(canvas, state) {
     ctx.beginPath();ctx.moveTo(ML,py(p));ctx.lineTo(ML+CW,py(p));ctx.stroke()
   }
 
-  /* OB Zones */
+  /* OB Zones — active zones extend to current candle, mitigated shown briefly */
   ;[
-    {zones:demandZones,fill:'rgba(63,185,80,.13)',stroke:C.green,label:'OB demanda'},
-    {zones:supplyZones,fill:'rgba(255,107,107,.13)',stroke:C.red,label:'OB oferta'}
-  ].forEach(({zones,fill,stroke,label})=>{
-    zones.filter(z=>!z.mitigated).forEach(z=>{
+    {zones:demandZones, fillA:'rgba(63,185,80,.18)', fillS:'rgba(63,185,80,.06)',
+     stroke:C.green, strokeS:'rgba(63,185,80,.25)', label:'OB demanda'},
+    {zones:supplyZones, fillA:'rgba(255,107,107,.18)', fillS:'rgba(255,107,107,.06)',
+     stroke:C.red,   strokeS:'rgba(255,107,107,.25)', label:'OB oferta'}
+  ].forEach(({zones,fillA,fillS,stroke,strokeS,label})=>{
+    zones.forEach(z=>{
       const zi=z.index-visOff
-      const x1=zi>=0?Math.max(ML,cx(zi)-SL/2):ML, x2=ML+CW
+      if(zi<-5||zi>n+2)return // not in view
+      const x1=zi>=0?Math.max(ML,cx(zi)-SL/2):ML
+      const x2=z.mitigated
+        ? Math.min(ML+CW, x1+Math.max(60,(zi+15)*SL)) // mitigated: extend 15 candles
+        : ML+CW                                          // active: extend to right edge
       if(x1>=x2)return
       const y1=py(z.high),y2=py(z.low)
-      ctx.fillStyle=fill;ctx.fillRect(x1,y1,x2-x1,y2-y1)
-      ctx.strokeStyle=stroke;ctx.lineWidth=1.5;ctx.strokeRect(x1,y1,x2-x1,y2-y1)
-      ctx.fillStyle=stroke;ctx.font='bold 9px system-ui';ctx.textAlign='left'
-      ctx.fillText(z.isStructureOB?label+' ★':label,x1+4,y1+11)
+      const isMit=z.mitigated
+      const isStruc=z.isStructureOB
+
+      // Fill
+      ctx.fillStyle=isMit?fillS:fillA
+      ctx.fillRect(x1,y1,x2-x1,y2-y1)
+
+      // Border — structural OBs get thicker border
+      ctx.strokeStyle=isMit?strokeS:stroke
+      ctx.lineWidth=isStruc?2:1.5
+      if(isStruc&&!isMit){
+        ctx.setLineDash([])
+        ctx.strokeRect(x1,y1,x2-x1,y2-y1)
+        // Highlight left edge
+        ctx.strokeStyle=stroke; ctx.lineWidth=3
+        ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x1,y2);ctx.stroke()
+      } else {
+        ctx.setLineDash(isMit?[3,3]:[])
+        ctx.strokeRect(x1,y1,x2-x1,y2-y1)
+        ctx.setLineDash([])
+      }
+
+      // Label
+      if(!isMit){
+        const lbl=isStruc?label+' ★':label
+        ctx.fillStyle=stroke;ctx.font=`${isStruc?'bold ':''  }9px system-ui`;ctx.textAlign='left'
+        ctx.fillText(lbl,x1+4,y1+11)
+        // Price label on right edge
+        if(x2>=ML+CW-60){
+          ctx.fillStyle=stroke+'cc';ctx.font='8px system-ui'
+          ctx.fillText(z.high.toFixed(2),ML+CW+2,y1+4)
+          ctx.fillText(z.low.toFixed(2), ML+CW+2,y2+4)
+        }
+      }
     })
   })
 
-  /* Structure lines */
+  /* Structure lines — start from BREAK POINT, not full width */
   const drawLvl=(lvl,color,tag)=>{
     if(!lvl||lvl.level==null)return
     const bi=(lvl.breakIndex||0)-visOff
-    const sx=bi>=0?Math.max(ML,cx(bi)):ML
+    if(bi<0||bi>=n)return // not visible in current view
+    const sx=cx(bi) // start exactly at the break candle
+    const ex=Math.min(ML+CW, cx(Math.min(n-1, bi+30))) // max 30 candles forward = contextual
     if(sx>ML+CW)return
-    ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.setLineDash([8,5])
-    ctx.beginPath();ctx.moveTo(sx,py(lvl.level));ctx.lineTo(ML+CW,py(lvl.level));ctx.stroke()
+    const y=py(lvl.level)
+    // Line from break point
+    ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.setLineDash([6,4])
+    ctx.beginPath();ctx.moveTo(sx,y);ctx.lineTo(ex,y);ctx.stroke()
     ctx.setLineDash([])
-    ctx.fillStyle=color;ctx.font='bold 8px system-ui';ctx.textAlign='right'
-    ctx.fillText(tag,ML+CW-3,py(lvl.level)-3)
+    // Small circle at break point
+    ctx.fillStyle=color;ctx.beginPath();ctx.arc(sx,y,3,0,Math.PI*2);ctx.fill()
+    // Label pill near the end of the line
+    const lw=tag.length*5.5+lvl.level.toFixed(2).length*5+14
+    const lx=Math.min(ex+2, ML+CW-lw-2)
+    ctx.fillStyle=color+'22';ctx.strokeStyle=color;ctx.lineWidth=1
+    ctx.beginPath();ctx.roundRect(lx,y-8,lw,16,3);ctx.fill();ctx.stroke()
+    ctx.fillStyle=color;ctx.font='bold 8px system-ui';ctx.textAlign='left'
+    ctx.fillText(`${tag} ${lvl.level.toFixed(2)}`,lx+4,y+4)
   }
   drawLvl(bos,C.text,'BOS M5'); drawLvl(choch,C.yellow,'CHoCH M5')
-  drawLvl(bosM15,'rgba(160,160,255,.8)','BOS M15'); drawLvl(chochM15,'rgba(255,220,80,.7)','CHoCH M15')
+  drawLvl(bosM15,'rgba(140,140,255,.9)','BOS M15'); drawLvl(chochM15,'rgba(255,200,60,.8)','CHoCH M15')
 
   /* Swing labels */
   ;(structure.labels||[]).forEach(lb=>{
