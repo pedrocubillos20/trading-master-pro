@@ -2834,17 +2834,26 @@ const SMC = {
       })()
     );
     // FIX 3: m15m5Aligned fue el origen de los BUY contra H1 BEARISH.
-    // M15+M5 BULLISH cuando H1 BEARISH = PULLBACK dentro de tendencia bajista, NO reversión.
-    // Se elimina como override de h1m15Aligned. Solo vale si sameDirection o m15ChochOverride.
-    const m15m5Aligned = m15Loaded &&
-      structureM15.trend === structureM5.trend &&
+    // Se mantiene solo cuando M15+M5+BOS todos confirman la misma dirección.
+    // La diferencia clave vs el bug anterior: requiere BOS confirmado.
+
+    // ── NUEVA CONDICIÓN: M15 + M5 + BOS alineados (contra H1) ──
+    // Caso exacto: H1 BULL + M15 BEAR(76%) + M5 BEAR(74%) + BOS↓
+    // En SMC esto es: pullback dentro de H1 bullish → SHORT válido
+    // Con threshold de score más alto (90%) por ser counter-H1
+    const m15m5BosAligned = m15Loaded &&
       structureM15.trend !== 'NEUTRAL' &&
-      structureM5.trend !== 'NEUTRAL' &&
-      // CRÍTICO: solo si va en la misma dirección que H1
-      structureM15.trend === structureH1.trend;
-    // h1m15Aligned: requiere H1 alineado — se elimina m15m5Aligned como override independiente
+      structureM5.trend  !== 'NEUTRAL' &&
+      structureM15.trend === structureM5.trend &&       // M15 y M5 misma dirección
+      structureM15.strength >= 65 &&                    // M15 fuerte (≥65%)
+      structureM5.strength  >= 60 &&                    // M5 confirma (≥60%)
+      bos !== null &&
+      bos.side === (structureM15.trend === 'BEARISH' ? 'SELL' : 'BUY') && // BOS confirma
+      structureM15.trend !== structureH1.trend;         // SOLO cuando H1 diverge
+
     const h1m15Aligned = h1Loaded && m15Loaded && (
       sameDirection || h1StrongM15Neutral || m15ChochOverride ||
+      m15m5BosAligned || // M15+M5+BOS alineados = estructura clara aunque H1 diverge
       // M5 CHoCH+BOS solo si la dirección coincide con H1
       (choch !== null && bos !== null &&
        bos.side === choch.side &&
@@ -2861,7 +2870,7 @@ const SMC = {
     const h1VeryStrongM5Confirms = structureH1.strength >= 70 &&
       structureH1.trend !== 'NEUTRAL' &&
       structureM5.trend === structureH1.trend; // M5 confirma H1
-    const marketReady = h1m15Aligned && h1Strong && (m15Strong || m15ChochOverride || h1VeryStrongM5Confirms);
+    const marketReady = h1m15Aligned && h1Strong && (m15Strong || m15ChochOverride || h1VeryStrongM5Confirms || m15m5BosAligned);
 
     // ── EXCEPCIÓN: CHoCH en M5/M15 cuando el mercado cambia de dirección ──
     // Caso 1: M15 NEUTRAL + M5 CHoCH + BOS = transición de tendencia
@@ -2897,43 +2906,38 @@ const SMC = {
          bos.side === choch.side) // CHoCH + BOS confirm same new direction
       );
 
-    // ── signals array and minScore — declared HERE, after all prereqs are defined ──
+    // ── signals array, minScore, opDir ──
     const signals = [];
-    const isCounterTrend = m5ChochReversal &&
-      choch && choch.side !== (structureH1.trend === 'BULLISH' ? 'BUY' : 'SELL');
-    // FIX: Counter-trend trades son los más perdedores — exigir 92%
-    // Trades alineados con H1 usan el MIN_SCORE global (85)
+
+    // opDir: dirección operativa con prioridad clara
+    // 1. CHoCH M15 fresco → dirección del CHoCH M15
+    // 2. M15+M5+BOS alineados contra H1 → dirección de M15 (setup counter-H1 con evidencia fuerte)
+    // 3. M5 CHoCH con M15 neutral → dirección CHoCH M5
+    // 4. DEFAULT: siempre H1
+    const opDir = m15ChochFresh
+      ? (state.chochM15.side === 'BUY' ? 'BULLISH' : 'BEARISH')
+      : m15m5BosAligned
+        ? (structureM15.trend === 'BEARISH' ? 'BEARISH' : 'BULLISH')
+        : (m5ChochReversal && choch && structureM15.trend === 'NEUTRAL')
+          ? (choch.side === 'BUY' ? 'BULLISH' : 'BEARISH')
+          : structureH1.trend; // DEFAULT
+    const opSide = opDir === 'BULLISH' ? 'BUY' : 'SELL';
+
+    const isCounterTrend = opDir !== structureH1.trend && structureH1.trend !== 'NEUTRAL';
+    // Counter-H1 con BOS: 90%; Counter-H1 sin BOS: 92%; Con-tendencia: 85
     const minScore = isCounterTrend
-      ? 92   // Counter-H1: solo si hay evidencia muy fuerte
+      ? (m15m5BosAligned ? 90 : 92)
       : Math.max(SIGNAL_CONFIG.MIN_SCORE, 85);
 
     if (!marketReady && !m5ChochReversal) {
-      // Mercado no está claro: H1 y M15 no alineados → solo WAIT
       return {
-        action: 'WAIT',
-        score: 0,
-        model: 'WAIT',
+        action: 'WAIT', score: 0, model: 'WAIT',
         reason: `Esperando alineación H1(${structureH1.trend})+M15(${structureM15.trend})`,
-        analysis: {
-          structureM5: structureM5.trend,
-          structureH1: structureH1.trend,
-          structureM15: structureM15.trend,
-          mtfConfluence,
-          premiumDiscount,
-          orderFlow: orderFlow.momentum
-        }
+        analysis: { structureM5: structureM5.trend, structureH1: structureH1.trend,
+          structureM15: structureM15.trend, mtfConfluence, premiumDiscount,
+          orderFlow: orderFlow.momentum }
       };
     }
-
-    // FIX 7: opDir SIEMPRE sigue H1 salvo CHoCH confirmado en M15
-    // BUG raíz: m15m5Aligned && !sameDirection permitía BUY cuando H1=BEARISH
-    // Esto generó los trades perdedores #1,3,4,5 del historial
-    const opDir = m15ChochFresh
-      ? (state.chochM15.side === 'BUY' ? 'BULLISH' : 'BEARISH')
-      : (m5ChochReversal && choch && structureM15.trend === 'NEUTRAL')
-        ? (choch.side === 'BUY' ? 'BULLISH' : 'BEARISH') // solo si M15 neutral
-        : structureH1.trend; // DEFAULT: siempre seguir H1
-    const opSide = opDir === 'BULLISH' ? 'BUY' : 'SELL';
 
     // MTF_CONFLUENCE — exige que pullback coincida con opDir (= H1)
     if (pullback && pullback.side === opSide) {
