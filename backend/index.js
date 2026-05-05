@@ -219,35 +219,35 @@ const SIGNAL_CONFIG = {
   MAX_PENDING_TOTAL: 3,       // 1 por par × 3 pares = máximo 3 abiertas
   MAX_PENDING_PER_ASSET: 1,   // Máximo 1 señal abierta por par (Step, Oro, V100 son independientes)
 
-  // Horas de operación por plan - en UTC
-  // Horario base (todos los planes): 6AM-2PM Colombia = 11:00-19:00 UTC
-  // Horario nocturno (Premium/Elite): 8:30PM-1AM Colombia = 01:30-06:00 UTC
+  // Horas de operación en UTC (Colombia = UTC-5)
+  // Sesión diurna:  7:00 AM - 1:00 PM Colombia = 12:00 - 18:00 UTC
+  // Sesión nocturna: 8:30 PM - 1:00 AM Colombia = 01:30 - 06:00 UTC
   TRADING_HOURS: {
-    // Horario base para TODOS los planes
     base: {
-      start: 11,    // 11:00 UTC (6:00 AM Colombia)
-      end: 19       // 19:00 UTC (2:00 PM Colombia)
+      start: 12,    // 12:00 UTC (7:00 AM Colombia)
+      end: 18       // 18:00 UTC (1:00 PM Colombia)
     },
-    // Horario nocturno adicional SOLO para Premium y Elite
     night: {
       start: 1.5,   // 01:30 UTC (8:30 PM Colombia)
       end: 6        // 06:00 UTC (1:00 AM Colombia)
     }
-  }
+  },
+  // Límite diario de señales por activo (0 = sin límite)
+  MAX_DAILY_SIGNALS_PER_ASSET: 0
 };
 
 // Función para verificar si estamos en horario de trading
-// Synthetic indices (Step, V100) operan 24/7 — siempre activos
+// Sesión diurna:   7:00 AM - 1:00 PM Colombia (12:00-18:00 UTC)
+// Sesión nocturna: 8:30 PM - 1:00 AM Colombia (01:30-06:00 UTC)
 function isInTradingHours(plan = 'free') {
-  // Elite/Premium: 24/7 — synthetic indices no tienen horario fijo
-  if (plan === 'premium' || plan === 'elite') return true;
-
   const now = new Date();
   const utcHour = now.getUTCHours() + now.getUTCMinutes() / 60;
-  const baseStart = SIGNAL_CONFIG.TRADING_HOURS.base.start;
-  const baseEnd   = SIGNAL_CONFIG.TRADING_HOURS.base.end;
+  const { base, night } = SIGNAL_CONFIG.TRADING_HOURS;
 
-  return utcHour >= baseStart && utcHour < baseEnd;
+  const inDaytime = utcHour >= base.start && utcHour < base.end;
+  const inNight   = utcHour >= night.start && utcHour < night.end;
+
+  return inDaytime || inNight;
 }
 
 const app = express();
@@ -4788,13 +4788,11 @@ function analyzeAsset(symbol) {
   
   // ═══════════════════════════════════════════
   // FILTRO 2: Verificar horas de trading
-  // Horario base (todos): 6AM-2PM Colombia
-  // Horario nocturno (Premium/Elite): 8:30PM-1AM Colombia
+  // Sesión diurna:   7:00 AM - 1:00 PM Colombia
+  // Sesión nocturna: 8:30 PM - 1:00 AM Colombia
   // ═══════════════════════════════════════════
-  // Usamos plan 'elite' para generar señales en ambos horarios
-  // El frontend filtrará según el plan del usuario
-  if (!isInTradingHours('elite')) {
-    // Fuera de horario - solo analizar, no generar señales
+  if (!isInTradingHours()) {
+    // Fuera de horario — analizar sin generar señales
     const signal = SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
     data.signal = signal;
     return;
@@ -4931,17 +4929,20 @@ function analyzeAsset(symbol) {
     return;
   }
 
-  // ── LÍMITE DIARIO: máximo 2 señales por activo por día ──
-  // Previene over-trading y quema de cuenta
+  // ── LÍMITE DIARIO (informativo, sin bloqueo) ──
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
   const todaySignals = signalHistory.filter(s =>
     s.symbol === symbol &&
     new Date(s.timestamp) >= todayStart
   ).length;
-  if (todaySignals >= 2) {
-    console.log(`⏸️ [${config.shortName}] Límite diario alcanzado (${todaySignals}/2) — No más señales hoy`);
+  const maxDaily = SIGNAL_CONFIG.MAX_DAILY_SIGNALS_PER_ASSET;
+  if (maxDaily > 0 && todaySignals >= maxDaily) {
+    console.log(`⏸️ [${config.shortName}] Límite diario alcanzado (${todaySignals}/${maxDaily}) — No más señales hoy`);
     return;
+  }
+  if (todaySignals > 0) {
+    console.log(`📊 [${config.shortName}] Señales hoy: ${todaySignals} (sin límite activo)`);
   }
   
   // ═══════════════════════════════════════════════════════════════
