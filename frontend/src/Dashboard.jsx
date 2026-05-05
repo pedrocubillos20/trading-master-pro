@@ -749,56 +749,6 @@ function HistorialPanel({signals}){
   )
 }
 
-function ElisaChat({symbol,onClose}){
-  const[msgs,setMsgs]=useState([{from:'elisa',text:'¡Hola! Soy Elisa 💜 ¿Qué quieres saber del mercado?'}])
-  const[input,setInput]=useState('')
-  const[loading,setLoading]=useState(false)
-  const endRef=useRef(null)
-  useEffect(()=>endRef.current?.scrollIntoView({behavior:'smooth'}),[msgs])
-  const send=async()=>{
-    if(!input.trim()||loading)return
-    const q=input.trim();setInput('');setLoading(true)
-    setMsgs(m=>[...m,{from:'user',text:q}])
-    try{
-      const r=await fetch(`${API_URL}/api/ai/chat`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,symbol})})
-      const d=await r.json();setMsgs(m=>[...m,{from:'elisa',text:d.answer||'Sin respuesta'}])
-    }catch{setMsgs(m=>[...m,{from:'elisa',text:'Error de conexión 😔'}])}
-    setLoading(false)
-  }
-  return(
-    <div style={{position:'fixed',right:20,bottom:80,width:'min(320px,90vw)',height:460,
-      background:C.bg1,border:`1px solid ${C.border}`,borderRadius:12,
-      display:'flex',flexDirection:'column',zIndex:300,boxShadow:'0 20px 60px #00000090'}}>
-      <div style={{padding:'11px 15px',borderBottom:`1px solid ${C.border}`,display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0}}>
-        <div style={{display:'flex',alignItems:'center',gap:8}}>
-          <div style={{width:30,height:30,borderRadius:'50%',background:'linear-gradient(135deg,#0d4f3c,#1a6b52)',
-            border:`1px solid ${C.teal}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:15}}>💜</div>
-          <div><div style={{fontSize:13,fontWeight:700,color:C.teal}}>ELISA IA</div>
-          <div style={{fontSize:10,color:C.muted}}>Asistente SMC</div></div>
-        </div>
-        <button onClick={onClose} style={{background:'none',border:'none',color:C.muted,cursor:'pointer',fontSize:18}}>✕</button>
-      </div>
-      <div style={{flex:1,overflowY:'auto',padding:11,display:'flex',flexDirection:'column',gap:7}}>
-        {msgs.map((m,i)=>(
-          <div key={i} style={{alignSelf:m.from==='user'?'flex-end':'flex-start',maxWidth:'85%',
-            padding:'8px 11px',borderRadius:10,whiteSpace:'pre-wrap',
-            background:m.from==='user'?C.tealBg:C.bg2,
-            border:`1px solid ${m.from==='user'?C.tealDark:C.border}`,
-            fontSize:12,color:C.text,lineHeight:1.5}}>{m.text}</div>
-        ))}
-        {loading&&<div style={{alignSelf:'flex-start',color:C.muted,fontSize:11}}>Elisa está pensando...</div>}
-        <div ref={endRef}/>
-      </div>
-      <div style={{padding:'8px 11px',borderTop:`1px solid ${C.border}`,display:'flex',gap:7,flexShrink:0}}>
-        <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&send()}
-          placeholder="Pregunta algo..."
-          style={{flex:1,background:C.bg2,border:`1px solid ${C.border}`,borderRadius:6,
-            padding:'7px 10px',color:C.text,fontSize:12,outline:'none'}}/>
-        <button onClick={send} className="btn-teal" style={{padding:'7px 14px',fontSize:12}}>→</button>
-      </div>
-    </div>
-  )
-}
 
 /* ─────────────────────────────────────────────────────── CONSTANTS */
 const ASSETS={
@@ -830,8 +780,7 @@ export default function Dashboard({user,subscription,onLogout}){
   const[analyze,  setAnalyze] =useState(null)
   const[signals,  setSignals] =useState([])
   const[countdown,setCountdown]=useState(60)
-  const[showElisa,setShowElisa]=useState(false)
-  const[sidebarOpen,setSidebarOpen]=useState(true)
+const[sidebarOpen,setSidebarOpen]=useState(true)
   const[zoom,     setZoom]    =useState(1)
   const[offsetX,  setOffsetX] =useState(0)
   const[cardPos,  setCardPos] =useState({x:20,y:120})
@@ -1023,13 +972,6 @@ export default function Dashboard({user,subscription,onLogout}){
               </div>
             )
           })}
-          <div style={{padding:'7px 8px',marginTop:'auto'}}>
-            <button onClick={()=>setShowElisa(s=>!s)} style={{
-              width:'100%',padding:'7px',borderRadius:8,border:`1px solid ${C.teal}44`,
-              background:C.tealBg,color:C.teal,cursor:'pointer',fontSize:11,fontWeight:700,whiteSpace:'nowrap'}}>
-              💜 Hablar con Elisa
-            </button>
-          </div>
         </aside>
 
         {/* MAIN */}
@@ -1180,17 +1122,6 @@ export default function Dashboard({user,subscription,onLogout}){
         <ConflictAlert conflictData={conflictData} onDismiss={()=>setConflictDismissed(true)}/>
       )}
 
-      {/* Elisa chat */}
-      {showElisa&&<ElisaChat symbol={symbol} onClose={()=>setShowElisa(false)}/>}
-
-      {/* FAB */}
-      {!showElisa&&(
-        <button onClick={()=>setShowElisa(true)} style={{
-          position:'fixed',right:20,bottom:20,width:48,height:48,
-          borderRadius:'50%',background:'linear-gradient(135deg,#0d4f3c,#1a6b52)',
-          border:`2px solid ${C.teal}`,color:C.teal,fontSize:19,cursor:'pointer',
-          boxShadow:`0 0 20px ${C.teal}44`,zIndex:98}}>💜</button>
-      )}
     </div>
   )
 }
