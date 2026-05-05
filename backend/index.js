@@ -2392,36 +2392,34 @@ const SMC = {
     for (const zone of demandZones) {
       if (zone.mitigated) continue;
 
-      // ── Touch check: last 10 candles (was 3 — missed CHoCH setups) ──
-      const touched = touchedRecently(zone, 10, 'BUY');
+      // Touch check: últimas 8 velas (40 min en M5)
+      const touched = touchedRecently(zone, 8, 'BUY');
       if (!touched) continue;
 
-      // ── Auto-accept if this is a structureOB from a recent CHoCH ──
-      // When CHoCH happened + OB is the one that caused it → entry is valid
       const isStructOB = zone.isStructureOB || zone.pattern === 'CHOCH_OB';
-      const lastBullCandle = candles.slice(-8).some(c => c.close > c.open);
+
+      // Confirmación REAL: necesitamos al menos 1 vela VERDE que haya CERRADO
+      // DESPUÉS de tocar el OB (no la misma vela del toque)
+      // Para structureOB se permite confirmación en la última vela (CHoCH ya confirmó dirección)
+      const lastBullClose = candles.slice(-3).some(c => c.close > c.open && c.close > zone.low);
       const hasConf = isStructOB
-        ? (lastBullCandle || recentConf(zone, 6, 'BUY')) // looser for structureOB
-        : recentConf(zone, 5, 'BUY');                    // normal OBs need confirmation
+        ? (lastBullClose || recentConf(zone, 4, 'BUY'))
+        : (recentConf(zone, 3, 'BUY') && lastBullClose); // OB normal: requiere ambas
 
       if (!hasConf) continue;
 
       const entry   = +(last.close).toFixed(config.decimals);
-      const slLevel = +((zone.wickLow || zone.low) - avgRange * 0.2).toFixed(config.decimals);
+      const slLevel = +((zone.wickLow || zone.low) - avgRange * 0.3).toFixed(config.decimals);
       const risk    = entry - slLevel;
-      if (risk <= 0 || risk > avgRange * 15) continue;
+      if (risk <= 0 || risk > avgRange * 10) continue;
 
-      // FIX ENTRADA TEMPRANA: precio debe estar DENTRO del OB o muy cerca del borde superior
-      // Antes: entry > zone.high + avgRange*2.0 → aceptaba entradas hasta 2x avgRange ENCIMA del OB
-      // Eso causó la entrada en 4697 en vez de esperar el OB en 4691-4692
-      // Ahora: precio dentro del OB o máximo 0.4x avgRange por encima del techo
+      // Precio debe estar DENTRO del OB o máximo 0.5x avgRange por encima del techo
       const priceInOB      = entry >= zone.low && entry <= zone.high;
-      const priceJustAbove = entry > zone.high && entry <= zone.high + avgRange * 0.4;
+      const priceJustAbove = entry > zone.high && entry <= zone.high + avgRange * 0.5;
       const priceJustBelow = entry < zone.low  && entry >= zone.low  - avgRange * 0.3;
       if (!priceInOB && !priceJustAbove && !priceJustBelow) continue;
 
-      // Best confirmation from recent candles
-      const conf = candles.slice(-5).some(c => c.close>c.open && c.close>candles[candles.length-6]?.close)
+      const conf = candles.slice(-3).some(c => c.close>c.open && c.close>candles[candles.length-4]?.close)
         ? 'BULLISH_CLOSE'
         : isStructOB ? 'CHOCH_OB' : 'ZONE_TOUCH';
 
@@ -2441,30 +2439,31 @@ const SMC = {
     for (const zone of supplyZones) {
       if (zone.mitigated) continue;
 
-      // ── Touch check: last 10 candles ──
-      const touched = touchedRecently(zone, 10, 'SELL');
+      // Touch check: últimas 8 velas
+      const touched = touchedRecently(zone, 8, 'SELL');
       if (!touched) continue;
 
-      // ── Confirmation ──
       const isStructOB = zone.isStructureOB || zone.pattern === 'CHOCH_OB';
-      const lastBearCandle = candles.slice(-8).some(c => c.close < c.open);
+
+      // Confirmación REAL: vela ROJA reciente que cerró DESPUÉS del toque del OB
+      const lastBearClose = candles.slice(-3).some(c => c.close < c.open && c.close < zone.high);
       const hasConf = isStructOB
-        ? (lastBearCandle || recentConf(zone, 6, 'SELL'))
-        : recentConf(zone, 5, 'SELL');
+        ? (lastBearClose || recentConf(zone, 4, 'SELL'))
+        : (recentConf(zone, 3, 'SELL') && lastBearClose);
 
       if (!hasConf) continue;
 
       const entry   = +(last.close).toFixed(config.decimals);
-      const slLevel = +((zone.wickHigh || zone.high) + avgRange * 0.2).toFixed(config.decimals);
+      const slLevel = +((zone.wickHigh || zone.high) + avgRange * 0.3).toFixed(config.decimals);
       const risk    = slLevel - entry;
-      if (risk <= 0 || risk > avgRange * 15) continue;
-      // FIX: precio debe estar DENTRO del OB de oferta o muy cerca del borde inferior
+      if (risk <= 0 || risk > avgRange * 10) continue;
+      // Precio DENTRO del OB de oferta o muy cerca del borde inferior
       const priceInOB      = entry >= zone.low && entry <= zone.high;
-      const priceJustBelow = entry < zone.low  && entry >= zone.low  - avgRange * 0.4;
+      const priceJustBelow = entry < zone.low  && entry >= zone.low  - avgRange * 0.5;
       const priceJustAbove = entry > zone.high && entry <= zone.high + avgRange * 0.3;
       if (!priceInOB && !priceJustBelow && !priceJustAbove) continue;
 
-      const conf = candles.slice(-5).some(c => c.close<c.open && c.close<candles[candles.length-6]?.close)
+      const conf = candles.slice(-3).some(c => c.close<c.open && c.close<candles[candles.length-4]?.close)
         ? 'BEARISH_CLOSE'
         : isStructOB ? 'CHOCH_OB' : 'ZONE_TOUCH';
 
@@ -2565,24 +2564,33 @@ const SMC = {
 
     // ── CALCULAR NIVELES ──
     // Entry: precio actual
-    // SL: basado en la estructura M1 reciente
-    const recentLows  = m1.slice(-10).map(c => c.low);
-    const recentHighs = m1.slice(-10).map(c => c.high);
-    const structLow   = Math.min(...recentLows);
-    const structHigh  = Math.max(...recentHighs);
+    // SL: basado en la zona M15 más cercana (más robusto que solo M1 structure)
+    // Usar zona M15 para que el SL sea estructural, no un mínimo de 10 velas M1
+    const { demandZones: demM15sl, supplyZones: supM15sl } = this.findZones(candlesM15);
+    const avgM15sl = this.getAvgRange(candlesM15);
+    const nearestM15Zone = isBuy
+      ? demM15sl.filter(z => !z.mitigated).sort((a,b) => b.high - a.high)[0]
+      : supM15sl.filter(z => !z.mitigated).sort((a,b) => a.low - b.low)[0];
 
     let entry, stop, risk;
     if (isBuy) {
       entry = price;
-      stop  = structLow - avgM1 * 0.3;
+      // SL: bajo del OB M15 más cercano, o mínimo de las últimas 15 velas M1
+      const m1Low15 = Math.min(...m1.slice(-15).map(c => c.low));
+      stop  = nearestM15Zone
+        ? +((nearestM15Zone.wickLow || nearestM15Zone.low) - avgM15sl * 0.3).toFixed(config.decimals)
+        : +(m1Low15 - avgM1 * 0.5).toFixed(config.decimals);
       risk  = entry - stop;
     } else {
       entry = price;
-      stop  = structHigh + avgM1 * 0.3;
+      const m1High15 = Math.max(...m1.slice(-15).map(c => c.high));
+      stop  = nearestM15Zone
+        ? +((nearestM15Zone.wickHigh || nearestM15Zone.high) + avgM15sl * 0.3).toFixed(config.decimals)
+        : +(m1High15 + avgM1 * 0.5).toFixed(config.decimals);
       risk  = stop - entry;
     }
 
-    if (risk <= 0 || risk > avgM1 * 8) return null; // Riesgo inválido
+    if (risk <= 0 || risk > avgM15sl * 5) return null; // Riesgo inválido
 
     // ── SCORE ──
     let score = 82; // Base alta porque requiere triple confluencia
@@ -2976,20 +2984,23 @@ const SMC = {
         : supplyZones.filter(z => z.isStructureOB && !z.mitigated);
       if (structOBs.length > 0) {
         const ob = structOBs[0];
-        const price = data.price || candlesM5[candlesM5.length-1]?.close || 0;
-        // FIX: requiere que el precio esté DENTRO del OB o máximo 0.5x avgRange por encima/debajo
-        // Antes: ±3x avgRange → permitía entrar muy lejos del OB (6+ puntos de distancia en Oro)
+        const price = candlesM5[candlesM5.length-1]?.close || 0;
+        // Precio debe estar DENTRO del OB o muy cerca
         const priceInOB = opSide === 'BUY'
           ? price >= ob.low - avgRange*0.3 && price <= ob.high + avgRange*0.5
           : price >= ob.low - avgRange*0.5 && price <= ob.high + avgRange*0.3;
         const chochFresh = choch.breakIndex >= (candlesM5?.length||0) - 20;
-        // FIX: `continue` es ilegal fuera de un loop — usar if/else
-        if (priceInOB && chochFresh) {
+        // Confirmación de vela DESPUÉS del CHoCH: al menos 1 vela cerrada en la dirección
+        const last3M5 = candlesM5.slice(-3);
+        const hasDirectionalConf = opSide === 'BUY'
+          ? last3M5.some(c => c.close > c.open && c.close > ob.low) // vela verde sobre el OB
+          : last3M5.some(c => c.close < c.open && c.close < ob.high); // vela roja bajo el OB
+        if (priceInOB && chochFresh && hasDirectionalConf) {
           const slLevel = opSide === 'BUY'
-            ? +((ob.wickLow||ob.low) - avgRange*0.2).toFixed(config.decimals)
-            : +((ob.wickHigh||ob.high) + avgRange*0.2).toFixed(config.decimals);
+            ? +((ob.wickLow||ob.low) - avgRange*0.3).toFixed(config.decimals)
+            : +((ob.wickHigh||ob.high) + avgRange*0.3).toFixed(config.decimals);
           const risk = Math.abs(price - slLevel);
-          if (risk > 0 && risk <= avgRange * 15) {
+          if (risk > 0 && risk <= avgRange * 8) {
             const synthPullback = {
               side: opSide, zone: ob,
               entry: +(price).toFixed(config.decimals), stop: slLevel,
@@ -3005,10 +3016,10 @@ const SMC = {
             score = Math.min(score, 97);
             signals.push({
               model: 'CHOCH_PULLBACK', baseScore: score, pullback: synthPullback,
-              reason: `${choch.type} + structureOB ${ob.pattern||''} + ${opDir}`
+              reason: `${choch.type} + structureOB ${ob.pattern||''} + conf.vela + ${opDir}`
             });
           }
-        } // end priceInOB && chochFresh
+        } // end priceInOB && chochFresh && hasDirectionalConf
       }
     }
 
@@ -3069,20 +3080,27 @@ const SMC = {
     // FIX: threshold counter-trend baja a 87 si BOS M5 confirma dirección
     // ═══════════════════════════════════════════════════════════════
     {
-      const last5 = candlesM5.slice(-15); // FIX: ventana 15 velas (era 5 — demasiado corta)
+      // Ventana de búsqueda: máx 8 velas para rechazo (40 min en M5)
+      // Pero la ENTRADA siempre es en lastCandle — el precio actual DEBE estar cerca del OB
+      const last8 = candlesM5.slice(-8);
 
-      // ── SELL: buscar vela de rechazo en últimas 5 velas dentro de supply zone ──
+      // ── SELL: buscar vela de rechazo en últimas 8 velas dentro de supply zone ──
       for (const zone of supplyZones) {
         if (zone.mitigated) continue;
 
-        // Buscar la vela de rechazo más fuerte dentro de las últimas 5
+        // El precio ACTUAL debe estar cerca del OB (no entrar cuando ya viajó lejos)
+        const priceNearZone = lastCandle.close >= zone.low - avgRange * 1.5 &&
+                              lastCandle.close <= zone.high + avgRange * 1.0;
+        if (!priceNearZone) continue;
+
+        // Buscar la vela de rechazo más fuerte dentro de las últimas 8
         let bestBear = null, bestScore = 0;
-        for (let ci = last5.length - 1; ci >= 0; ci--) {
-          const c = last5[ci];
+        for (let ci = last8.length - 1; ci >= 0; ci--) {
+          const c = last8[ci];
           const touchedZone = c.high >= zone.low * 0.998; // mecha tocó la zona
           const strongBear  = c.close < c.open;
           const candleSize  = Math.abs(c.close - c.open);
-          const bigCandle   = candleSize > avgRange * 0.6; // más permisivo: era 0.7
+          const bigCandle   = candleSize > avgRange * 0.6;
           if (touchedZone && strongBear && bigCandle) {
             const s = candleSize + (c.high >= zone.high ? 2 : 0); // bonus si tocó techo
             if (s > bestScore) { bestScore = s; bestBear = { c, ci }; }
@@ -3091,6 +3109,10 @@ const SMC = {
         if (!bestBear) continue;
 
         const { c: rejCandle, ci: rejIdx } = bestBear;
+        // La vela de rechazo no puede ser más antigua de 5 velas (25 min en M5)
+        // Si el rechazo fue hace mucho y el precio ya volvió, es una entrada stale
+        if (rejIdx < last8.length - 5) continue;
+
         const closedBelow  = rejCandle.close < zone.low;
         const wick         = rejCandle.high - Math.max(rejCandle.open, rejCandle.close);
         const candleSize   = Math.abs(rejCandle.close - rejCandle.open);
@@ -3117,16 +3139,17 @@ const SMC = {
         score = Math.min(score, 97);
 
         const entry   = lastCandle.close;
-        // FIX SL/TP: capped at 2x avgRange para evitar SL de 60+ puntos en V100
-        const rawRisk = Math.abs(zone.high - entry) + avgRange * 0.15;
-        const risk    = Math.min(rawRisk, avgRange * 2.0);
-        if (risk <= 0) continue;
+        // SL: por encima del wick/techo del OB de supply + buffer
+        // NO usar risk*0.5 — eso ponía el SL DENTRO del OB (causa principal de SL tocados)
+        const rawStop = (zone.wickHigh || zone.high) + avgRange * 0.35;
+        const stop    = +rawStop.toFixed(config.decimals);
+        const risk    = Math.abs(stop - entry);
+        if (risk <= 0 || risk > avgRange * 6) continue;
         signals.push({
           model: 'OB_REJECTION',
           baseScore: score,
           pullback: {
-            side:  'SELL', entry,
-            stop:  +(entry + risk * 0.5).toFixed(config.decimals),
+            side:  'SELL', entry, stop,
             tp1:   +(entry - risk * 1.5).toFixed(config.decimals),
             tp2:   +(entry - risk * 2.5).toFixed(config.decimals),
             tp3:   +(entry - risk * 4.0).toFixed(config.decimals)
@@ -3136,13 +3159,18 @@ const SMC = {
         break;
       }
 
-      // ── BUY: buscar vela de rechazo en últimas 5 velas dentro de demand zone ──
+      // ── BUY: buscar vela de rechazo en últimas 8 velas dentro de demand zone ──
       for (const zone of demandZones) {
         if (zone.mitigated) continue;
 
+        // El precio ACTUAL debe estar cerca del OB
+        const priceNearZoneB = lastCandle.close <= zone.high + avgRange * 1.5 &&
+                               lastCandle.close >= zone.low - avgRange * 1.0;
+        if (!priceNearZoneB) continue;
+
         let bestBull = null, bestScore = 0;
-        for (let ci = last5.length - 1; ci >= 0; ci--) {
-          const c = last5[ci];
+        for (let ci = last8.length - 1; ci >= 0; ci--) {
+          const c = last8[ci];
           const touchedZone = c.low <= zone.high * 1.002;
           const strongBull  = c.close > c.open;
           const candleSize  = Math.abs(c.close - c.open);
@@ -3154,7 +3182,9 @@ const SMC = {
         }
         if (!bestBull) continue;
 
-        const { c: rejCandle } = bestBull;
+        const { c: rejCandle, ci: rejIdxB } = bestBull;
+        // Vela de rechazo no puede ser más antigua de 5 velas
+        if (rejIdxB < last8.length - 5) continue;
         const closedAbove  = rejCandle.close > zone.high;
         const wick         = Math.min(rejCandle.open, rejCandle.close) - rejCandle.low;
         const candleSize   = Math.abs(rejCandle.close - rejCandle.open);
@@ -3180,43 +3210,50 @@ const SMC = {
         score = Math.min(score, 97);
 
         const entry   = lastCandle.close;
-        const rawRisk = Math.abs(entry - zone.low) + avgRange * 0.15;
-        const risk    = Math.min(rawRisk, avgRange * 2.0);
-        if (risk <= 0) continue;
+        // SL: por debajo del wick/suelo del OB de demanda + buffer
+        // NO usar risk*0.5 — eso ponía el SL DENTRO del OB (causa principal de SL tocados)
+        const rawStopB = (zone.wickLow || zone.low) - avgRange * 0.35;
+        const stopB    = +rawStopB.toFixed(config.decimals);
+        const riskB    = Math.abs(entry - stopB);
+        if (riskB <= 0 || riskB > avgRange * 6) continue;
         signals.push({
           model: 'OB_REJECTION',
           baseScore: score,
           pullback: {
-            side:  'BUY', entry,
-            stop:  +(entry - risk * 0.5).toFixed(config.decimals),
-            tp1:   +(entry + risk * 1.5).toFixed(config.decimals),
-            tp2:   +(entry + risk * 2.5).toFixed(config.decimals),
-            tp3:   +(entry + risk * 4.0).toFixed(config.decimals)
+            side: 'BUY', entry, stop: stopB,
+            tp1:  +(entry + riskB * 1.5).toFixed(config.decimals),
+            tp2:  +(entry + riskB * 2.5).toFixed(config.decimals),
+            tp3:  +(entry + riskB * 4.0).toFixed(config.decimals)
           },
           reason: `Rechazo OB demanda${zone.isStructureOB?' ★':''}${giantCandle?' + vela gigante':''}${m5Bullish?' + CHoCH M5↑':''}${premiumDiscount==='DISCOUNT'?' + DISCOUNT':''}`
         });
         break;
       }
     }
-    // ── FIX 4: CHoCH M5 + ZONA — trigger directo cuando M5 hace CHoCH confirmado ──
-    // Caso de los logs: M5=BEARISH 94% + CHoCH↓ @8020.6 + Supply=3 zones → Score 47 → WAIT
-    // El OB_REJECTION no disparó porque no había vela reciente tocando el supply
-    // Este bloque genera señal cuando CHoCH M5 está confirmado + zona existe en la dirección
+    // ── CHoCH M5 + ZONA — señal cuando M5 hace CHoCH confirmado Y precio EN zona ──
+    // Requisito estricto: el precio DEBE estar dentro o muy cerca del OB (máx 1.5x avgRange)
+    // Antes era 5x avgRange → entraba cuando el precio ya había viajado lejos de la zona
     if (choch && bos && choch.side === bos.side &&
         choch.breakIndex >= (candlesM5.length - 25)) {
 
       const isChochSell = choch.side === 'SELL';
       const isChochBuy  = choch.side === 'BUY';
       const zones = isChochSell ? supplyZones : demandZones;
-      const relevantZone = zones.find(z => !z.mitigated);
+      // Buscar zona donde el precio actual esté dentro o muy cerca
+      const relevantZone = zones.find(z => {
+        if (z.mitigated) return false;
+        const p = lastCandle.close;
+        if (isChochSell) return p >= z.low - avgRange * 0.5 && p <= z.high + avgRange * 1.5;
+        return p <= z.high + avgRange * 0.5 && p >= z.low - avgRange * 1.5;
+      });
 
       if (relevantZone) {
         const price = lastCandle.close;
         const distToZone = isChochSell
           ? Math.abs(price - relevantZone.low)
           : Math.abs(price - relevantZone.high);
-        // FIX: máximo 5x avgRange (era 15x — demasiado permisivo)
-        const maxDist = avgRange * 5;
+        // Máximo 1.5x avgRange — el precio DEBE estar en zona o muy cerca
+        const maxDist = avgRange * 1.5;
 
         if (distToZone < maxDist) {
           let score = 82;
@@ -3233,24 +3270,22 @@ const SMC = {
             // No agregar señal
           } else {
             score = Math.min(score, 95);
-            // FIX: cap risk a 2x avgRange
-            const rawRisk = isChochSell
-              ? Math.abs(relevantZone.high - price) + avgRange*0.2
-              : Math.abs(price - relevantZone.low) + avgRange*0.2;
-            const risk = Math.min(rawRisk, avgRange * 2.0);
-            if (risk > 0) {
+            // SL: por encima/debajo del wick del OB + buffer (NO risk*0.5 que pone SL dentro del OB)
+            const stopChoch = isChochSell
+              ? +((relevantZone.wickHigh || relevantZone.high) + avgRange * 0.35).toFixed(config.decimals)
+              : +((relevantZone.wickLow  || relevantZone.low)  - avgRange * 0.35).toFixed(config.decimals);
+            const riskChoch = Math.abs(price - stopChoch);
+            if (riskChoch > 0 && riskChoch <= avgRange * 6) {
               signals.push({
                 model: 'OB_REJECTION',
                 baseScore: score,
                 pullback: {
                   side:  isChochSell ? 'SELL' : 'BUY',
                   entry: price,
-                  stop:  isChochSell
-                    ? +(price + risk * 0.5).toFixed(config.decimals)
-                    : +(price - risk * 0.5).toFixed(config.decimals),
-                  tp1: isChochSell ? +(price-risk*1.5).toFixed(config.decimals) : +(price+risk*1.5).toFixed(config.decimals),
-                  tp2: isChochSell ? +(price-risk*2.5).toFixed(config.decimals) : +(price+risk*2.5).toFixed(config.decimals),
-                  tp3: isChochSell ? +(price-risk*4.0).toFixed(config.decimals) : +(price+risk*4.0).toFixed(config.decimals)
+                  stop:  stopChoch,
+                  tp1: isChochSell ? +(price-riskChoch*1.5).toFixed(config.decimals) : +(price+riskChoch*1.5).toFixed(config.decimals),
+                  tp2: isChochSell ? +(price-riskChoch*2.5).toFixed(config.decimals) : +(price+riskChoch*2.5).toFixed(config.decimals),
+                  tp3: isChochSell ? +(price-riskChoch*4.0).toFixed(config.decimals) : +(price+riskChoch*4.0).toFixed(config.decimals)
                 },
                 reason: `CHoCH M5${isChochSell?'↓':'↑'} + BOS confirmado + OB${relevantZone.isStructureOB?' ★':''}${inZone?' en zona':' cerca zona'}`
               });
@@ -3408,14 +3443,27 @@ const SMC = {
     // SMART_MONEY_TRAP — ELIMINADO (entradas a mercado sin OB, SL inconsistente)
 
     // ═══════════════════════════════════════════════════════════════
-    // MODELO M1_PRECISION — DESACTIVADO para trading automático (0% WR)
-    // Sigue corriendo internamente para los indicadores del frontend (barra M1 PRECISION)
-    // pero NO agrega señales al array signals
+    // MODELO M1_PRECISION — Timing de entrada preciso con triple confluencia
+    // Requiere H1=M15=M5 + patrón M1 (CHoCH, engulfing o pin bar) + precio en zona M15
+    // Solo genera señal cuando hay triple confluencia fuerte — muy selectivo
+    // ═══════════════════════════════════════════════════════════════
     if (candlesM1 && candlesM1.length >= 20 && m15Loaded && h1Loaded) {
-      this.analyzeM1Precision(
+      const m1Result = this.analyzeM1Precision(
         candlesM1, candlesM15 || [], candlesH1, structureH1, structureM15, structureM5,
         config, avgRange, premiumDiscount
-      ); // resultado descartado — solo para métricas de UI
+      );
+      if (m1Result && m1Result.pullback && m1Result.baseScore >= 85) {
+        // M1_PRECISION solo activa cuando hay triple confluencia — ya valida internamente
+        // Verificar que la dirección coincide con opSide (misma dirección que H1+M15)
+        if (m1Result.pullback.side === opSide) {
+          signals.push({
+            model: 'M1_PRECISION',
+            baseScore: m1Result.baseScore,
+            pullback: m1Result.pullback,
+            reason: m1Result.reason
+          });
+        }
+      }
     }
 
     if (signals.length === 0) {
