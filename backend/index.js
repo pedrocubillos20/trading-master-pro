@@ -1146,11 +1146,11 @@ async function saveSignalToSupabase(signal) {
   }
 }
 
-async function updateSignalStatusInSupabase(signalId, status, closePrice, tpHit) {
+async function updateSignalStatusInSupabase(signalId, status, closePrice, tpHit, pnlPoints = 0) {
   if (!supabase) return;
   try {
     await supabase.from('trading_signals')
-      .update({ status, close_price: closePrice, tp_hit: tpHit, updated_at: new Date().toISOString() })
+      .update({ status, close_price: closePrice, tp_hit: tpHit, pnl_points: pnlPoints, updated_at: new Date().toISOString() })
       .eq('signal_id', signalId);
   } catch(e) {
     console.log('⚠️ Error actualizando señal:', e.message);
@@ -2355,14 +2355,11 @@ const SMC = {
     const avgRange = this.getAvgRange(candles);
 
     // ── Helper: check if any of the last N candles touched the OB ──
-    // touchedRecently: vela tocó el OB en las últimas N velas
-    // FIX: ventana máxima 5 velas (25 min en M5) — si fue hace más tiempo, el OB puede estar invalidado
-    // FIX: tolerancia ±0.2x avgRange (era 0.5x — demasiado permisivo, contaba velas lejos del OB)
     const touchedRecently = (zone, n, side) => {
-      const window = candles.slice(-Math.min(n, 5)); // max 5 velas = 25 min en M5
+      const window = candles.slice(-n);
       return window.some(c => {
-        if (side === 'BUY')  return c.low  <= zone.high + avgRange * 0.2 && c.high >= zone.low;
-        if (side === 'SELL') return c.high >= zone.low  - avgRange * 0.2 && c.low  <= zone.high;
+        if (side === 'BUY')  return c.low <= zone.high + avgRange * 0.5 && c.high >= zone.low - avgRange * 0.5;
+        if (side === 'SELL') return c.high >= zone.low - avgRange * 0.5 && c.low <= zone.high + avgRange * 0.5;
         return false;
       });
     };
@@ -2416,12 +2413,11 @@ const SMC = {
       const risk    = entry - slLevel;
       if (risk <= 0 || risk > avgRange * 10) continue;
 
-      // PRECIO DEBE ESTAR DENTRO DEL OB o apenas por debajo (wick de toque)
-      // FIX CRÍTICO: eliminar priceJustAbove — entraba ENCIMA del OB después del impulso
-      // Si el precio ya salió del OB hacia arriba = la oportunidad pasó, no entrar
+      // Precio debe estar DENTRO del OB o máximo 0.5x avgRange por encima del techo
       const priceInOB      = entry >= zone.low && entry <= zone.high;
-      const priceJustBelow = entry < zone.low  && entry >= zone.low - avgRange * 0.2; // solo wick mínimo
-      if (!priceInOB && !priceJustBelow) continue;
+      const priceJustAbove = entry > zone.high && entry <= zone.high + avgRange * 0.5;
+      const priceJustBelow = entry < zone.low  && entry >= zone.low  - avgRange * 0.3;
+      if (!priceInOB && !priceJustAbove && !priceJustBelow) continue;
 
       const conf = candles.slice(-3).some(c => c.close>c.open && c.close>candles[candles.length-4]?.close)
         ? 'BULLISH_CLOSE'
@@ -2461,12 +2457,11 @@ const SMC = {
       const slLevel = +((zone.wickHigh || zone.high) + avgRange * 0.3).toFixed(config.decimals);
       const risk    = slLevel - entry;
       if (risk <= 0 || risk > avgRange * 10) continue;
-
-      // PRECIO DENTRO DEL OB o apenas por encima (mecha de toque)
-      // FIX: quitar priceJustBelow — si precio ya cayó del OB = entrada tardía
+      // Precio DENTRO del OB de oferta o muy cerca del borde inferior
       const priceInOB      = entry >= zone.low && entry <= zone.high;
-      const priceJustAbove = entry > zone.high && entry <= zone.high + avgRange * 0.2;
-      if (!priceInOB && !priceJustAbove) continue;
+      const priceJustBelow = entry < zone.low  && entry >= zone.low  - avgRange * 0.5;
+      const priceJustAbove = entry > zone.high && entry <= zone.high + avgRange * 0.3;
+      if (!priceInOB && !priceJustBelow && !priceJustAbove) continue;
 
       const conf = candles.slice(-3).some(c => c.close<c.open && c.close<candles[candles.length-4]?.close)
         ? 'BEARISH_CLOSE'
@@ -2952,10 +2947,8 @@ const SMC = {
       };
     }
 
-    // MTF_CONFLUENCE — entrada SOLO cuando pullback está EN el OB
-    // FIX CRÍTICO: verificar que el pullback realmente tocó el OB
-    // pullback.touchedOB = true significa que el precio está dentro o rozando el OB
-    if (pullback && pullback.side === opSide && pullback.touchedOB) {
+    // MTF_CONFLUENCE — exige que pullback coincida con opDir (= H1)
+    if (pullback && pullback.side === opSide) {
       let score = 88;
       if (pullback.side === 'BUY'  && premiumDiscount === 'DISCOUNT') score += 5;
       if (pullback.side === 'SELL' && premiumDiscount === 'PREMIUM')  score += 5;
@@ -2966,16 +2959,13 @@ const SMC = {
       if (pullback.confirmation === 'ENGULFING' || pullback.confirmation === 'PIN_BAR') score += 3;
       if (pullback.confirmation === 'CHOCH_OB') score += 5;
       if (pullback.zone?.isStructureOB) score += 3;
-
-      // Penalizar si la confirmación es débil (ZONE_TOUCH sin más evidencia)
-      if (pullback.confirmation === 'ZONE_TOUCH' && !pullback.zone?.isStructureOB) score -= 5;
-
       score = Math.min(score, 100);
 
       const trendCtx = m15ChochFresh
         ? `CHoCH M15(${state.chochM15?.side}) + M5 OB`
         : `H1(${opDir})+M15(${structureM15.trend})`;
 
+      // ✅ FIX CRÍTICO: signals.push faltaba — MTF_CONFLUENCE nunca generaba señales
       signals.push({
         model: 'MTF_CONFLUENCE',
         baseScore: score,
@@ -2995,11 +2985,11 @@ const SMC = {
       if (structOBs.length > 0) {
         const ob = structOBs[0];
         const price = candlesM5[candlesM5.length-1]?.close || 0;
-        // PRECIO DEBE ESTAR DENTRO del OB — sin tolerancia superior para evitar entradas tardías
+        // Precio debe estar DENTRO del OB o muy cerca
         const priceInOB = opSide === 'BUY'
-          ? price >= ob.low - avgRange*0.1 && price <= ob.high  // hasta el techo exacto
-          : price >= ob.low && price <= ob.high + avgRange*0.1; // desde el piso exacto
-        const chochFresh = choch.breakIndex >= (candlesM5?.length||0) - 15; // max 15 velas = 75 min
+          ? price >= ob.low - avgRange*0.3 && price <= ob.high + avgRange*0.5
+          : price >= ob.low - avgRange*0.5 && price <= ob.high + avgRange*0.3;
+        const chochFresh = choch.breakIndex >= (candlesM5?.length||0) - 20;
         // Confirmación de vela DESPUÉS del CHoCH: al menos 1 vela cerrada en la dirección
         const last3M5 = candlesM5.slice(-3);
         const hasDirectionalConf = opSide === 'BUY'
@@ -3098,10 +3088,9 @@ const SMC = {
       for (const zone of supplyZones) {
         if (zone.mitigated) continue;
 
-        // PRECIO ACTUAL dentro o muy cerca del OB (no entrar cuando ya bajó del OB)
-        // FIX: era 1.5x avgRange = demasiado permisivo, entraba tarde
-        const priceNearZone = lastCandle.close >= zone.low - avgRange * 0.3 &&
-                              lastCandle.close <= zone.high + avgRange * 0.3;
+        // El precio ACTUAL debe estar cerca del OB (no entrar cuando ya viajó lejos)
+        const priceNearZone = lastCandle.close >= zone.low - avgRange * 1.5 &&
+                              lastCandle.close <= zone.high + avgRange * 1.0;
         if (!priceNearZone) continue;
 
         // Buscar la vela de rechazo más fuerte dentro de las últimas 8
@@ -3174,9 +3163,9 @@ const SMC = {
       for (const zone of demandZones) {
         if (zone.mitigated) continue;
 
-        // PRECIO ACTUAL dentro o muy cerca del OB (no entrar cuando ya subió)
-        const priceNearZoneB = lastCandle.close <= zone.high + avgRange * 0.3 &&
-                               lastCandle.close >= zone.low - avgRange * 0.3;
+        // El precio ACTUAL debe estar cerca del OB
+        const priceNearZoneB = lastCandle.close <= zone.high + avgRange * 1.5 &&
+                               lastCandle.close >= zone.low - avgRange * 1.0;
         if (!priceNearZoneB) continue;
 
         let bestBull = null, bestScore = 0;
@@ -4457,13 +4446,26 @@ function closeSignal(id, status, symbol, tpHit = null) {
     ? (tpHit===3 ? signal.tp3 : tpHit===2 ? signal.tp2 : signal.tp1)
     : signal.stop;
 
+  // ── PUNTOS GANADOS/PERDIDOS (P&L real en puntos del activo) ──
+  if (status === 'WIN') {
+    const isLong = signal.action === 'LONG' || signal.action === 'BUY';
+    signal.pnlPoints = isLong
+      ? +(signal.closePrice - signal.entry).toFixed(2)
+      : +(signal.entry - signal.closePrice).toFixed(2);
+  } else {
+    const isLong = signal.action === 'LONG' || signal.action === 'BUY';
+    signal.pnlPoints = isLong
+      ? +(signal.stop - signal.entry).toFixed(2)   // negativo
+      : +(signal.entry - signal.stop).toFixed(2);  // negativo
+  }
+
   if (symbol && assetData[symbol]) {
     assetData[symbol].lockedSignal = null;
     assetData[symbol].lastSignalClosed = Date.now();
   }
 
-  // PERSISTENCIA: actualizar estado en Supabase
-  updateSignalStatusInSupabase(signal.id, status, signal.closePrice, signal.tpHit || 0).catch(() => {});
+  // PERSISTENCIA: actualizar estado en Supabase (incluyendo pnlPoints)
+  updateSignalStatusInSupabase(signal.id, status, signal.closePrice, signal.tpHit || 0, signal.pnlPoints || 0).catch(() => {});
   
   stats.byModel[signal.model] = stats.byModel[signal.model] || { wins: 0, losses: 0 };
   stats.byAsset[signal.symbol] = stats.byAsset[signal.symbol] || { wins: 0, losses: 0, total: 0 };
@@ -5396,6 +5398,95 @@ app.post('/api/reset/:symbol', (req, res) => {
 });
 
 app.get('/api/signals', (req, res) => res.json({ signals: signalHistory, stats }));
+
+// ── API P&L: puntos ganados/perdidos con filtro por período ──
+app.get('/api/pnl', (req, res) => {
+  const { period = 'all', symbol } = req.query;
+  const now = Date.now();
+  const periodMs = {
+    day:   86400000,
+    week:  7 * 86400000,
+    month: 30 * 86400000,
+    all:   Infinity
+  };
+  const cutoff = period === 'all' ? 0 : now - (periodMs[period] || Infinity);
+
+  let signals = signalHistory.filter(s => s.status !== 'PENDING' && s.timestamp >= cutoff);
+  if (symbol && symbol !== 'all') signals = signals.filter(s => s.symbol === symbol);
+
+  const closed = signals.filter(s => s.status === 'WIN' || s.status === 'LOSS');
+  const wins   = closed.filter(s => s.status === 'WIN');
+  const losses = closed.filter(s => s.status === 'LOSS');
+
+  // Puntos totales (sumar pnlPoints calculados al cierre)
+  const totalPtsWon  = wins.reduce((a, s) => a + (s.pnlPoints || 0), 0);
+  const totalPtsLost = losses.reduce((a, s) => a + Math.abs(s.pnlPoints || 0), 0);
+  const netPoints    = +(totalPtsWon - totalPtsLost).toFixed(2);
+
+  // Desglose por TP
+  const tp1s = wins.filter(s => s.tpHit === 1);
+  const tp2s = wins.filter(s => s.tpHit === 2);
+  const tp3s = wins.filter(s => s.tpHit === 3);
+
+  const avgWin  = wins.length  ? +(totalPtsWon  / wins.length).toFixed(2)  : 0;
+  const avgLoss = losses.length ? +(totalPtsLost / losses.length).toFixed(2) : 0;
+  const profitFactor = totalPtsLost > 0 ? +(totalPtsWon / totalPtsLost).toFixed(2) : totalPtsWon > 0 ? 99 : 0;
+
+  // Curva de equity diaria
+  const byDay = {};
+  closed.forEach(s => {
+    const d = new Date(s.timestamp).toISOString().slice(0, 10);
+    if (!byDay[d]) byDay[d] = { date: d, pts: 0, wins: 0, losses: 0 };
+    byDay[d].pts    += s.pnlPoints || 0;
+    byDay[d].wins   += s.status === 'WIN' ? 1 : 0;
+    byDay[d].losses += s.status === 'LOSS' ? 1 : 0;
+  });
+
+  // Por modelo
+  const byModel = {};
+  closed.forEach(s => {
+    if (!byModel[s.model]) byModel[s.model] = { wins: 0, losses: 0, ptsWon: 0, ptsLost: 0 };
+    const m = byModel[s.model];
+    if (s.status === 'WIN')  { m.wins++;   m.ptsWon  += (s.pnlPoints || 0); }
+    else                     { m.losses++; m.ptsLost += Math.abs(s.pnlPoints || 0); }
+  });
+
+  // Por activo
+  const byAsset = {};
+  closed.forEach(s => {
+    if (!byAsset[s.symbol]) byAsset[s.symbol] = { wins: 0, losses: 0, ptsWon: 0, ptsLost: 0, name: s.assetName };
+    const a = byAsset[s.symbol];
+    if (s.status === 'WIN')  { a.wins++;   a.ptsWon  += (s.pnlPoints || 0); }
+    else                     { a.losses++; a.ptsLost += Math.abs(s.pnlPoints || 0); }
+  });
+
+  res.json({
+    period, symbol: symbol || 'all',
+    total: closed.length, wins: wins.length, losses: losses.length,
+    winRate: closed.length ? Math.round(wins.length / closed.length * 100) : 0,
+    totalPtsWon: +totalPtsWon.toFixed(2), totalPtsLost: +totalPtsLost.toFixed(2),
+    netPoints, avgWin, avgLoss, profitFactor,
+    tpBreakdown: { tp1: tp1s.length, tp2: tp2s.length, tp3: tp3s.length },
+    tpPoints: {
+      tp1: +tp1s.reduce((a,s)=>a+(s.pnlPoints||0),0).toFixed(2),
+      tp2: +tp2s.reduce((a,s)=>a+(s.pnlPoints||0),0).toFixed(2),
+      tp3: +tp3s.reduce((a,s)=>a+(s.pnlPoints||0),0).toFixed(2)
+    },
+    equity: Object.values(byDay).sort((a,b)=>a.date.localeCompare(b.date)),
+    byModel: Object.entries(byModel).map(([model, d]) => ({
+      model,
+      ...d,
+      wr: d.wins+d.losses>0 ? Math.round(d.wins/(d.wins+d.losses)*100) : 0,
+      net: +(d.ptsWon - d.ptsLost).toFixed(2)
+    })).sort((a,b) => b.net - a.net),
+    byAsset: Object.entries(byAsset).map(([sym, d]) => ({
+      symbol: sym, name: d.name,
+      wins: d.wins, losses: d.losses,
+      wr: d.wins+d.losses>0 ? Math.round(d.wins/(d.wins+d.losses)*100) : 0,
+      net: +(d.ptsWon - d.ptsLost).toFixed(2)
+    }))
+  });
+});
 
 app.put('/api/signals/:id', async (req, res) => {
   const id = parseInt(req.params.id);
