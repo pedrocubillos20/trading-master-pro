@@ -2354,12 +2354,14 @@ const SMC = {
     const last   = candles[candles.length - 1];
     const avgRange = this.getAvgRange(candles);
 
-    // ── Helper: check if any of the last N candles touched the OB ──
+    // touchedRecently: wick del precio rozó el OB en las últimas N velas
+    // FIX: tolerancia 0.15x avgRange (era 0.5x — demasiado amplio)
+    // FIX: ventana máx 5 velas = 25 min en M5 (era 8 = 40 min)
     const touchedRecently = (zone, n, side) => {
-      const window = candles.slice(-n);
+      const window = candles.slice(-Math.min(n, 5));
       return window.some(c => {
-        if (side === 'BUY')  return c.low <= zone.high + avgRange * 0.5 && c.high >= zone.low - avgRange * 0.5;
-        if (side === 'SELL') return c.high >= zone.low - avgRange * 0.5 && c.low <= zone.high + avgRange * 0.5;
+        if (side === 'BUY')  return c.low  <= zone.high + avgRange * 0.15 && c.high >= zone.low;
+        if (side === 'SELL') return c.high >= zone.low  - avgRange * 0.15 && c.low  <= zone.high;
         return false;
       });
     };
@@ -2398,13 +2400,20 @@ const SMC = {
 
       const isStructOB = zone.isStructureOB || zone.pattern === 'CHOCH_OB';
 
-      // Confirmación REAL: necesitamos al menos 1 vela VERDE que haya CERRADO
-      // DESPUÉS de tocar el OB (no la misma vela del toque)
-      // Para structureOB se permite confirmación en la última vela (CHoCH ya confirmó dirección)
-      const lastBullClose = candles.slice(-3).some(c => c.close > c.open && c.close > zone.low);
+      // FIX CONFIRMACIÓN: exigir que el precio esté EN el OB primero,
+      // luego la vela de confirmación debe cerrar ENCIMA del piso del OB
+      // lastBullClose con "c.close > zone.low" sola no es suficiente —
+      // puede ser una vela verde ENCIMA del OB sin que el precio haya retrocedido
+      // NUEVO: verificar que al menos 1 vela en las últimas 5 tocó el OB (low dentro)
+      // Y que después de ese toque hay confirmación alcista
+      const touchIdx = candles.slice(-5).findIndex(c => c.low <= zone.high + avgRange * 0.15 && c.low >= zone.low - avgRange * 0.5);
+      const hasOBTouch = touchIdx >= 0;
+      // Confirmación: vela alcista DESPUÉS del toque (cierre encima del piso del OB)
+      const afterTouch = hasOBTouch ? candles.slice(-(5-touchIdx)) : [];
+      const confAfterTouch = afterTouch.some(c => c.close > c.open && c.close >= zone.low);
       const hasConf = isStructOB
-        ? (lastBullClose || recentConf(zone, 4, 'BUY'))
-        : (recentConf(zone, 3, 'BUY') && lastBullClose); // OB normal: requiere ambas
+        ? hasOBTouch && (confAfterTouch || recentConf(zone, 3, 'BUY'))
+        : hasOBTouch && confAfterTouch;
 
       if (!hasConf) continue;
 
@@ -2413,11 +2422,14 @@ const SMC = {
       const risk    = entry - slLevel;
       if (risk <= 0 || risk > avgRange * 10) continue;
 
-      // Precio debe estar DENTRO del OB o máximo 0.5x avgRange por encima del techo
+      // FIX ENTRADA TARDÍA: eliminar priceJustAbove — era la causa de entrar en HH
+      // Caso del gráfico: OB en 8044-8045, precio hizo HH en 8050.50
+      // priceJustAbove (0.5x avgRange) permitía entrar hasta 8046 = zona de HH
+      // AHORA: precio DENTRO del OB o wick mínimo (0.1x) por debajo — no encima
       const priceInOB      = entry >= zone.low && entry <= zone.high;
-      const priceJustAbove = entry > zone.high && entry <= zone.high + avgRange * 0.5;
-      const priceJustBelow = entry < zone.low  && entry >= zone.low  - avgRange * 0.3;
-      if (!priceInOB && !priceJustAbove && !priceJustBelow) continue;
+      const priceJustBelow = entry < zone.low  && entry >= zone.low - avgRange * 0.1;
+      // priceJustAbove ELIMINADO: si el precio está encima del OB = oportunidad pasó
+      if (!priceInOB && !priceJustBelow) continue;
 
       const conf = candles.slice(-3).some(c => c.close>c.open && c.close>candles[candles.length-4]?.close)
         ? 'BULLISH_CLOSE'
@@ -2445,11 +2457,14 @@ const SMC = {
 
       const isStructOB = zone.isStructureOB || zone.pattern === 'CHOCH_OB';
 
-      // Confirmación REAL: vela ROJA reciente que cerró DESPUÉS del toque del OB
-      const lastBearClose = candles.slice(-3).some(c => c.close < c.open && c.close < zone.high);
+      // FIX: mismo patrón que BUY — toque real del OB primero, confirmación después
+      const touchIdxS = candles.slice(-5).findIndex(c => c.high >= zone.low - avgRange * 0.15 && c.high <= zone.high + avgRange * 0.5);
+      const hasOBTouchS = touchIdxS >= 0;
+      const afterTouchS = hasOBTouchS ? candles.slice(-(5-touchIdxS)) : [];
+      const confAfterTouchS = afterTouchS.some(c => c.close < c.open && c.close <= zone.high);
       const hasConf = isStructOB
-        ? (lastBearClose || recentConf(zone, 4, 'SELL'))
-        : (recentConf(zone, 3, 'SELL') && lastBearClose);
+        ? hasOBTouchS && (confAfterTouchS || recentConf(zone, 3, 'SELL'))
+        : hasOBTouchS && confAfterTouchS;
 
       if (!hasConf) continue;
 
@@ -2457,11 +2472,13 @@ const SMC = {
       const slLevel = +((zone.wickHigh || zone.high) + avgRange * 0.3).toFixed(config.decimals);
       const risk    = slLevel - entry;
       if (risk <= 0 || risk > avgRange * 10) continue;
-      // Precio DENTRO del OB de oferta o muy cerca del borde inferior
+
+      // FIX: eliminar priceJustBelow — si el precio ya cayó del OB = tarde
+      // Para venta: precio dentro del OB o wick mínimo (0.1x) por encima
       const priceInOB      = entry >= zone.low && entry <= zone.high;
-      const priceJustBelow = entry < zone.low  && entry >= zone.low  - avgRange * 0.5;
-      const priceJustAbove = entry > zone.high && entry <= zone.high + avgRange * 0.3;
-      if (!priceInOB && !priceJustBelow && !priceJustAbove) continue;
+      const priceJustAbove = entry > zone.high && entry <= zone.high + avgRange * 0.1;
+      // priceJustBelow ELIMINADO: precio debajo del OB = momento de venta pasó
+      if (!priceInOB && !priceJustAbove) continue;
 
       const conf = candles.slice(-3).some(c => c.close<c.open && c.close<candles[candles.length-4]?.close)
         ? 'BEARISH_CLOSE'
@@ -3089,8 +3106,8 @@ const SMC = {
         if (zone.mitigated) continue;
 
         // El precio ACTUAL debe estar cerca del OB (no entrar cuando ya viajó lejos)
-        const priceNearZone = lastCandle.close >= zone.low - avgRange * 1.5 &&
-                              lastCandle.close <= zone.high + avgRange * 1.0;
+        const priceNearZone = lastCandle.close >= zone.low - avgRange * 0.2 &&
+                              lastCandle.close <= zone.high + avgRange * 0.2;
         if (!priceNearZone) continue;
 
         // Buscar la vela de rechazo más fuerte dentro de las últimas 8
@@ -3164,8 +3181,8 @@ const SMC = {
         if (zone.mitigated) continue;
 
         // El precio ACTUAL debe estar cerca del OB
-        const priceNearZoneB = lastCandle.close <= zone.high + avgRange * 1.5 &&
-                               lastCandle.close >= zone.low - avgRange * 1.0;
+        const priceNearZoneB = lastCandle.close <= zone.high + avgRange * 0.2 &&
+                               lastCandle.close >= zone.low - avgRange * 0.2;
         if (!priceNearZoneB) continue;
 
         let bestBull = null, bestScore = 0;
