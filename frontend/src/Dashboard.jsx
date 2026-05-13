@@ -666,50 +666,236 @@ function SenalesPanel({signals}){
 }
 
 function StatsPanel({stats,signals}){
-  const wr=stats.total>0?Math.round(stats.wins/stats.total*100):0
-  const byModel={}
-  signals.forEach(s=>{
-    if(!s.model||s.status==='PENDING')return
-    if(!byModel[s.model])byModel[s.model]={wins:0,losses:0}
-    s.status==='WIN'?byModel[s.model].wins++:byModel[s.model].losses++
-  })
-  return(
-    <div style={{overflowY:'auto',flex:1,display:'flex',flexDirection:'column',gap:10}}>
-      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(110px,1fr))',gap:7}}>
-        {[{l:'Win Rate',v:`${wr}%`,c:wr>=60?C.green:wr>=40?C.yellow:C.red},
-          {l:'Total',v:stats.total||0},{l:'Wins',v:stats.wins||0,c:C.green},
-          {l:'Losses',v:stats.losses||0,c:C.red},{l:'Activas',v:stats.pending||0,c:C.yellow},
-          {l:'TP1',v:stats.tp1Hits||0,c:C.teal},{l:'TP2',v:stats.tp2Hits||0,c:C.teal},{l:'TP3',v:stats.tp3Hits||0,c:C.teal}
-        ].map(({l,v,c})=>(
-          <div key={l} className="card" style={{padding:'10px 14px'}}>
-            <div style={{fontSize:9,color:C.muted,marginBottom:3,textTransform:'uppercase',letterSpacing:'.05em'}}>{l}</div>
-            <div style={{fontSize:22,fontWeight:800,color:c||C.text}}>{v}</div>
-          </div>
-        ))}
+  const [period,setPeriod]=React.useState('week')
+  const [asset,setAsset]=React.useState('all')
+  const [pnl,setPnl]=React.useState(null)
+  const [loading,setLoading]=React.useState(false)
+
+  const PERIODS=[{v:'day',l:'Hoy'},{v:'week',l:'Semana'},{v:'month',l:'Mes'},{v:'all',l:'Todo'}]
+  const ASSETS=[{v:'all',l:'Todos'},{v:'stpRNG',l:'Step'},{v:'frxXAUUSD',l:'Oro'},{v:'1HZ100V',l:'V100'}]
+
+  const calcLocal=React.useCallback(()=>{
+    const now=Date.now()
+    const ms={day:86400000,week:604800000,month:2592000000,all:Infinity}
+    const cutoff=period==='all'?0:now-ms[period]
+    let sl=signals.filter(s=>(s.status==='WIN'||s.status==='LOSS')&&s.timestamp>=cutoff&&(asset==='all'||s.symbol===asset))
+    const wins=sl.filter(s=>s.status==='WIN'), losses=sl.filter(s=>s.status==='LOSS')
+
+    const estPts=s=>{
+      if(s.pnlPoints!=null)return+s.pnlPoints
+      const isLong=s.action==='LONG'||s.action==='BUY'
+      if(s.status==='WIN'){
+        const cl=s.tpHit===3?s.tp3:s.tpHit===2?s.tp2:s.tp1
+        return isLong?(cl-s.entry):(s.entry-cl)
+      }
+      return isLong?(s.stop-s.entry):(s.entry-s.stop)
+    }
+
+    const totalWon=wins.reduce((a,s)=>a+Math.abs(estPts(s)),0)
+    const totalLost=losses.reduce((a,s)=>a+Math.abs(estPts(s)),0)
+
+    const byDay={}
+    sl.forEach(s=>{
+      const d=new Date(s.timestamp).toISOString().slice(0,10)
+      if(!byDay[d])byDay[d]={date:d,pts:0,wins:0,losses:0}
+      byDay[d].pts+=estPts(s)
+      s.status==='WIN'?byDay[d].wins++:byDay[d].losses++
+    })
+
+    const byModel={}
+    sl.forEach(s=>{
+      if(!byModel[s.model])byModel[s.model]={model:s.model,wins:0,losses:0,ptsWon:0,ptsLost:0}
+      const m=byModel[s.model]
+      if(s.status==='WIN'){m.wins++;m.ptsWon+=Math.abs(estPts(s))}
+      else{m.losses++;m.ptsLost+=Math.abs(estPts(s))}
+    })
+
+    const byAsset={}
+    sl.forEach(s=>{
+      if(!byAsset[s.symbol])byAsset[s.symbol]={symbol:s.symbol,name:s.assetName,wins:0,losses:0,ptsWon:0,ptsLost:0}
+      const a=byAsset[s.symbol]
+      if(s.status==='WIN'){a.wins++;a.ptsWon+=Math.abs(estPts(s))}
+      else{a.losses++;a.ptsLost+=Math.abs(estPts(s))}
+    })
+
+    const tp1s=wins.filter(s=>s.tpHit===1), tp2s=wins.filter(s=>s.tpHit===2), tp3s=wins.filter(s=>s.tpHit===3)
+
+    setPnl({
+      total:sl.length, wins:wins.length, losses:losses.length,
+      winRate:sl.length?Math.round(wins.length/sl.length*100):0,
+      totalPtsWon:+totalWon.toFixed(2), totalPtsLost:+totalLost.toFixed(2),
+      netPoints:+(totalWon-totalLost).toFixed(2),
+      avgWin:wins.length?+(totalWon/wins.length).toFixed(2):0,
+      avgLoss:losses.length?+(totalLost/losses.length).toFixed(2):0,
+      profitFactor:totalLost>0?+(totalWon/totalLost).toFixed(2):totalWon>0?99:0,
+      tpBreakdown:{tp1:tp1s.length,tp2:tp2s.length,tp3:tp3s.length},
+      tpPoints:{
+        tp1:+tp1s.reduce((a,s)=>a+Math.abs(estPts(s)),0).toFixed(2),
+        tp2:+tp2s.reduce((a,s)=>a+Math.abs(estPts(s)),0).toFixed(2),
+        tp3:+tp3s.reduce((a,s)=>a+Math.abs(estPts(s)),0).toFixed(2)
+      },
+      equity:Object.values(byDay).sort((a,b)=>a.date.localeCompare(b.date)),
+      byModel:Object.values(byModel).map(m=>({...m,
+        wr:m.wins+m.losses>0?Math.round(m.wins/(m.wins+m.losses)*100):0,
+        net:+(m.ptsWon-m.ptsLost).toFixed(2)
+      })).sort((a,b)=>b.net-a.net),
+      byAsset:Object.values(byAsset).map(a=>({...a,
+        wr:a.wins+a.losses>0?Math.round(a.wins/(a.wins+a.losses)*100):0,
+        net:+(a.ptsWon-a.ptsLost).toFixed(2)
+      }))
+    })
+  },[period,asset,signals])
+
+  React.useEffect(()=>{calcLocal()},[calcLocal])
+
+  const net=pnl?.netPoints||0
+  const netColor=net>0?C.green:net<0?C.red:C.muted
+  const pfColor=!pnl?C.muted:pnl.profitFactor>=2?C.green:pnl.profitFactor>=1?C.yellow:C.red
+
+  // Mini equity bar chart
+  const EquityChart=({equity})=>{
+    if(!equity?.length)return<div style={{height:72,display:'flex',alignItems:'center',justifyContent:'center',color:C.muted,fontSize:11}}>Sin datos</div>
+    const maxAbs=Math.max(...equity.map(d=>Math.abs(d.pts)),1)
+    return(
+      <div style={{display:'flex',alignItems:'center',gap:2,height:72,padding:'0 2px'}}>
+        {equity.map((d,i)=>{
+          const h=Math.max(4,Math.round(Math.abs(d.pts)/maxAbs*64))
+          const pos=d.pts>=0
+          return(
+            <div key={i} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center'}}
+              title={`${d.date}: ${pos?'+':''}${d.pts.toFixed(1)}pts (${d.wins}W/${d.losses}L)`}>
+              <div style={{width:'100%',maxWidth:28,minWidth:4,height:h,
+                background:pos?C.green:C.red,borderRadius:2,opacity:.9}}/>
+            </div>
+          )
+        })}
       </div>
-      {Object.keys(byModel).length>0&&(
-        <div className="card" style={{padding:0,overflow:'hidden'}}>
-          <div style={{padding:'7px 12px',fontSize:10,fontWeight:600,color:C.muted,borderBottom:`1px solid ${C.border}`,letterSpacing:'.05em'}}>POR MODELO</div>
-          <div style={{overflowX:'auto'}}>
-            <table style={{width:'100%',borderCollapse:'collapse',fontSize:11,minWidth:280}}>
-              <thead><tr style={{background:C.bg2}}>
-                {['Modelo','Wins','Losses','Win Rate'].map(h=>(
-                  <th key={h} style={{padding:'6px 12px',textAlign:'left',color:C.muted,fontWeight:600,fontSize:10,borderBottom:`1px solid ${C.border}`}}>{h}</th>
-                ))}
-              </tr></thead>
-              <tbody>{Object.entries(byModel).map(([model,d])=>{
-                const mwr=d.wins+d.losses>0?Math.round(d.wins/(d.wins+d.losses)*100):0
-                return(<tr key={model} style={{borderBottom:`1px solid ${C.border}22`}}>
-                  <td style={{padding:'6px 12px',color:C.teal,fontWeight:700}}>{model}</td>
-                  <td style={{padding:'6px 12px',color:C.green,fontWeight:700}}>{d.wins}</td>
-                  <td style={{padding:'6px 12px',color:C.red}}>{d.losses}</td>
-                  <td style={{padding:'6px 12px',color:mwr>=60?C.green:mwr>=40?C.yellow:C.red,fontWeight:700}}>{mwr}%</td>
-                </tr>)
-              })}</tbody>
-            </table>
+    )
+  }
+
+  const Btn=({v,l,cur,set})=>(
+    <button onClick={()=>set(v)} style={{
+      padding:'4px 12px',borderRadius:5,border:'none',cursor:'pointer',fontSize:11,fontWeight:600,
+      background:cur===v?C.tealDark||'#00b894':'transparent',
+      color:cur===v?'#000':C.muted
+    }}>{l}</button>
+  )
+
+  return(
+    <div style={{overflowY:'auto',flex:1,display:'flex',flexDirection:'column',gap:9}}>
+
+      {/* Filtros */}
+      <div style={{display:'flex',gap:7,flexWrap:'wrap',alignItems:'center'}}>
+        <div style={{display:'flex',gap:2,background:C.bg2,borderRadius:7,padding:3,border:`1px solid ${C.border}`}}>
+          {PERIODS.map(p=><Btn key={p.v} v={p.v} l={p.l} cur={period} set={setPeriod}/>)}
+        </div>
+        <div style={{display:'flex',gap:2,background:C.bg2,borderRadius:7,padding:3,border:`1px solid ${C.border}`}}>
+          {ASSETS.map(a=><Btn key={a.v} v={a.v} l={a.l} cur={asset} set={setAsset}/>)}
+        </div>
+      </div>
+
+      {pnl&&<>
+        {/* KPIs principales */}
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))',gap:7}}>
+          {[
+            {l:'Puntos Netos',v:`${net>=0?'+':''}${net}`,c:netColor,big:true,sub:`${pnl.total} ops`},
+            {l:'Win Rate',v:`${pnl.winRate}%`,c:pnl.winRate>=60?C.green:pnl.winRate>=40?C.yellow:C.red,sub:`${pnl.wins}W / ${pnl.losses}L`},
+            {l:'Profit Factor',v:pnl.profitFactor,c:pfColor,sub:'Pts ganados / perdidos'},
+            {l:'Pts Ganados',v:`+${pnl.totalPtsWon}`,c:C.green,sub:`Prom: +${pnl.avgWin}/op`},
+            {l:'Pts Perdidos',v:`-${pnl.totalPtsLost}`,c:C.red,sub:`Prom: -${pnl.avgLoss}/op`},
+          ].map(({l,v,c,big,sub})=>(
+            <div key={l} className="card" style={{padding:'10px 14px'}}>
+              <div style={{fontSize:9,color:C.muted,marginBottom:3,textTransform:'uppercase',letterSpacing:'.05em'}}>{l}</div>
+              <div style={{fontSize:big?26:20,fontWeight:800,color:c||C.text}}>{v}</div>
+              {sub&&<div style={{fontSize:10,color:C.muted,marginTop:2}}>{sub}</div>}
+            </div>
+          ))}
+        </div>
+
+        {/* TP Breakdown */}
+        <div className="card" style={{padding:'11px 14px'}}>
+          <div style={{fontSize:10,fontWeight:600,color:C.muted,letterSpacing:'.05em',marginBottom:9}}>DESGLOSE POR TP</div>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:7}}>
+            {[
+              {l:'TP1',count:pnl.tpBreakdown?.tp1||0,pts:pnl.tpPoints?.tp1||0,c:C.teal},
+              {l:'TP2',count:pnl.tpBreakdown?.tp2||0,pts:pnl.tpPoints?.tp2||0,c:C.green},
+              {l:'TP3',count:pnl.tpBreakdown?.tp3||0,pts:pnl.tpPoints?.tp3||0,c:'#f0883e'}
+            ].map(tp=>(
+              <div key={tp.l} style={{background:C.bg2,borderRadius:7,padding:'9px 12px',
+                border:`1px solid ${tp.c}44`,textAlign:'center'}}>
+                <div style={{fontSize:10,color:tp.c,fontWeight:700,marginBottom:3}}>{tp.l}</div>
+                <div style={{fontSize:22,fontWeight:800,color:C.text}}>{tp.count}</div>
+                <div style={{fontSize:11,color:tp.c,marginTop:2}}>+{(+tp.pts).toFixed(1)} pts</div>
+              </div>
+            ))}
           </div>
         </div>
-      )}
+
+        {/* Curva de puntos por día */}
+        {pnl.equity?.length>0&&(
+          <div className="card" style={{padding:'11px 14px'}}>
+            <div style={{display:'flex',justifyContent:'space-between',marginBottom:8}}>
+              <div style={{fontSize:10,fontWeight:600,color:C.muted,letterSpacing:'.05em'}}>PUNTOS POR DÍA</div>
+              <div style={{fontSize:10,color:C.muted}}>{pnl.equity.length} días</div>
+            </div>
+            <EquityChart equity={pnl.equity}/>
+            <div style={{display:'flex',justifyContent:'space-between',marginTop:4,fontSize:10,color:C.muted}}>
+              <span>{pnl.equity[0]?.date}</span>
+              <span>{pnl.equity[pnl.equity.length-1]?.date}</span>
+            </div>
+          </div>
+        )}
+
+        {/* Por modelo */}
+        {pnl.byModel?.length>0&&(
+          <div className="card" style={{padding:0,overflow:'hidden'}}>
+            <div style={{padding:'7px 13px',fontSize:10,fontWeight:600,color:C.muted,borderBottom:`1px solid ${C.border}`,letterSpacing:'.05em'}}>POR MODELO</div>
+            <div style={{overflowX:'auto'}}>
+              <table style={{width:'100%',borderCollapse:'collapse',fontSize:11,minWidth:360}}>
+                <thead><tr style={{background:C.bg2}}>
+                  {['Modelo','W','L','WR%','Pts Ganados','Pts Perdidos','Neto'].map(h=>(
+                    <th key={h} style={{padding:'6px 11px',textAlign:'left',color:C.muted,fontWeight:600,fontSize:10,borderBottom:`1px solid ${C.border}`}}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>{pnl.byModel.map(m=>(
+                  <tr key={m.model} style={{borderBottom:`1px solid ${C.border}22`}}>
+                    <td style={{padding:'7px 11px',color:C.teal,fontWeight:700,fontSize:10}}>{m.model}</td>
+                    <td style={{padding:'7px 11px',color:C.green,fontWeight:700}}>{m.wins}</td>
+                    <td style={{padding:'7px 11px',color:C.red}}>{m.losses}</td>
+                    <td style={{padding:'7px 11px',color:m.wr>=60?C.green:m.wr>=40?C.yellow:C.red,fontWeight:700}}>{m.wr}%</td>
+                    <td style={{padding:'7px 11px',color:C.green}}>+{(m.ptsWon||0).toFixed(1)}</td>
+                    <td style={{padding:'7px 11px',color:C.red}}>-{(m.ptsLost||0).toFixed(1)}</td>
+                    <td style={{padding:'7px 11px',color:m.net>=0?C.green:C.red,fontWeight:800}}>{m.net>=0?'+':''}{m.net}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Por activo */}
+        {pnl.byAsset?.length>0&&(
+          <div className="card" style={{padding:0,overflow:'hidden'}}>
+            <div style={{padding:'7px 13px',fontSize:10,fontWeight:600,color:C.muted,borderBottom:`1px solid ${C.border}`,letterSpacing:'.05em'}}>POR ACTIVO</div>
+            <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
+              <thead><tr style={{background:C.bg2}}>
+                {['Activo','W','L','WR%','Neto'].map(h=>(
+                  <th key={h} style={{padding:'6px 11px',textAlign:'left',color:C.muted,fontWeight:600,fontSize:10,borderBottom:`1px solid ${C.border}`}}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>{pnl.byAsset.map(a=>(
+                <tr key={a.symbol} style={{borderBottom:`1px solid ${C.border}22`}}>
+                  <td style={{padding:'7px 11px',color:C.text,fontWeight:600}}>{a.name||a.symbol}</td>
+                  <td style={{padding:'7px 11px',color:C.green,fontWeight:700}}>{a.wins}</td>
+                  <td style={{padding:'7px 11px',color:C.red}}>{a.losses}</td>
+                  <td style={{padding:'7px 11px',color:a.wr>=60?C.green:a.wr>=40?C.yellow:C.red,fontWeight:700}}>{a.wr}%</td>
+                  <td style={{padding:'7px 11px',color:a.net>=0?C.green:C.red,fontWeight:800}}>{a.net>=0?'+':''}{a.net}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        )}
+      </>}
     </div>
   )
 }
