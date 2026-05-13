@@ -2168,7 +2168,7 @@ const SMC = {
         for (let j = lastHigh.index + 1; j < candles.length; j++) {
           if (candles[j].close < targetHL.price) {
             const recency = candles.length - 1 - j;
-            if (recency <= 60) { // dentro de las últimas 60 velas
+            if (recency <= 30) { // FIX-AUDIT: reducido 60→30 (2.5h max, antes 5h — stale)
               const epoch = candles[j]?.epoch || (candles[j]?.time ? Math.floor(candles[j].time/1000) : null);
               let obIndex = j - 1;
               while (obIndex > targetHL.index && candles[obIndex].close < candles[obIndex].open) obIndex--;
@@ -2199,7 +2199,7 @@ const SMC = {
         for (let j = lastLow.index + 1; j < candles.length; j++) {
           if (candles[j].close > targetLH.price) {
             const recency = candles.length - 1 - j;
-            if (recency <= 60) {
+            if (recency <= 30) { // FIX-AUDIT: reducido 60→30 (2.5h max, antes 5h — stale)
               const epoch = candles[j]?.epoch || (candles[j]?.time ? Math.floor(candles[j].time/1000) : null);
               let obIndex = j - 1;
               while (obIndex > targetLH.index && candles[obIndex].close > candles[obIndex].open) obIndex--;
@@ -2300,7 +2300,7 @@ const SMC = {
             break;
           }
         }
-        if (breakIdx > 0 && breakIdx >= candles.length - 50) {
+        if (breakIdx > 0 && breakIdx >= candles.length - 30) { // FIX-AUDIT: 50→30 (stale BOS)
           const c = candles[breakIdx];
           return { type: 'BULLISH_BOS', side: 'BUY', level: targetHigh.price,
             epoch: c?.epoch || (c?.time ? Math.floor(c.time/1000) : null),
@@ -2319,7 +2319,7 @@ const SMC = {
             break;
           }
         }
-        if (breakIdx > 0 && breakIdx >= candles.length - 50) {
+        if (breakIdx > 0 && breakIdx >= candles.length - 30) { // FIX-AUDIT: 50→30 (stale BOS)
           const c = candles[breakIdx];
           return { type: 'BEARISH_BOS', side: 'SELL', level: targetLow.price,
             epoch: c?.epoch || (c?.time ? Math.floor(c.time/1000) : null),
@@ -3017,7 +3017,7 @@ const SMC = {
             ? +((ob.wickLow||ob.low) - avgRange*0.3).toFixed(config.decimals)
             : +((ob.wickHigh||ob.high) + avgRange*0.3).toFixed(config.decimals);
           const risk = Math.abs(price - slLevel);
-          if (risk > 0 && risk <= avgRange * 8) {
+          if (risk > 0 && risk <= avgRange * 5) { // FIX-AUDIT: 8→5x (SL demasiado lejano = mala RR)
             const synthPullback = {
               side: opSide, zone: ob,
               entry: +(price).toFixed(config.decimals), stop: slLevel,
@@ -3111,10 +3111,11 @@ const SMC = {
         if (!priceNearZone) continue;
 
         // Buscar la vela de rechazo más fuerte dentro de las últimas 8
+        // FIX-AUDIT: wick debe ENTRAR en el cuerpo del OB (no solo rozar zone.low)
         let bestBear = null, bestScore = 0;
         for (let ci = last8.length - 1; ci >= 0; ci--) {
           const c = last8[ci];
-          const touchedZone = c.high >= zone.low * 0.998; // mecha tocó la zona
+          const touchedZone = c.high >= zone.low && c.high <= zone.high * 1.02; // wick entró en el OB
           const strongBear  = c.close < c.open;
           const candleSize  = Math.abs(c.close - c.open);
           const bigCandle   = candleSize > avgRange * 0.6;
@@ -3185,10 +3186,11 @@ const SMC = {
                                lastCandle.close >= zone.low - avgRange * 0.2;
         if (!priceNearZoneB) continue;
 
+        // FIX-AUDIT: wick debe ENTRAR en el cuerpo del OB de demanda
         let bestBull = null, bestScore = 0;
         for (let ci = last8.length - 1; ci >= 0; ci--) {
           const c = last8[ci];
-          const touchedZone = c.low <= zone.high * 1.002;
+          const touchedZone = c.low <= zone.high && c.low >= zone.low * 0.98; // wick entró en el OB
           const strongBull  = c.close > c.open;
           const candleSize  = Math.abs(c.close - c.open);
           const bigCandle   = candleSize > avgRange * 0.6;
@@ -3397,30 +3399,44 @@ const SMC = {
       }
     }
     
-    // 4. LIQUIDITY_GRAB — FIX 6: requiere triple confluencia + riesgo máximo 4x avgRange
-    const prev2Candle = candlesM5[candlesM5.length - 3];
-    const prevCandle  = candlesM5[candlesM5.length - 2];
+    // 4. LIQUIDITY_GRAB — FIX-AUDIT: ampliar ventana a últimas 4 velas
+    // Antes solo miraba [i-2] y [i-1], perdía grabs que ocurrieron 2-3 velas atrás
+    // Ahora busca el grab más reciente en las últimas 4 velas
+    {
+      let lgSellCandle = null, lgSellRef = null;
+      let lgBuyCandle  = null, lgBuyRef  = null;
+      // Buscar el sweep más reciente en las últimas 4 velas cerradas
+      for (let gi = candlesM5.length - 2; gi >= Math.max(1, candlesM5.length - 5); gi--) {
+        const gc     = candlesM5[gi];
+        const gcPrev = candlesM5[gi - 1];
+        if (!gc || !gcPrev) continue;
+        // SELL grab: vela gi rompió máximo de gi-1 pero cerró abajo → fallida alcista
+        if (!lgSellCandle && gc.high > gcPrev.high && gc.close < gcPrev.high) {
+          lgSellCandle = gc; lgSellRef = gcPrev;
+        }
+        // BUY grab: vela gi rompió mínimo de gi-1 pero cerró arriba → fallida bajista
+        if (!lgBuyCandle && gc.low < gcPrev.low && gc.close > gcPrev.low) {
+          lgBuyCandle = gc; lgBuyRef = gcPrev;
+        }
+        if (lgSellCandle && lgBuyCandle) break;
+      }
 
-    if (prev2Candle && prevCandle) {
-      const brokeHigh = prevCandle.high > prev2Candle.high && prevCandle.close < prev2Candle.high;
-      const brokeLow  = prevCandle.low  < prev2Candle.low  && prevCandle.close > prev2Candle.low;
-
-      if (brokeHigh && lastCandle.close < prevCandle.close && opSide === 'SELL') {
-        // FIX: requiere H1 BEARISH Y M15 BEARISH (antes solo H1+M15 BEARISH implícito)
+      // SELL: grab alcista confirmado + cierre bajista en vela actual
+      if (lgSellCandle && lgSellRef && lastCandle.close < lgSellCandle.close && opSide === 'SELL') {
         if (structureH1.trend === 'BEARISH' && structureM15?.trend === 'BEARISH') {
-          const risk = prevCandle.high + avgRange*0.3 - lastCandle.close;
-          if (risk > 0 && risk < avgRange * 4) { // FIX: era 6x, ahora 4x máximo
+          const risk = lgSellCandle.high + avgRange*0.3 - lastCandle.close;
+          if (risk > 0 && risk < avgRange * 4) {
             const lgEntry = {
               side:  'SELL',
               entry: +(lastCandle.close).toFixed(config.decimals),
-              stop:  +(prevCandle.high + avgRange*0.25).toFixed(config.decimals),
+              stop:  +(lgSellCandle.high + avgRange*0.25).toFixed(config.decimals),
               tp1:   +(lastCandle.close - risk*1.5).toFixed(config.decimals),
               tp2:   +(lastCandle.close - risk*2.5).toFixed(config.decimals),
               tp3:   +(lastCandle.close - risk*4.0).toFixed(config.decimals),
               entryType: 'LIQUIDITY_GRAB'
             };
             let score = 84;
-            if (tripleConfluence)             score += 6; // triple = bonus grande
+            if (tripleConfluence)             score += 6;
             if (premiumDiscount==='PREMIUM')  score += 4;
             score = Math.min(score, 96);
             signals.push({
@@ -3431,14 +3447,15 @@ const SMC = {
         }
       }
 
-      if (brokeLow && lastCandle.close > prevCandle.close && opSide === 'BUY') {
+      // BUY: grab bajista confirmado + cierre alcista en vela actual
+      if (lgBuyCandle && lgBuyRef && lastCandle.close > lgBuyCandle.close && opSide === 'BUY') {
         if (structureH1.trend === 'BULLISH' && structureM15?.trend === 'BULLISH') {
-          const risk = lastCandle.close - (prevCandle.low - avgRange*0.25);
+          const risk = lastCandle.close - (lgBuyCandle.low - avgRange*0.25);
           if (risk > 0 && risk < avgRange * 4) {
             const lgEntry = {
               side:  'BUY',
               entry: +(lastCandle.close).toFixed(config.decimals),
-              stop:  +(prevCandle.low - avgRange*0.25).toFixed(config.decimals),
+              stop:  +(lgBuyCandle.low - avgRange*0.25).toFixed(config.decimals),
               tp1:   +(lastCandle.close + risk*1.5).toFixed(config.decimals),
               tp2:   +(lastCandle.close + risk*2.5).toFixed(config.decimals),
               tp3:   +(lastCandle.close + risk*4.0).toFixed(config.decimals),
@@ -4992,11 +5009,13 @@ function analyzeAsset(symbol) {
     return;
   }
 
-  if (signalRisk > 0 && priceDistance > signalRisk * 0.6) {
+  // FIX-AUDIT: 0.6→0.35 — antes permitía entrar cuando precio ya viajó 60% del riesgo.
+  // 0.35 = máximo 35% de distancia desde la entrada (evita entradas tardías / perseguir precio)
+  if (signalRisk > 0 && priceDistance > signalRisk * 0.35) {
     const direction = signal.action === 'LONG'
       ? (currentPrice > signalEntry ? 'precio ya subió past entry' : 'precio cayó demasiado')
       : (currentPrice < signalEntry ? 'precio ya bajó past entry' : 'precio subió demasiado');
-    console.log(`⛔ [${config.shortName}] SEÑAL VENCIDA — ${direction}: price=${currentPrice.toFixed(config.decimals)} entry=${signalEntry} dist=${priceDistance.toFixed(config.decimals)} > ${(signalRisk*0.6).toFixed(config.decimals)}`);
+    console.log(`⛔ [${config.shortName}] SEÑAL VENCIDA — ${direction}: price=${currentPrice.toFixed(config.decimals)} entry=${signalEntry} dist=${priceDistance.toFixed(config.decimals)} > ${(signalRisk*0.35).toFixed(config.decimals)}`);
     return;
   }
 
@@ -5047,8 +5066,8 @@ function analyzeAsset(symbol) {
   // PERSISTENCIA: guardar señal nueva en Supabase inmediatamente
   saveSignalToSupabase(newSignal).catch(() => {});
 
-  // FIX: límite de señales en memoria + limpiar huérfanas (PENDING > 4h = cerradas sin notificar)
-  const fourHours = 4 * 60 * 60 * 1000;
+  // FIX-AUDIT: señales huérfanas (PENDING > 2h = cerradas sin notificar) — era 4h, demasiado
+  const fourHours = 2 * 60 * 60 * 1000;
   signalHistory = signalHistory.map(s => {
     if (s.status === 'PENDING' && Date.now() - s.timestamp > fourHours) {
       return { ...s, status: 'EXPIRED', closeReason: 'Auto-cerrada por timeout' };
