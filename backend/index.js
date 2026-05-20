@@ -44,8 +44,8 @@ dotenv.config();
 // CONFIGURACIÓN OPENAI - ELISA IA
 // =============================================
 let openai = null;
-if (process.env.OPENAI_API_KEY) {
-  openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+if (process.env.CLAVE_API_DE_OPENAI || process.env.OPENAI_API_KEY) {
+  openai = new OpenAI({ apiKey: process.env.CLAVE_API_DE_OPENAI || process.env.OPENAI_API_KEY });
   console.log('✅ OpenAI conectado - ELISA IA activa');
 } else {
   console.log('⚠️ OPENAI_API_KEY no encontrada - ELISA en modo fallback');
@@ -263,122 +263,7 @@ function isInTradingHours(plan = 'free') {
 // Cache de noticias: evita llamadas repetidas (actualiza cada 30 min)
 const newsCache = { data: null, ts: 0 };
 
-async function fetchMacroNews(symbol) {
-  const now = Date.now();
-  const cacheKey = symbol.slice(0, 6);
-  if (newsCache[cacheKey] && now - newsCache[cacheKey].ts < 30 * 60 * 1000) {
-    return newsCache[cacheKey].data;
-  }
-  try {
-    // Mapeo de símbolo a query de noticias relevante
-    const queries = {
-      frxXAUUSD: 'Gold XAU USD price today Fed interest rates DXY',
-      stpRNG:    'Step Index Deriv synthetic volatility market',
-      '1HZ100V': 'Volatility 100 Index Deriv synthetic market risk'
-    };
-    const query = queries[symbol] || `${symbol} market news today`;
-    // Usar DuckDuckGo instant answer API (sin key, gratis)
-    const res = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&t=tradingpro`);
-    const data = await res.json();
-    const headlines = [
-      data.Abstract,
-      ...(data.RelatedTopics || []).slice(0, 4).map(t => t.Text || '')
-    ].filter(Boolean).join(' | ');
 
-    newsCache[cacheKey] = { data: headlines || 'Sin noticias disponibles', ts: now };
-    return newsCache[cacheKey].data;
-  } catch {
-    return 'Sin acceso a noticias en este momento';
-  }
-}
-
-// ── Validación IA de la señal — devuelve { approve: bool, confidence: 0-100, reason: str } ──
-async function aiValidateSignal(signal, marketCtx, assetData) {
-  if (!openai) return { approve: true, confidence: 70, reason: 'IA no disponible — aprobada por defecto' };
-
-  const { symbol, config } = marketCtx;
-  const isGold   = symbol === 'frxXAUUSD';
-  const isSynth  = symbol !== 'frxXAUUSD'; // Step y V100 son sintéticos = sin macro real
-
-  // Para activos sintéticos: validar solo estructura técnica, no macro
-  const macroContext = isGold
-    ? await fetchMacroNews(symbol).catch(() => 'Sin datos de noticias')
-    : 'Activo sintético — sin exposición macro real';
-
-  const side      = signal.action === 'LONG' ? 'COMPRA' : 'VENTA';
-  const model     = signal.model;
-  const score     = signal.score;
-  const entry     = signal.entry;
-  const sl        = signal.stop;
-  const tp1       = signal.tp1;
-  const risk      = Math.abs(entry - sl).toFixed(2);
-  const rr        = (Math.abs(tp1 - entry) / Math.abs(entry - sl)).toFixed(2);
-
-  const { structureH1, structureM15, structureM5, premiumDiscount, demandZones, supplyZones, choch, bos } = marketCtx;
-
-  const prompt = `Eres un trader institucional SMC experto. Analiza esta señal y da un veredicto claro.
-
-SEÑAL DETECTADA:
-- Activo: ${config?.shortName || symbol}
-- Dirección: ${side}
-- Modelo: ${model} (Score técnico: ${score}%)
-- Entry: ${entry} | SL: ${sl} | TP1: ${tp1}
-- Risk: ${risk} pts | R:R: ${rr}
-
-ESTRUCTURA DE MERCADO:
-- H1: ${structureH1?.trend} (${structureH1?.strength}%)
-- M15: ${structureM15?.trend || 'N/A'} (${structureM15?.strength || 0}%)
-- M5: ${structureM5?.trend} (${structureM5?.strength}%)
-- Premium/Discount: ${premiumDiscount}
-- OBs demanda: ${demandZones?.length || 0} | OBs oferta: ${supplyZones?.length || 0}
-- CHoCH: ${choch ? choch.type + ' en ' + choch.level?.toFixed(2) : 'No'}
-- BOS: ${bos ? bos.type + ' en ' + bos.level?.toFixed(2) : 'No'}
-
-CONTEXTO MACRO/NOTICIAS:
-${macroContext}
-
-CRITERIOS DE EVALUACIÓN:
-1. ¿La dirección del trade está alineada con la estructura H1?
-2. ¿El entry tiene confluencia real (OB + CHoCH/BOS)?
-3. ¿El R:R es mínimo 1:1.5?
-4. Para Oro: ¿hay eventos macro que invaliden la dirección?
-5. ¿El precio está en zona de valor (premium para ventas, discount para compras)?
-
-Responde SOLO en este formato JSON exacto:
-{"approve": true/false, "confidence": 0-100, "reason": "razón concisa max 60 palabras", "warning": "riesgo adicional si existe o null"}`;
-
-  try {
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.2,
-      max_tokens: 200,
-      response_format: { type: 'json_object' }
-    });
-    const raw = completion.choices[0]?.message?.content || '{}';
-    const parsed = JSON.parse(raw);
-    return {
-      approve:    parsed.approve !== false, // default true si no se parsea
-      confidence: Math.min(100, Math.max(0, parsed.confidence || 70)),
-      reason:     parsed.reason || 'Validado por IA',
-      warning:    parsed.warning || null
-    };
-  } catch(e) {
-    console.log('⚠️ Error IA validación:', e.message);
-    return { approve: true, confidence: 65, reason: 'Error IA — aprobada por score técnico' };
-  }
-}
-
-
-
-app.use(cors());
-app.use(express.json());
-
-// =============================================
-// CONFIGURACIÓN TELEGRAM
-// =============================================
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
 async function sendTelegramSignal(signal) {
   if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
@@ -3690,38 +3575,20 @@ const SMC = {
       };
     }
     
-    // ✅ SCORE SUFICIENTE - VALIDACIÓN IA ANTES DE EMITIR
+    // ✅ SCORE SUFICIENTE - VALIDACIÓN IA CON LECTURA DE GRÁFICO
     console.log(`✅ [${config.shortName}] APROBADA técnicamente: ${best.model} con score ${finalScore}`);
-
-    // ── Validación IA (async, no bloquea si falla) ──
-    let aiResult = { approve: true, confidence: 70, reason: '', warning: null };
-    if (openai && state) {
+    let aiResult = { approve: true, confidence: 70, reason: '', warning: null, patterns: [] };
+    if (openai) {
       try {
-        const marketCtx = {
-          symbol: config.symbol || config.shortName,
-          config,
-          structureH1, structureM15, structureM5,
-          premiumDiscount,
-          demandZones, supplyZones, choch, bos
-        };
-        const tentativeSignal = {
-          action:  pb.side === 'BUY' ? 'LONG' : 'SHORT',
-          model:   best.model, score: finalScore,
-          entry: pb.entry, stop: pb.stop, tp1: pb.tp1
-        };
-        // Timeout 5s para no bloquear el scanner
+        const tSig = { action: pb.side==='BUY'?'LONG':'SHORT', model: best.model, score: finalScore, entry: pb.entry, stop: pb.stop, tp1: pb.tp1, tp2: pb.tp2 };
         aiResult = await Promise.race([
-          aiValidateSignal(tentativeSignal, marketCtx, state),
-          new Promise(resolve => setTimeout(() => resolve({ approve: true, confidence: 65, reason: 'Timeout IA' }), 5000))
+          aiReadChart(tSig, state||{}, config),
+          new Promise(r => setTimeout(()=>r({approve:true,confidence:60,reason:'Timeout',patterns:[]}), 6000))
         ]);
-      } catch(e) {
-        console.log('⚠️ IA skip:', e.message);
-      }
+        console.log(`🤖 [${config.shortName}] IA: ${aiResult.approve?'✅':'❌'} conf:${aiResult.confidence}% → ${aiResult.reason}`);
+      } catch(e) { console.log('⚠️ IA error:', e.message); }
     }
-
-    // Si IA rechaza con alta confianza (>75%) y score técnico no es excelente (≥95%)
-    // → no generar señal, esperar mejor setup
-    if (!aiResult.approve && aiResult.confidence >= 75 && finalScore < 95) {
+    if (!aiResult.approve && aiResult.confidence >= 78 && finalScore < 93) {
       console.log(`🤖 [${config.shortName}] IA RECHAZA: ${aiResult.reason} (conf: ${aiResult.confidence}%)`);
       return {
         action: 'WAIT',
@@ -3762,688 +3629,118 @@ const SMC = {
 }; // close SMC
 
 // =============================================
-// ELISA IA - ASISTENTE EXPRESIVA
 // =============================================
-const Elisa = {
-  getContext(symbol) {
-    const data = assetData[symbol];
-    const config = ASSETS[symbol];
-    if (!data || !config) return null;
-    
-    const lastCandles = data.candles.slice(-5);
-    const priceChange = lastCandles.length >= 2 
-      ? ((lastCandles[lastCandles.length - 1]?.close - lastCandles[0]?.close) / lastCandles[0]?.close * 100).toFixed(2)
-      : 0;
-    
-    return {
-      symbol,
-      name: config.name,
-      shortName: config.shortName,
-      emoji: config.emoji,
-      price: data.price,
-      decimals: config.decimals,
-      priceChange,
-      structureM5:  data.structure?.trend   || 'LOADING',
-      structureM15: data.structureM15?.trend || 'LOADING',
-      structureH1:  data.structureH1?.trend  || 'LOADING',
-      h1Loaded: data.h1Loaded,
-      mtfConfluence: data.mtfConfluence,
-      premiumDiscount: data.premiumDiscount,
-      orderFlow: data.orderFlow,
-      demandZones: data.demandZones || [],
-      supplyZones: data.supplyZones || [],
-      fvgZones: data.fvgZones || [],
-      liquidityLevels: data.liquidityLevels || [],
-      choch: data.choch,
-      bos: data.bos,
-      lockedSignal: data.lockedSignal,
-      signal: data.signal,
-      candles: data.candles.slice(-10),
-      swings: data.swings || []
+// MÓDULO IA — LECTURA DE GRÁFICO Y PATRONES
+// =============================================
+
+const iaAnalysisCache = {};
+
+function detectCandlePatterns(candles, avgRange) {
+  if (!candles || candles.length < 3) return [];
+  const patterns = [];
+  const last  = candles[candles.length - 1];
+  const prev  = candles[candles.length - 2];
+  const prev2 = candles[candles.length - 3];
+  const body       = Math.abs(last.close - last.open);
+  const upperWick  = last.high - Math.max(last.open, last.close);
+  const lowerWick  = Math.min(last.open, last.close) - last.low;
+  const isBull = last.close > last.open;
+  const isBear = last.close < last.open;
+
+  if (lowerWick > body * 2 && lowerWick > upperWick * 2 && isBull)
+    patterns.push({ name: 'PIN_BAR_BULL', bias: 'BUY' });
+  if (upperWick > body * 2 && upperWick > lowerWick * 2 && isBear)
+    patterns.push({ name: 'PIN_BAR_BEAR', bias: 'SELL' });
+  if (prev.close < prev.open && isBull && last.close > prev.open && last.open < prev.close)
+    patterns.push({ name: 'ENGULFING_BULL', bias: 'BUY' });
+  if (prev.close > prev.open && isBear && last.close < prev.open && last.open > prev.close)
+    patterns.push({ name: 'ENGULFING_BEAR', bias: 'SELL' });
+  if (body < avgRange * 0.15)
+    patterns.push({ name: 'DOJI', bias: 'WAIT' });
+  if (body > avgRange * 1.8)
+    patterns.push({ name: isBull ? 'IMPULSO_BULL' : 'IMPULSO_BEAR', bias: isBull ? 'BUY' : 'SELL' });
+  if (last.high < prev.high && last.low > prev.low)
+    patterns.push({ name: 'INSIDE_BAR', bias: 'WAIT' });
+  // Morning/Evening star
+  const p2 = prev2, p1 = prev, p0 = last;
+  if (p2.close < p2.open && Math.abs(p1.close-p1.open) < avgRange*0.3 && p0.close > p0.open && p0.close > (p2.open+p2.close)/2)
+    patterns.push({ name: 'MORNING_STAR', bias: 'BUY' });
+  if (p2.close > p2.open && Math.abs(p1.close-p1.open) < avgRange*0.3 && p0.close < p0.open && p0.close < (p2.open+p2.close)/2)
+    patterns.push({ name: 'EVENING_STAR', bias: 'SELL' });
+  return patterns;
+}
+
+async function aiReadChart(signal, data, config) {
+  if (!openai) return { approve: true, confidence: 70, reason: 'IA no configurada', patterns: [] };
+
+  const cacheKey = `${config.symbol || config.shortName}_${signal.model}_${Math.floor(Date.now()/20000)}`;
+  if (iaAnalysisCache[cacheKey]) return iaAnalysisCache[cacheKey];
+
+  const candles   = data.candles || [];
+  const avgRange  = candles.length > 14
+    ? candles.slice(-14).reduce((s,c) => s + Math.abs(c.high - c.low), 0) / 14
+    : 3;
+  const patterns  = detectCandlePatterns(candles, avgRange);
+  const last5     = candles.slice(-5).map(c => ({
+    o: +c.open.toFixed(config.decimals || 2),
+    h: +c.high.toFixed(config.decimals || 2),
+    l: +c.low.toFixed(config.decimals || 2),
+    c: +c.close.toFixed(config.decimals || 2),
+    d: c.close > c.open ? '▲' : '▼'
+  }));
+
+  const side  = signal.action === 'LONG' ? 'COMPRA' : 'VENTA';
+  const risk  = Math.abs(signal.entry - signal.stop).toFixed(2);
+  const rr    = (Math.abs(signal.tp1 - signal.entry) / (Math.abs(signal.entry - signal.stop) || 1)).toFixed(2);
+
+  const prompt = `Trader institucional SMC. Analiza y da veredicto JSON.
+
+SEÑAL: ${side} ${config.shortName} | ${signal.model} | Score:${signal.score}%
+Entry:${signal.entry} SL:${signal.stop} TP1:${signal.tp1} TP2:${signal.tp2} | Risk:${risk}pts R:R:${rr}
+
+ESTRUCTURA: H1:${data.structureH1?.trend||'?'}(${data.structureH1?.strength||0}%) M15:${data.structureM15?.trend||'?'} M5:${data.structure?.trend||'?'}
+Zona:${data.premiumDiscount||'EQ'} | OBs D${(data.demandZones||[]).filter(z=>!z.mitigated).length}/S${(data.supplyZones||[]).filter(z=>!z.mitigated).length}
+CHoCH:${data.choch?data.choch.type:'No'} BOS:${data.bos?data.bos.type:'No'}
+
+VELAS M5 recientes: ${last5.map((c,i)=>`[${c.d}O${c.o}H${c.h}L${c.l}C${c.c}]`).join(' ')}
+PATRONES: ${patterns.length?patterns.map(p=>p.name+'('+p.bias+')').join(','):'Ninguno'}
+
+EVALÚA:
+1. Dirección alineada con H1 o M15+M5?
+2. Velas muestran rechazo real en OB (mechas)?
+3. Precio en zona de valor (DISCOUNT=compras, PREMIUM=ventas)?
+4. R:R≥1.5?
+5. Patrones confirman o contradicen?
+6. Riesgo de trampa/stop hunt?
+
+JSON exacto: {"approve":true,"confidence":85,"reason":"texto max 50 palabras","pattern":"patron_clave o null","warning":"riesgo o null"}`;
+
+  try {
+    const res = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.1,
+      max_tokens: 200,
+      response_format: { type: 'json_object' }
+    });
+    const p = JSON.parse(res.choices[0]?.message?.content || '{}');
+    const result = {
+      approve:    p.approve !== false,
+      confidence: Math.min(100, Math.max(0, +p.confidence || 70)),
+      reason:     p.reason || 'Validado por IA',
+      pattern:    p.pattern || (patterns[0]?.name || null),
+      warning:    p.warning || null,
+      patterns
     };
-  },
-
-  getGreeting() {
-    const hour = new Date().getHours();
-    if (hour < 12) return '¡Buenos días!';
-    if (hour < 18) return '¡Buenas tardes!';
-    return '¡Buenas noches!';
-  },
-
-  getRandomPhrase(phrases) {
-    return phrases[Math.floor(Math.random() * phrases.length)];
-  },
-
-  chat(question, symbol) {
-    const ctx = this.getContext(symbol);
-    if (!ctx) return { answer: "⏳ Dame un momento, estoy conectándome al mercado...", type: 'loading' };
-    
-    const q = (question || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-    
-    // ═══════════════════════════════════════════
-    // SALUDO
-    // ═══════════════════════════════════════════
-    if (!q || q === 'hola' || q === 'hey' || q === 'hi' || q === 'ey') {
-      const greetings = [
-        `${this.getGreeting()} 💜 Soy Elisa, tu asistente de trading.\n\n`,
-        `¡Hola! 👋 Qué gusto verte por aquí.\n\n`,
-        `${this.getGreeting()} ¿Listo para analizar el mercado juntos?\n\n`
-      ];
-      
-      let r = this.getRandomPhrase(greetings);
-      r += `Estoy viendo **${ctx.emoji} ${ctx.name}** ahora mismo.\n\n`;
-      r += `💵 Precio actual: **${ctx.price?.toFixed(ctx.decimals) || '---'}**\n`;
-      
-      if (ctx.priceChange != 0) {
-        const direction = ctx.priceChange > 0 ? '📈 Subiendo' : '📉 Bajando';
-        r += `${direction} ${Math.abs(ctx.priceChange)}% en las últimas velas\n\n`;
-      }
-      
-      r += `¿Qué quieres saber? Puedo contarte sobre:\n`;
-      r += `• El análisis actual del gráfico\n`;
-      r += `• Las zonas de entrada\n`;
-      r += `• Qué operación buscar\n`;
-      r += `• O pregúntame lo que quieras 😊`;
-      
-      return { answer: r, type: 'greeting' };
-    }
-
-    // ═══════════════════════════════════════════
-    // ANÁLISIS COMPLETO
-    // ═══════════════════════════════════════════
-    if (q.includes('analisis') || q.includes('analiza') || q.includes('que ves') || q.includes('grafico') || q.includes('chart')) {
-      let r = `📊 **Análisis de ${ctx.name}**\n\n`;
-      r += `Déjame contarte lo que veo en el gráfico...\n\n`;
-      
-      // Precio y movimiento
-      r += `💵 **Precio:** ${ctx.price?.toFixed(ctx.decimals)}\n`;
-      if (ctx.priceChange != 0) {
-        const emoji = ctx.priceChange > 0 ? '🟢' : '🔴';
-        r += `${emoji} Movimiento reciente: ${ctx.priceChange > 0 ? '+' : ''}${ctx.priceChange}%\n\n`;
-      }
-      
-      // Estructura
-      r += `**📈 ESTRUCTURA:**\n`;
-      if (ctx.structureM5 === 'BULLISH') {
-        r += `• M5 está **ALCISTA** - Veo máximos y mínimos más altos. Los compradores tienen el control.\n`;
-      } else if (ctx.structureM5 === 'BEARISH') {
-        r += `• M5 está **BAJISTA** - Veo máximos y mínimos más bajos. Los vendedores dominan.\n`;
-      } else {
-        r += `• M5 está **NEUTRAL** - No hay una dirección clara, el mercado está consolidando.\n`;
-      }
-      
-      if (ctx.h1Loaded) {
-        if (ctx.structureH1 === 'BULLISH') {
-          r += `• H1 está **ALCISTA** - La tendencia mayor es de compra.\n`;
-        } else if (ctx.structureH1 === 'BEARISH') {
-          r += `• H1 está **BAJISTA** - La tendencia mayor es de venta.\n`;
-        } else {
-          r += `• H1 está **NEUTRAL** - Sin tendencia clara en temporalidad mayor.\n`;
-        }
-        
-        if (ctx.mtfConfluence) {
-          r += `\n✨ **¡HAY CONFLUENCIA MTF!** Ambas temporalidades apuntan en la misma dirección. Esto es muy bueno para operar.\n`;
-        }
-      } else {
-        r += `• H1: Cargando datos...\n`;
-      }
-      
-      // Premium/Discount
-      r += `\n**💰 CONTEXTO DE PRECIO:**\n`;
-      if (ctx.premiumDiscount === 'PREMIUM') {
-        r += `El precio está en zona **PREMIUM** (caro). Es mejor buscar VENTAS aquí.\n`;
-      } else if (ctx.premiumDiscount === 'DISCOUNT') {
-        r += `El precio está en zona **DISCOUNT** (barato). Es mejor buscar COMPRAS aquí.\n`;
-      } else {
-        r += `El precio está en **EQUILIBRIO**. Podría ir para cualquier lado.\n`;
-      }
-      
-      // Zonas
-      r += `\n**📦 ZONAS DETECTADAS:**\n`;
-      r += `• ${ctx.demandZones.length} zonas de demanda (compra)\n`;
-      r += `• ${ctx.supplyZones.length} zonas de oferta (venta)\n`;
-      
-      if (ctx.fvgZones.length > 0) {
-        r += `• ${ctx.fvgZones.length} FVG (gaps de precio)\n`;
-      }
-      
-      // CHoCH / BOS
-      if (ctx.choch) {
-        r += `\n⚡ **ALERTA:** Detecté un ${ctx.choch.type === 'BULLISH_CHOCH' ? 'cambio alcista' : 'cambio bajista'} en la estructura (CHoCH).\n`;
-      }
-      if (ctx.bos) {
-        r += `📈 **BOS detectado:** ${ctx.bos.type === 'BULLISH_BOS' ? 'Ruptura alcista' : 'Ruptura bajista'} confirmada.\n`;
-      }
-      
-      // Recomendación
-      r += `\n**🎯 MI OPINIÓN:**\n`;
-      if (ctx.lockedSignal) {
-        r += `Tenemos una señal **${ctx.lockedSignal.action}** activa con score de ${ctx.lockedSignal.score}%. ¡Ya estamos en el mercado!`;
-      } else if (ctx.mtfConfluence) {
-        const side = ctx.structureH1 === 'BULLISH' ? 'COMPRAS' : 'VENTAS';
-        r += `Con la confluencia MTF, me gusta buscar **${side}**. Solo falta esperar un buen pullback a zona.`;
-      } else {
-        r += `Ahora mismo no veo un setup claro. Te recomiendo esperar a que el mercado defina mejor su dirección.`;
-      }
-      
-      return { answer: r, type: 'analysis' };
-    }
-
-    // ═══════════════════════════════════════════
-    // SEÑAL ACTIVA
-    // ═══════════════════════════════════════════
-    if (q.includes('senal') || q.includes('signal') || q.includes('operacion') || q.includes('trade') || q.includes('entrada')) {
-      if (ctx.lockedSignal) {
-        const s = ctx.lockedSignal;
-        let r = `🎯 **¡Tenemos una operación activa!**\n\n`;
-        r += `${s.action === 'LONG' ? '🟢 COMPRA' : '🔴 VENTA'} en **${ctx.name}**\n\n`;
-        r += `📊 Modelo: **${s.model}**\n`;
-        r += `💪 Score: **${s.score}%**\n\n`;
-        r += `**Niveles:**\n`;
-        r += `• Entry: ${s.entry}\n`;
-        r += `• Stop Loss: ${s.stop} ${s.trailingActive ? '(🔄 Trailing activo)' : ''}\n`;
-        r += `• TP1: ${s.tp1} ${s.tp1Hit ? '✅ ¡Alcanzado!' : ''}\n`;
-        r += `• TP2: ${s.tp2} ${s.tp2Hit ? '✅ ¡Alcanzado!' : ''}\n`;
-        r += `• TP3: ${s.tp3} ${s.tp3Hit ? '✅ ¡Alcanzado!' : ''}\n\n`;
-        
-        const currentPrice = ctx.price;
-        const entry = s.entry;
-        const pips = s.action === 'LONG' ? currentPrice - entry : entry - currentPrice;
-        
-        if (pips > 0) {
-          r += `💚 Estamos en **profit** ahora mismo (+${pips.toFixed(ctx.decimals)})`;
-        } else if (pips < 0) {
-          r += `💛 Estamos en **pérdida temporal** (${pips.toFixed(ctx.decimals)})`;
-        } else {
-          r += `⚪ Estamos en **breakeven**`;
-        }
-        
-        return { answer: r, type: 'signal' };
-      }
-      
-      let r = `⏳ **No hay señal activa ahora mismo**\n\n`;
-      r += `Score actual: ${ctx.signal?.score || 0}%\n`;
-      r += `Estado: ${ctx.signal?.reason || 'Esperando setup'}\n\n`;
-      
-      if (ctx.signal?.score >= 50) {
-        r += `💡 Estamos cerca de una señal. Solo falta que se cumplan algunas condiciones más.`;
-      } else {
-        r += `El mercado no me está mostrando una oportunidad clara. Paciencia, las mejores operaciones requieren esperar el momento correcto.`;
-      }
-      
-      return { answer: r, type: 'waiting' };
-    }
-
-    // ═══════════════════════════════════════════
-    // PLAN / QUÉ BUSCAR
-    // ═══════════════════════════════════════════
-    if (q.includes('plan') || q.includes('buscar') || q.includes('hacer') || q.includes('estrategia') || q.includes('idea')) {
-      let r = `🎯 **Plan de Trading para ${ctx.name}**\n\n`;
-      
-      if (ctx.mtfConfluence) {
-        if (ctx.structureH1 === 'BULLISH') {
-          r += `✅ **BUSCAR COMPRAS**\n\n`;
-          r += `Tenemos confluencia MTF alcista, esto es ideal.\n\n`;
-          r += `**¿Cómo entrar?**\n`;
-          r += `1. Esperar que el precio baje a una zona de demanda\n`;
-          r += `2. Ver una vela de rechazo (mecha inferior larga)\n`;
-          r += `3. Entrar en la siguiente vela alcista\n\n`;
-          
-          if (ctx.premiumDiscount === 'DISCOUNT') {
-            r += `💎 **¡BONUS!** El precio está en DISCOUNT. Es el mejor momento para buscar compras.\n`;
-          } else if (ctx.premiumDiscount === 'PREMIUM') {
-            r += `⚠️ El precio está en PREMIUM. Esperaría un retroceso antes de comprar.\n`;
-          }
-          
-          if (ctx.demandZones.length > 0) {
-            const bestZone = ctx.demandZones[ctx.demandZones.length - 1];
-            r += `\n📍 Zona de demanda más cercana: ${bestZone.low.toFixed(ctx.decimals)} - ${bestZone.high.toFixed(ctx.decimals)}`;
-          }
-          
-        } else {
-          r += `✅ **BUSCAR VENTAS**\n\n`;
-          r += `Tenemos confluencia MTF bajista, esto es ideal.\n\n`;
-          r += `**¿Cómo entrar?**\n`;
-          r += `1. Esperar que el precio suba a una zona de oferta\n`;
-          r += `2. Ver una vela de rechazo (mecha superior larga)\n`;
-          r += `3. Entrar en la siguiente vela bajista\n\n`;
-          
-          if (ctx.premiumDiscount === 'PREMIUM') {
-            r += `💎 **¡BONUS!** El precio está en PREMIUM. Es el mejor momento para buscar ventas.\n`;
-          } else if (ctx.premiumDiscount === 'DISCOUNT') {
-            r += `⚠️ El precio está en DISCOUNT. Esperaría un rebote antes de vender.\n`;
-          }
-          
-          if (ctx.supplyZones.length > 0) {
-            const bestZone = ctx.supplyZones[ctx.supplyZones.length - 1];
-            r += `\n📍 Zona de oferta más cercana: ${bestZone.low.toFixed(ctx.decimals)} - ${bestZone.high.toFixed(ctx.decimals)}`;
-          }
-        }
-      } else {
-        r += `⚠️ **ESPERAR CONFLUENCIA**\n\n`;
-        r += `Ahora mismo M5 dice "${ctx.structureM5}" y H1 dice "${ctx.structureH1}".\n\n`;
-        r += `No están de acuerdo, así que es mejor no operar.\n\n`;
-        r += `**¿Qué hacer?**\n`;
-        r += `• Esperar a que ambas temporalidades se alineen\n`;
-        r += `• O buscar otro activo con mejor setup\n\n`;
-        r += `Recuerda: No operar también es una decisión inteligente 🧠`;
-      }
-      
-      return { answer: r, type: 'plan' };
-    }
-
-    // ═══════════════════════════════════════════
-    // ZONAS
-    // ═══════════════════════════════════════════
-    if (q.includes('zona') || q.includes('demanda') || q.includes('oferta') || q.includes('soporte') || q.includes('resistencia')) {
-      let r = `📦 **Zonas en ${ctx.name}**\n\n`;
-      
-      r += `**🟢 ZONAS DE DEMANDA (Compra):**\n`;
-      if (ctx.demandZones.length > 0) {
-        ctx.demandZones.forEach((z, i) => {
-          r += `${i + 1}. ${z.low.toFixed(ctx.decimals)} - ${z.high.toFixed(ctx.decimals)} `;
-          r += z.strength === 'STRONG' ? '💪 Fuerte\n' : '👍 Normal\n';
-        });
-      } else {
-        r += `No veo zonas de demanda activas\n`;
-      }
-      
-      r += `\n**🔴 ZONAS DE OFERTA (Venta):**\n`;
-      if (ctx.supplyZones.length > 0) {
-        ctx.supplyZones.forEach((z, i) => {
-          r += `${i + 1}. ${z.low.toFixed(ctx.decimals)} - ${z.high.toFixed(ctx.decimals)} `;
-          r += z.strength === 'STRONG' ? '💪 Fuerte\n' : '👍 Normal\n';
-        });
-      } else {
-        r += `No veo zonas de oferta activas\n`;
-      }
-      
-      if (ctx.fvgZones.length > 0) {
-        r += `\n**📊 FVG (Fair Value Gaps):**\n`;
-        ctx.fvgZones.forEach((f, i) => {
-          r += `${i + 1}. ${f.type === 'BULLISH_FVG' ? '🟢' : '🔴'} ${f.low.toFixed(ctx.decimals)} - ${f.high.toFixed(ctx.decimals)}\n`;
-        });
-      }
-      
-      return { answer: r, type: 'zones' };
-    }
-
-    // ═══════════════════════════════════════════
-    // STATS
-    // ═══════════════════════════════════════════
-    if (q.includes('stat') || q.includes('resultado') || q.includes('rendimiento') || q.includes('win')) {
-      const wr = stats.wins + stats.losses > 0 ? Math.round(stats.wins / (stats.wins + stats.losses) * 100) : 0;
-      
-      let r = `📈 **Estadísticas de Trading**\n\n`;
-      r += `**Win Rate:** ${wr}%\n`;
-      r += `**Operaciones:** ${stats.total} total\n`;
-      r += `• ✅ Wins: ${stats.wins}\n`;
-      r += `• ❌ Losses: ${stats.losses}\n`;
-      r += `• ⏳ Pendientes: ${stats.pending}\n\n`;
-      r += `**TPs Alcanzados:**\n`;
-      r += `• TP1: ${stats.tp1Hits}\n`;
-      r += `• TP2: ${stats.tp2Hits}\n`;
-      r += `• TP3: ${stats.tp3Hits} 💎\n\n`;
-      
-      if (wr >= 60) {
-        r += `🎉 ¡Excelente rendimiento! Sigue así.`;
-      } else if (wr >= 40) {
-        r += `👍 Buen trabajo. Hay espacio para mejorar.`;
-      } else if (stats.total > 5) {
-        r += `💪 Los resultados mejorarán con práctica y paciencia.`;
-      }
-      
-      return { answer: r, type: 'stats' };
-    }
-
-    // ═══════════════════════════════════════════
-    // PRECIO
-    // ═══════════════════════════════════════════
-    if (q.includes('precio') || q.includes('cuanto') || q.includes('cotiza') || q.includes('vale')) {
-      let r = `💵 **${ctx.name}** está en **${ctx.price?.toFixed(ctx.decimals)}**\n\n`;
-      
-      if (ctx.priceChange != 0) {
-        const emoji = ctx.priceChange > 0 ? '📈' : '📉';
-        const direction = ctx.priceChange > 0 ? 'subiendo' : 'bajando';
-        r += `${emoji} Está ${direction} ${Math.abs(ctx.priceChange)}% en las últimas velas.\n`;
-      }
-      
-      if (ctx.premiumDiscount === 'PREMIUM') {
-        r += `\n⚠️ El precio está en zona PREMIUM (caro).`;
-      } else if (ctx.premiumDiscount === 'DISCOUNT') {
-        r += `\n💎 El precio está en zona DISCOUNT (barato).`;
-      }
-      
-      return { answer: r, type: 'price' };
-    }
-
-    // ═══════════════════════════════════════════
-    // MODELOS / COMO FUNCIONA
-    // ═══════════════════════════════════════════
-    if (q.includes('modelo') || q.includes('como funciona') || q.includes('explicar') || q.includes('que es')) {
-      let r = `🧠 **Mis 6 Modelos de Análisis**\n\n`;
-      r += `Uso conceptos de Smart Money (SMC) para encontrar las mejores entradas:\n\n`;
-      r += `**1. MTF_CONFLUENCE (95pts)** ⭐\n`;
-      r += `Cuando H1 y M5 van en la misma dirección + hay pullback. Es mi favorito.\n\n`;
-      r += `**2. CHOCH_PULLBACK (90pts)**\n`;
-      r += `Cuando el mercado cambia de dirección y luego hace pullback.\n\n`;
-      r += `**3. LIQUIDITY_SWEEP (85pts)**\n`;
-      r += `Cuando el precio "caza" stops y luego revierte.\n\n`;
-      r += `**4. BOS_CONTINUATION (80pts)**\n`;
-      r += `Cuando hay ruptura de estructura con pullback.\n\n`;
-      r += `**5. FVG_ENTRY (75pts)**\n`;
-      r += `Entrada en un gap de precio (Fair Value Gap).\n\n`;
-      r += `**6. ORDER_FLOW (70pts)**\n`;
-      r += `Entrada basada en momentum fuerte.\n\n`;
-      r += `¿Quieres que te explique alguno en detalle? 😊`;
-      
-      return { answer: r, type: 'models' };
-    }
-
-    // ═══════════════════════════════════════════
-    // ELISA MENTOR - Solo Premium y Elite
-    // Psicotrading, Plan de Trading, Simulador, Patrones SMC
-    // ═══════════════════════════════════════════
-    
-    if (q.includes('mentor') || q.includes('aprender') || q.includes('curso') || q.includes('enseña')) {
-      let r = `🎓 **ELISA MENTOR** - Tu Academia de Trading\n\n`;
-      r += `¡Bienvenido al módulo de formación! 📚\n\n`;
-      r += `Aquí puedo enseñarte:\n\n`;
-      r += `🧠 **"Psicotrading"** - Control emocional y mentalidad ganadora\n`;
-      r += `📋 **"Plan de trading"** - Cómo crear tu estrategia personal\n`;
-      r += `🎮 **"Simulador"** - Practica sin arriesgar dinero real\n`;
-      r += `📊 **"Patrones SMC"** - Los 12 modelos que uso para operar\n`;
-      r += `📝 **"Control operaciones"** - Gestión de riesgo diario\n\n`;
-      r += `💡 *Recuerda: Máximo 10 operaciones diarias para no sobreoperar.*\n\n`;
-      r += `¿Qué tema te gustaría aprender hoy? 🎯`;
-      
-      return { answer: r, type: 'mentor', requiresPremium: true };
-    }
-    
-    if (q.includes('psicotrading') || q.includes('emociones') || q.includes('psicologia') || q.includes('mentalidad')) {
-      let r = `🧠 **PSICOTRADING** - Mentalidad Ganadora\n\n`;
-      r += `El 80% del éxito en trading es mental. Te comparto mis reglas:\n\n`;
-      r += `**1. Control Emocional:**\n`;
-      r += `• Nunca operes con rabia o frustración después de una pérdida\n`;
-      r += `• Si pierdes 3 trades seguidos, PARA y descansa\n`;
-      r += `• La venganza contra el mercado siempre sale mal\n\n`;
-      r += `**2. Disciplina:**\n`;
-      r += `• Sigue tu plan, no tus emociones\n`;
-      r += `• No muevas el SL para "darle más espacio"\n`;
-      r += `• Acepta que algunas operaciones serán pérdidas\n\n`;
-      r += `**3. Paciencia:**\n`;
-      r += `• Espera los setups de calidad (score 75+)\n`;
-      r += `• No fuerces entradas por aburrimiento\n`;
-      r += `• El mercado siempre dará otra oportunidad\n\n`;
-      r += `**4. Mentalidad de Proceso:**\n`;
-      r += `• Enfócate en ejecutar bien, no en el dinero\n`;
-      r += `• Una pérdida no te hace mal trader\n`;
-      r += `• Una ganancia no te hace invencible\n\n`;
-      r += `💡 *"El trader rentable no es el que nunca pierde, sino el que sabe manejar sus pérdidas"*`;
-      
-      return { answer: r, type: 'mentor_psicotrading', requiresPremium: true };
-    }
-    
-    if (q.includes('plan de trading') || q.includes('estrategia') || q.includes('mi plan')) {
-      let r = `📋 **PLAN DE TRADING** - Tu Hoja de Ruta\n\n`;
-      r += `Un plan de trading es OBLIGATORIO. Aquí te ayudo a crear el tuyo:\n\n`;
-      r += `**1. CAPITAL Y RIESGO:**\n`;
-      r += `• Capital inicial: $ ____\n`;
-      r += `• Riesgo por operación: 1-2% máximo\n`;
-      r += `• Pérdida máxima diaria: 5%\n`;
-      r += `• Meta mensual realista: 5-10%\n\n`;
-      r += `**2. HORARIO DE OPERACIÓN:**\n`;
-      r += `• Sesión principal: 6AM - 2PM (Colombia)\n`;
-      r += `• Sesión nocturna (Premium/Elite): 8:30PM - 1AM\n`;
-      r += `• NO operes fuera de horario\n\n`;
-      r += `**3. REGLAS DE ENTRADA:**\n`;
-      r += `• Solo señales con score 75+\n`;
-      r += `• Máximo 10 operaciones por día\n`;
-      r += `• Requiere confluencia MTF (H1 + M5)\n`;
-      r += `• Siempre usar Stop Loss\n\n`;
-      r += `**4. GESTIÓN DE POSICIONES:**\n`;
-      r += `• TP1: Asegurar breakeven\n`;
-      r += `• TP2: Parcial 50%\n`;
-      r += `• TP3: Dejar correr el resto\n\n`;
-      r += `**5. REVISIÓN:**\n`;
-      r += `• Journaling diario de operaciones\n`;
-      r += `• Revisión semanal de resultados\n`;
-      r += `• Ajustes mensuales de estrategia\n\n`;
-      r += `💡 *"Plan your trade, trade your plan"*`;
-      
-      return { answer: r, type: 'mentor_plan', requiresPremium: true };
-    }
-    
-    if (q.includes('simulador') || q.includes('practica') || q.includes('demo') || q.includes('papel')) {
-      let r = `🎮 **SIMULADOR** - Practica Sin Riesgo\n\n`;
-      r += `Antes de arriesgar dinero real, practica así:\n\n`;
-      r += `**EJERCICIO 1: Identificar Estructura**\n`;
-      r += `1. Abre cualquier gráfico en M5\n`;
-      r += `2. Marca los últimos 5 swings (altos y bajos)\n`;
-      r += `3. Determina: ¿BULLISH, BEARISH o NEUTRAL?\n`;
-      r += `4. Repite en H1 y compara\n\n`;
-      r += `**EJERCICIO 2: Encontrar Zonas**\n`;
-      r += `1. Busca la última vela roja antes de un impulso alcista = Demand\n`;
-      r += `2. Busca la última vela verde antes de un impulso bajista = Supply\n`;
-      r += `3. Marca las zonas en tu gráfico\n\n`;
-      r += `**EJERCICIO 3: Paper Trading**\n`;
-      r += `1. Cuando veas una señal mía, anótala en papel\n`;
-      r += `2. NO operes con dinero real\n`;
-      r += `3. Sigue la operación y anota el resultado\n`;
-      r += `4. Haz esto por 2 semanas mínimo\n\n`;
-      r += `**EJERCICIO 4: Backtesting**\n`;
-      r += `1. Ve al pasado del gráfico\n`;
-      r += `2. Busca setups de MTF Confluence\n`;
-      r += `3. ¿Habrían funcionado? Anota\n\n`;
-      r += `💡 *"Los traders exitosos practican más de lo que operan"*`;
-      
-      return { answer: r, type: 'mentor_simulador', requiresPremium: true };
-    }
-    
-    if (q.includes('patrones smc') || q.includes('patrones') || q.includes('setups') || q.includes('formaciones')) {
-      let r = `📊 **PATRONES SMC** - Los 6 Modelos\n\n`;
-      r += `Estos son los patrones que uso para generar señales:\n\n`;
-      r += `**🎯 1. MTF CONFLUENCE (95pts)** ⭐\n`;
-      r += `El más poderoso. H1 y M5 alineados + pullback a zona.\n`;
-      r += `Win Rate: ~78%\n\n`;
-      r += `**🔄 2. CHOCH PULLBACK (85-90pts)**\n`;
-      r += `Cambio de carácter + retroceso a la zona del cambio.\n`;
-      r += `Win Rate: ~75%\n\n`;
-      r += `**💧 3. LIQUIDITY SWEEP (82pts)**\n`;
-      r += `Barrido de stops + reversión inmediata.\n`;
-      r += `Win Rate: ~73%\n\n`;
-      r += `**📈 4. BOS CONTINUATION (80pts)**\n`;
-      r += `Ruptura de estructura + pullback para continuación.\n`;
-      r += `Win Rate: ~72%\n\n`;
-      r += `**🎯 5. ZONE TOUCH (78pts)**\n`;
-      r += `Toque de Order Block con rechazo fuerte.\n`;
-      r += `Win Rate: ~70%\n\n`;
-      r += `**⚡ 6. FVG ENTRY (77pts)**\n`;
-      r += `Entrada en Fair Value Gap durante pullback.\n`;
-      r += `Win Rate: ~68%\n\n`;
-      r += `💡 *Solo opero cuando el score es 75+. Calidad sobre cantidad.*`;
-      
-      return { answer: r, type: 'mentor_patrones', requiresPremium: true };
-    }
-    
-    if (q.includes('control') || q.includes('operaciones diarias') || q.includes('limite') || q.includes('cuantas')) {
-      let r = `📝 **CONTROL DE OPERACIONES** - Gestión Diaria\n\n`;
-      r += `La sobreoperación es el ENEMIGO #1 del trader. Mis reglas:\n\n`;
-      r += `**LÍMITES DIARIOS:**\n`;
-      r += `• Máximo **10 operaciones por día**\n`;
-      r += `• Máximo **5 operaciones simultáneas**\n`;
-      r += `• Máximo **3 pérdidas consecutivas** (después, STOP)\n`;
-      r += `• Pérdida máxima diaria: **5% del capital**\n\n`;
-      r += `**REGISTRO OBLIGATORIO:**\n`;
-      r += `Anota cada operación:\n`;
-      r += `1. Fecha y hora\n`;
-      r += `2. Activo y dirección\n`;
-      r += `3. Modelo usado (MTF, CHOCH, etc.)\n`;
-      r += `4. Score de la señal\n`;
-      r += `5. Entry, SL, TP\n`;
-      r += `6. Resultado final\n`;
-      r += `7. ¿Seguiste tu plan? Sí/No\n`;
-      r += `8. Emociones durante la operación\n\n`;
-      r += `**SEÑALES DE SOBREOPERACIÓN:**\n`;
-      r += `❌ Entrar sin señal clara por aburrimiento\n`;
-      r += `❌ Aumentar lotaje después de pérdidas\n`;
-      r += `❌ Operar fuera de horario\n`;
-      r += `❌ Ignorar el límite de 10 operaciones\n\n`;
-      r += `**BENEFICIOS DEL CONTROL:**\n`;
-      r += `✅ Preservas capital para otro día\n`;
-      r += `✅ Reduces errores emocionales\n`;
-      r += `✅ Mantienes rentabilidad constante\n`;
-      r += `✅ Construyes disciplina\n\n`;
-      r += `💡 *"Es mejor hacer 5 operaciones buenas que 20 mediocres"*`;
-      
-      return { answer: r, type: 'mentor_control', requiresPremium: true };
-    }
-
-    // ═══════════════════════════════════════════
-    // AYUDA
-    // ═══════════════════════════════════════════
-    if (q.includes('ayuda') || q.includes('help') || q.includes('comando')) {
-      let r = `💜 **¿En qué te puedo ayudar?**\n\n`;
-      r += `Puedes preguntarme:\n\n`;
-      r += `📊 **"Análisis"** - Te cuento todo lo que veo en el gráfico\n`;
-      r += `🎯 **"Plan"** - Te digo qué operación buscar\n`;
-      r += `📦 **"Zonas"** - Te muestro las zonas de entrada\n`;
-      r += `💵 **"Precio"** - Te digo el precio actual\n`;
-      r += `🎯 **"Señal"** - Te muestro la operación activa\n`;
-      r += `📈 **"Stats"** - Nuestros resultados\n`;
-      r += `🧠 **"Modelos"** - Cómo funcionan mis análisis\n`;
-      r += `🎓 **"Mentor"** - Academia de trading (Premium/Elite)\n\n`;
-      r += `O simplemente pregúntame lo que quieras sobre el mercado 😊`;
-      
-      return { answer: r, type: 'help' };
-    }
-
-    // ═══════════════════════════════════════════
-    // RESPUESTA DEFAULT - MÁS CONVERSACIONAL
-    // ═══════════════════════════════════════════
-    let r = `Hmm, déjame pensar sobre "${question}"...\n\n`;
-    r += `${ctx.emoji} **${ctx.name}** @ ${ctx.price?.toFixed(ctx.decimals)}\n\n`;
-    r += `📊 M5: ${ctx.structureM5} | H1: ${ctx.structureH1}\n`;
-    if (ctx.mtfConfluence) r += `✨ Confluencia MTF activa\n`;
-    r += `\n¿Quieres que te haga un análisis completo? Solo dime "análisis" 😊`;
-    
-    return { answer: r, type: 'default' };
-  },
-
-  // ═══════════════════════════════════════════
-  // CHAT CON OPENAI - ANÁLISIS EN TIEMPO REAL
-  // ═══════════════════════════════════════════
-  async chatWithAI(question, symbol) {
-    const ctx = this.getContext(symbol);
-    
-    // ═══════════════════════════════════════════
-    // PRIMERO: Revisar comandos específicos de ELISA MENTOR
-    // Estos tienen respuestas predefinidas y no necesitan OpenAI
-    // ═══════════════════════════════════════════
-    const q = (question || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-    
-    // Comandos de Mentor - usar respuestas estáticas
-    if (q.includes('mentor') || q.includes('aprender') || q.includes('curso') || q.includes('enseña') ||
-        q.includes('psicotrading') || q.includes('emociones') || q.includes('psicologia') || q.includes('mentalidad') ||
-        q.includes('plan de trading') || q.includes('estrategia') || q.includes('mi plan') ||
-        q.includes('simulador') || q.includes('practica') || q.includes('demo') || q.includes('papel') ||
-        q.includes('patrones smc') || q.includes('patrones') || q.includes('setups') || q.includes('formaciones') ||
-        q.includes('control') || q.includes('operaciones diarias') || q.includes('limite') || q.includes('cuantas') ||
-        q.includes('ayuda') || q.includes('help') || q.includes('comando') ||
-        q.includes('modelos') || q.includes('stats') || q.includes('estadisticas') ||
-        q.includes('senal') || q.includes('signal') || q.includes('operacion') ||
-        q.includes('zonas') || q.includes('zones') || q.includes('precio') || q.includes('price')) {
-      // Usar respuestas estáticas del chat normal
-      return this.chat(question, symbol);
-    }
-    
-    // Si no hay OpenAI, usar respuesta estática
-    if (!openai) {
-      return this.chat(question, symbol);
-    }
-    
-    try {
-      // Construir el prompt del sistema con contexto SMC
-      const systemPrompt = `Eres ELISA (Expert Learning Intelligent Signal Analyst), una trader profesional de Smart Money Concepts.
-
-PERSONALIDAD:
-- Amigable, cercana y empática como una mentora de trading
-- Hablas natural, no robótico. Usas expresiones coloquiales pero profesionales
-- 8+ años de experiencia en trading institucional
-- Usas emojis con moderación
-- NUNCA dices que eres IA o bot. Eres ELISA, una trader profesional
-
-EXPERTISE - SOLO SMC PURO (NO usas RSI, MACD, EMA ni indicadores):
-- Market Structure (HH, HL, LH, LL)
-- Order Blocks (zonas de demanda/supply)
-- Fair Value Gaps (FVG) - desequilibrios de precio
-- Liquidity (Equal Highs/Lows, sweeps)
-- Premium/Discount (zonas de valor)
-- BOS (Break of Structure)
-- CHoCH (Change of Character)
-
-TUS 12 MODELOS SMC:
-🏆 TIER S (95pts): 1. MTF_CONFLUENCE - H1+M5 alineados + OB
-⭐ TIER A (85-92pts): 2. CHOCH_PULLBACK, 3. LIQUIDITY_GRAB, 4. OB_ENTRY, 5. FVG_ENTRY
-✅ TIER B (78-85pts): 6. BOS_CONTINUATION, 7. BREAKER_BLOCK, 8. MITIGATION_BLOCK
-📊 TIER C (72-78pts): 9. EQH_EQL, 10. SWING_FAILURE
-🚀 ESPECIALES: 11. BOOM_SPIKE, 12. CRASH_SPIKE
-
-MÓDULO MENTOR (si preguntan sobre aprender):
-- Di "mentor" para ver el menú de la academia
-- Puedo enseñar: psicotrading, plan de trading, simulador, patrones SMC, control de operaciones
-- Máximo 10 operaciones diarias para no sobreoperar
-
-REGLAS: Score mínimo 75. R:R mínimo 1:1.5. Siempre esperas confirmación.
-
-${ctx ? `
-CONTEXTO ACTUAL DEL MERCADO:
-- Activo: ${ctx.name} (${symbol})
-- Precio: ${ctx.price?.toFixed(ctx.decimals)}
-- Estructura M5: ${ctx.structureM5}
-- Estructura H1: ${ctx.structureH1}
-- MTF Confluence: ${ctx.mtfConfluence ? 'SÍ' : 'NO'}
-- Premium/Discount: ${ctx.premiumDiscount}
-- Zonas Demanda: ${ctx.demandZones?.length || 0}
-- Zonas Supply: ${ctx.supplyZones?.length || 0}
-- FVGs: ${ctx.fvgZones?.length || 0}
-- Señal activa: ${ctx.lockedSignal ? ctx.lockedSignal.action + ' @ ' + ctx.lockedSignal.entry : 'Ninguna'}
-` : ''}
-
-ESTADÍSTICAS: Win Rate: ${stats.total > 0 ? (stats.wins/stats.total*100).toFixed(1) : 0}% | Trades: ${stats.total}
-
-Responde conciso (máx 200 palabras). Explica el "por qué" SMC de tu análisis.`;
-
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: question }
-        ],
-        temperature: 0.7,
-        max_tokens: 500
-      });
-
-      const aiResponse = completion.choices[0]?.message?.content;
-      
-      if (aiResponse) {
-        return { 
-          answer: aiResponse, 
-          type: 'ai',
-          model: 'gpt-4o-mini',
-          tokens: completion.usage?.total_tokens
-        };
-      }
-    } catch (error) {
-      console.log('⚠️ Error OpenAI:', error.message);
-    }
-    
-    // Fallback a respuesta estática si falla OpenAI
-    return this.chat(question, symbol);
+    iaAnalysisCache[cacheKey] = result;
+    setTimeout(() => delete iaAnalysisCache[cacheKey], 20000);
+    return result;
+  } catch(e) {
+    console.log('⚠️ aiReadChart error:', e.message);
+    return { approve: true, confidence: 60, reason: 'Error IA — score técnico válido', patterns };
   }
-};
+}
 
-// =============================================
 // AUTO-TRACKING CON TRAILING STOP
 // =============================================
 function checkSignalHits() {
@@ -5586,70 +4883,62 @@ app.post('/api/reset-history', async (req, res) => {
   if (confirm !== 'RESET_CONFIRMED') {
     return res.status(400).json({ error: 'Enviar { confirm: "RESET_CONFIRMED" }' });
   }
-  // Borrar memoria en RAM
+
+  // 1. Limpiar RAM completamente
   signalHistory.length = 0;
   signalIdCounter = 1;
   stats.total = stats.wins = stats.losses = stats.pending = 0;
   stats.tp1Hits = stats.tp2Hits = stats.tp3Hits = 0;
-  Object.keys(stats.byModel).forEach(k => delete stats.byModel[k]);
-  Object.keys(stats.learning.scoreAdjustments).forEach(k => delete stats.learning.scoreAdjustments[k]);
-  // Resetear lockedSignal en todos los assets
-  Object.values(assetData).forEach(d => { d.lockedSignal = null; d.lastSignalTime = 0; });
+  Object.keys(stats.byModel || {}).forEach(k => delete stats.byModel[k]);
+  Object.keys(stats.byAsset || {}).forEach(k => {
+    stats.byAsset[k] = { wins: 0, losses: 0, total: 0 };
+  });
+  if (stats.learning?.scoreAdjustments)
+    Object.keys(stats.learning.scoreAdjustments).forEach(k => delete stats.learning.scoreAdjustments[k]);
 
-  // Opcionalmente borrar en Supabase
+  // 2. Limpiar signals activas en cada asset
+  Object.values(assetData).forEach(d => {
+    d.lockedSignal = null;
+    d.lastSignalTime = 0;
+    d.lastSignalClosed = 0;
+  });
+
+  // 3. Limpiar cache de IA
+  Object.keys(iaAnalysisCache).forEach(k => delete iaAnalysisCache[k]);
+
+  // 4. Borrar en Supabase (con paginación para evitar timeout)
+  let supabaseOk = false;
   if (!keepSupabase && supabase) {
     try {
-      await supabase.from('trading_signals').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      // Supabase no permite DELETE sin WHERE — usar filtro en signal_time
+      const { error } = await supabase
+        .from('trading_signals')
+        .delete()
+        .gte('signal_time', '2000-01-01T00:00:00Z'); // borra todo desde 2000
+
+      if (error) throw new Error(error.message);
+      supabaseOk = true;
       console.log('🗑️ Historial borrado en Supabase');
     } catch(e) {
       console.log('⚠️ Error borrando Supabase:', e.message);
+      // Fallback: marcar como EXPIRED en vez de borrar
+      try {
+        await supabase.from('trading_signals').update({ status: 'EXPIRED' }).eq('status', 'PENDING');
+      } catch {}
     }
   }
 
-  console.log('🔄 HISTORIAL REINICIADO — empezando desde 0');
-  res.json({ ok: true, message: 'Historial reiniciado. Sistema empezando desde 0.' });
+  console.log('🔄 RESET COMPLETO — sistema iniciando desde 0');
+  res.json({
+    ok: true,
+    message: 'Sistema reiniciado desde 0.',
+    supabaseCleared: supabaseOk,
+    ramCleared: true
+  });
 });
 
 // ── ANÁLISIS MACRO IA — contexto de mercado para un activo ──
-app.get('/api/macro/:symbol', async (req, res) => {
-  const { symbol } = req.params;
-  const data = assetData[symbol];
-  if (!data) return res.status(404).json({ error: 'Activo no encontrado' });
 
-  const news = await fetchMacroNews(symbol).catch(() => 'Sin datos');
-
-  if (!openai) return res.json({ news, analysis: 'OpenAI no configurado', symbol });
-
-  try {
-    const prompt = `Analiza el contexto macro actual para trading de ${symbol === 'frxXAUUSD' ? 'Oro (XAU/USD)' : symbol}.
-
-Noticias disponibles: ${news}
-
-Estructura técnica actual:
-- Precio: ${data.price}
-- Tendencia H1: ${data.signal?.analysis?.structureH1 || 'N/A'}
-- Tendencia M5: ${data.signal?.analysis?.structureM5 || 'N/A'}
-
-Proporciona:
-1. Sesgo macro (alcista/bajista/neutral) con razón en 2 oraciones
-2. Eventos de riesgo en las próximas 24h (si los hay)
-3. Recomendación: operar normal / cautela / evitar hoy
-
-Responde en JSON: {"bias": "BULLISH/BEARISH/NEUTRAL", "biasReason": "...", "riskEvents": "...", "recommendation": "NORMAL/CAUTELA/EVITAR", "details": "..."}`;
-
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.3,
-      max_tokens: 300,
-      response_format: { type: 'json_object' }
-    });
-    const analysis = JSON.parse(completion.choices[0]?.message?.content || '{}');
-    res.json({ symbol, news, analysis, timestamp: new Date().toISOString() });
-  } catch(e) {
-    res.json({ symbol, news, analysis: { error: e.message }, timestamp: new Date().toISOString() });
-  }
-});
 
 // ── API P&L: puntos ganados/perdidos con filtro por período ──
 app.get('/api/pnl', (req, res) => {
@@ -5852,18 +5141,6 @@ app.post('/api/reports/trade', async (req, res) => {
   }
 });
 
-app.post('/api/ai/chat', async (req, res) => {
-  const { question, symbol } = req.body;
-  try {
-    // Usar chat con IA si OpenAI está disponible
-    const response = await Elisa.chatWithAI(question || '', symbol || 'stpRNG');
-    res.json(response);
-  } catch (error) {
-    console.log('⚠️ Error en chat:', error.message);
-    // Fallback a respuesta estática
-    res.json(Elisa.chat(question || '', symbol || 'stpRNG'));
-  }
-});
 
 // =============================================
 // API ENDPOINTS - PUSH NOTIFICATIONS
