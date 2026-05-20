@@ -250,8 +250,126 @@ function isInTradingHours(plan = 'free') {
   return inDaytime || inNight;
 }
 
-const app = express();
-const PORT = process.env.PORT || 3001;
+// ════════════════════════════════════════════════════════════════════════
+// MÓDULO DE ANÁLISIS MACRO CON IA — v24.5
+// ════════════════════════════════════════════════════════════════════════
+// Consulta a GPT-4o con contexto de:
+//   1. Estructura técnica SMC detectada
+//   2. Noticias relevantes del activo (via búsqueda web de Deriv/Forex)
+//   3. Contexto macro (tasas, DXY, riesgo)
+// Emite veredicto: APROBAR / RECHAZAR / ESPERAR con razón
+// ════════════════════════════════════════════════════════════════════════
+
+// Cache de noticias: evita llamadas repetidas (actualiza cada 30 min)
+const newsCache = { data: null, ts: 0 };
+
+async function fetchMacroNews(symbol) {
+  const now = Date.now();
+  const cacheKey = symbol.slice(0, 6);
+  if (newsCache[cacheKey] && now - newsCache[cacheKey].ts < 30 * 60 * 1000) {
+    return newsCache[cacheKey].data;
+  }
+  try {
+    // Mapeo de símbolo a query de noticias relevante
+    const queries = {
+      frxXAUUSD: 'Gold XAU USD price today Fed interest rates DXY',
+      stpRNG:    'Step Index Deriv synthetic volatility market',
+      '1HZ100V': 'Volatility 100 Index Deriv synthetic market risk'
+    };
+    const query = queries[symbol] || `${symbol} market news today`;
+    // Usar DuckDuckGo instant answer API (sin key, gratis)
+    const res = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&t=tradingpro`);
+    const data = await res.json();
+    const headlines = [
+      data.Abstract,
+      ...(data.RelatedTopics || []).slice(0, 4).map(t => t.Text || '')
+    ].filter(Boolean).join(' | ');
+
+    newsCache[cacheKey] = { data: headlines || 'Sin noticias disponibles', ts: now };
+    return newsCache[cacheKey].data;
+  } catch {
+    return 'Sin acceso a noticias en este momento';
+  }
+}
+
+// ── Validación IA de la señal — devuelve { approve: bool, confidence: 0-100, reason: str } ──
+async function aiValidateSignal(signal, marketCtx, assetData) {
+  if (!openai) return { approve: true, confidence: 70, reason: 'IA no disponible — aprobada por defecto' };
+
+  const { symbol, config } = marketCtx;
+  const isGold   = symbol === 'frxXAUUSD';
+  const isSynth  = symbol !== 'frxXAUUSD'; // Step y V100 son sintéticos = sin macro real
+
+  // Para activos sintéticos: validar solo estructura técnica, no macro
+  const macroContext = isGold
+    ? await fetchMacroNews(symbol).catch(() => 'Sin datos de noticias')
+    : 'Activo sintético — sin exposición macro real';
+
+  const side      = signal.action === 'LONG' ? 'COMPRA' : 'VENTA';
+  const model     = signal.model;
+  const score     = signal.score;
+  const entry     = signal.entry;
+  const sl        = signal.stop;
+  const tp1       = signal.tp1;
+  const risk      = Math.abs(entry - sl).toFixed(2);
+  const rr        = (Math.abs(tp1 - entry) / Math.abs(entry - sl)).toFixed(2);
+
+  const { structureH1, structureM15, structureM5, premiumDiscount, demandZones, supplyZones, choch, bos } = marketCtx;
+
+  const prompt = `Eres un trader institucional SMC experto. Analiza esta señal y da un veredicto claro.
+
+SEÑAL DETECTADA:
+- Activo: ${config?.shortName || symbol}
+- Dirección: ${side}
+- Modelo: ${model} (Score técnico: ${score}%)
+- Entry: ${entry} | SL: ${sl} | TP1: ${tp1}
+- Risk: ${risk} pts | R:R: ${rr}
+
+ESTRUCTURA DE MERCADO:
+- H1: ${structureH1?.trend} (${structureH1?.strength}%)
+- M15: ${structureM15?.trend || 'N/A'} (${structureM15?.strength || 0}%)
+- M5: ${structureM5?.trend} (${structureM5?.strength}%)
+- Premium/Discount: ${premiumDiscount}
+- OBs demanda: ${demandZones?.length || 0} | OBs oferta: ${supplyZones?.length || 0}
+- CHoCH: ${choch ? choch.type + ' en ' + choch.level?.toFixed(2) : 'No'}
+- BOS: ${bos ? bos.type + ' en ' + bos.level?.toFixed(2) : 'No'}
+
+CONTEXTO MACRO/NOTICIAS:
+${macroContext}
+
+CRITERIOS DE EVALUACIÓN:
+1. ¿La dirección del trade está alineada con la estructura H1?
+2. ¿El entry tiene confluencia real (OB + CHoCH/BOS)?
+3. ¿El R:R es mínimo 1:1.5?
+4. Para Oro: ¿hay eventos macro que invaliden la dirección?
+5. ¿El precio está en zona de valor (premium para ventas, discount para compras)?
+
+Responde SOLO en este formato JSON exacto:
+{"approve": true/false, "confidence": 0-100, "reason": "razón concisa max 60 palabras", "warning": "riesgo adicional si existe o null"}`;
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.2,
+      max_tokens: 200,
+      response_format: { type: 'json_object' }
+    });
+    const raw = completion.choices[0]?.message?.content || '{}';
+    const parsed = JSON.parse(raw);
+    return {
+      approve:    parsed.approve !== false, // default true si no se parsea
+      confidence: Math.min(100, Math.max(0, parsed.confidence || 70)),
+      reason:     parsed.reason || 'Validado por IA',
+      warning:    parsed.warning || null
+    };
+  } catch(e) {
+    console.log('⚠️ Error IA validación:', e.message);
+    return { approve: true, confidence: 65, reason: 'Error IA — aprobada por score técnico' };
+  }
+}
+
+
 
 app.use(cors());
 app.use(express.json());
@@ -2168,7 +2286,7 @@ const SMC = {
         for (let j = lastHigh.index + 1; j < candles.length; j++) {
           if (candles[j].close < targetHL.price) {
             const recency = candles.length - 1 - j;
-            if (recency <= 30) { // FIX-AUDIT: reducido 60→30 (2.5h max, antes 5h — stale)
+            if (recency <= 60) { // dentro de las últimas 60 velas
               const epoch = candles[j]?.epoch || (candles[j]?.time ? Math.floor(candles[j].time/1000) : null);
               let obIndex = j - 1;
               while (obIndex > targetHL.index && candles[obIndex].close < candles[obIndex].open) obIndex--;
@@ -2199,7 +2317,7 @@ const SMC = {
         for (let j = lastLow.index + 1; j < candles.length; j++) {
           if (candles[j].close > targetLH.price) {
             const recency = candles.length - 1 - j;
-            if (recency <= 30) { // FIX-AUDIT: reducido 60→30 (2.5h max, antes 5h — stale)
+            if (recency <= 60) {
               const epoch = candles[j]?.epoch || (candles[j]?.time ? Math.floor(candles[j].time/1000) : null);
               let obIndex = j - 1;
               while (obIndex > targetLH.index && candles[obIndex].close > candles[obIndex].open) obIndex--;
@@ -2300,7 +2418,7 @@ const SMC = {
             break;
           }
         }
-        if (breakIdx > 0 && breakIdx >= candles.length - 30) { // FIX-AUDIT: 50→30 (stale BOS)
+        if (breakIdx > 0 && breakIdx >= candles.length - 50) {
           const c = candles[breakIdx];
           return { type: 'BULLISH_BOS', side: 'BUY', level: targetHigh.price,
             epoch: c?.epoch || (c?.time ? Math.floor(c.time/1000) : null),
@@ -2319,7 +2437,7 @@ const SMC = {
             break;
           }
         }
-        if (breakIdx > 0 && breakIdx >= candles.length - 30) { // FIX-AUDIT: 50→30 (stale BOS)
+        if (breakIdx > 0 && breakIdx >= candles.length - 50) {
           const c = candles[breakIdx];
           return { type: 'BEARISH_BOS', side: 'SELL', level: targetLow.price,
             epoch: c?.epoch || (c?.time ? Math.floor(c.time/1000) : null),
@@ -2642,7 +2760,7 @@ const SMC = {
     };
   },
 
-  analyze(candlesM5, candlesH1, config, state, candlesM15 = null, candlesM1 = null) {
+  async analyze(candlesM5, candlesH1, config, state, candlesM15 = null, candlesM1 = null) {
     if (candlesM5.length < 30) {
       return { action: 'LOADING', score: 0, model: 'LOADING', reason: 'Cargando datos M5...' };
     }
@@ -3017,7 +3135,7 @@ const SMC = {
             ? +((ob.wickLow||ob.low) - avgRange*0.3).toFixed(config.decimals)
             : +((ob.wickHigh||ob.high) + avgRange*0.3).toFixed(config.decimals);
           const risk = Math.abs(price - slLevel);
-          if (risk > 0 && risk <= avgRange * 5) { // FIX-AUDIT: 8→5x (SL demasiado lejano = mala RR)
+          if (risk > 0 && risk <= avgRange * 8) {
             const synthPullback = {
               side: opSide, zone: ob,
               entry: +(price).toFixed(config.decimals), stop: slLevel,
@@ -3111,11 +3229,10 @@ const SMC = {
         if (!priceNearZone) continue;
 
         // Buscar la vela de rechazo más fuerte dentro de las últimas 8
-        // FIX-AUDIT: wick debe ENTRAR en el cuerpo del OB (no solo rozar zone.low)
         let bestBear = null, bestScore = 0;
         for (let ci = last8.length - 1; ci >= 0; ci--) {
           const c = last8[ci];
-          const touchedZone = c.high >= zone.low && c.high <= zone.high * 1.02; // wick entró en el OB
+          const touchedZone = c.high >= zone.low * 0.998; // mecha tocó la zona
           const strongBear  = c.close < c.open;
           const candleSize  = Math.abs(c.close - c.open);
           const bigCandle   = candleSize > avgRange * 0.6;
@@ -3186,11 +3303,10 @@ const SMC = {
                                lastCandle.close >= zone.low - avgRange * 0.2;
         if (!priceNearZoneB) continue;
 
-        // FIX-AUDIT: wick debe ENTRAR en el cuerpo del OB de demanda
         let bestBull = null, bestScore = 0;
         for (let ci = last8.length - 1; ci >= 0; ci--) {
           const c = last8[ci];
-          const touchedZone = c.low <= zone.high && c.low >= zone.low * 0.98; // wick entró en el OB
+          const touchedZone = c.low <= zone.high * 1.002;
           const strongBull  = c.close > c.open;
           const candleSize  = Math.abs(c.close - c.open);
           const bigCandle   = candleSize > avgRange * 0.6;
@@ -3399,44 +3515,30 @@ const SMC = {
       }
     }
     
-    // 4. LIQUIDITY_GRAB — FIX-AUDIT: ampliar ventana a últimas 4 velas
-    // Antes solo miraba [i-2] y [i-1], perdía grabs que ocurrieron 2-3 velas atrás
-    // Ahora busca el grab más reciente en las últimas 4 velas
-    {
-      let lgSellCandle = null, lgSellRef = null;
-      let lgBuyCandle  = null, lgBuyRef  = null;
-      // Buscar el sweep más reciente en las últimas 4 velas cerradas
-      for (let gi = candlesM5.length - 2; gi >= Math.max(1, candlesM5.length - 5); gi--) {
-        const gc     = candlesM5[gi];
-        const gcPrev = candlesM5[gi - 1];
-        if (!gc || !gcPrev) continue;
-        // SELL grab: vela gi rompió máximo de gi-1 pero cerró abajo → fallida alcista
-        if (!lgSellCandle && gc.high > gcPrev.high && gc.close < gcPrev.high) {
-          lgSellCandle = gc; lgSellRef = gcPrev;
-        }
-        // BUY grab: vela gi rompió mínimo de gi-1 pero cerró arriba → fallida bajista
-        if (!lgBuyCandle && gc.low < gcPrev.low && gc.close > gcPrev.low) {
-          lgBuyCandle = gc; lgBuyRef = gcPrev;
-        }
-        if (lgSellCandle && lgBuyCandle) break;
-      }
+    // 4. LIQUIDITY_GRAB — FIX 6: requiere triple confluencia + riesgo máximo 4x avgRange
+    const prev2Candle = candlesM5[candlesM5.length - 3];
+    const prevCandle  = candlesM5[candlesM5.length - 2];
 
-      // SELL: grab alcista confirmado + cierre bajista en vela actual
-      if (lgSellCandle && lgSellRef && lastCandle.close < lgSellCandle.close && opSide === 'SELL') {
+    if (prev2Candle && prevCandle) {
+      const brokeHigh = prevCandle.high > prev2Candle.high && prevCandle.close < prev2Candle.high;
+      const brokeLow  = prevCandle.low  < prev2Candle.low  && prevCandle.close > prev2Candle.low;
+
+      if (brokeHigh && lastCandle.close < prevCandle.close && opSide === 'SELL') {
+        // FIX: requiere H1 BEARISH Y M15 BEARISH (antes solo H1+M15 BEARISH implícito)
         if (structureH1.trend === 'BEARISH' && structureM15?.trend === 'BEARISH') {
-          const risk = lgSellCandle.high + avgRange*0.3 - lastCandle.close;
-          if (risk > 0 && risk < avgRange * 4) {
+          const risk = prevCandle.high + avgRange*0.3 - lastCandle.close;
+          if (risk > 0 && risk < avgRange * 4) { // FIX: era 6x, ahora 4x máximo
             const lgEntry = {
               side:  'SELL',
               entry: +(lastCandle.close).toFixed(config.decimals),
-              stop:  +(lgSellCandle.high + avgRange*0.25).toFixed(config.decimals),
+              stop:  +(prevCandle.high + avgRange*0.25).toFixed(config.decimals),
               tp1:   +(lastCandle.close - risk*1.5).toFixed(config.decimals),
               tp2:   +(lastCandle.close - risk*2.5).toFixed(config.decimals),
               tp3:   +(lastCandle.close - risk*4.0).toFixed(config.decimals),
               entryType: 'LIQUIDITY_GRAB'
             };
             let score = 84;
-            if (tripleConfluence)             score += 6;
+            if (tripleConfluence)             score += 6; // triple = bonus grande
             if (premiumDiscount==='PREMIUM')  score += 4;
             score = Math.min(score, 96);
             signals.push({
@@ -3447,15 +3549,14 @@ const SMC = {
         }
       }
 
-      // BUY: grab bajista confirmado + cierre alcista en vela actual
-      if (lgBuyCandle && lgBuyRef && lastCandle.close > lgBuyCandle.close && opSide === 'BUY') {
+      if (brokeLow && lastCandle.close > prevCandle.close && opSide === 'BUY') {
         if (structureH1.trend === 'BULLISH' && structureM15?.trend === 'BULLISH') {
-          const risk = lastCandle.close - (lgBuyCandle.low - avgRange*0.25);
+          const risk = lastCandle.close - (prevCandle.low - avgRange*0.25);
           if (risk > 0 && risk < avgRange * 4) {
             const lgEntry = {
               side:  'BUY',
               entry: +(lastCandle.close).toFixed(config.decimals),
-              stop:  +(lgBuyCandle.low - avgRange*0.25).toFixed(config.decimals),
+              stop:  +(prevCandle.low - avgRange*0.25).toFixed(config.decimals),
               tp1:   +(lastCandle.close + risk*1.5).toFixed(config.decimals),
               tp2:   +(lastCandle.close + risk*2.5).toFixed(config.decimals),
               tp3:   +(lastCandle.close + risk*4.0).toFixed(config.decimals),
@@ -3589,14 +3690,60 @@ const SMC = {
       };
     }
     
-    // ✅ SCORE SUFICIENTE - GENERAR SEÑAL
-    console.log(`✅ [${config.shortName}] APROBADA: ${best.model} con score ${finalScore}`);
-    
+    // ✅ SCORE SUFICIENTE - VALIDACIÓN IA ANTES DE EMITIR
+    console.log(`✅ [${config.shortName}] APROBADA técnicamente: ${best.model} con score ${finalScore}`);
+
+    // ── Validación IA (async, no bloquea si falla) ──
+    let aiResult = { approve: true, confidence: 70, reason: '', warning: null };
+    if (openai && state) {
+      try {
+        const marketCtx = {
+          symbol: config.symbol || config.shortName,
+          config,
+          structureH1, structureM15, structureM5,
+          premiumDiscount,
+          demandZones, supplyZones, choch, bos
+        };
+        const tentativeSignal = {
+          action:  pb.side === 'BUY' ? 'LONG' : 'SHORT',
+          model:   best.model, score: finalScore,
+          entry: pb.entry, stop: pb.stop, tp1: pb.tp1
+        };
+        // Timeout 5s para no bloquear el scanner
+        aiResult = await Promise.race([
+          aiValidateSignal(tentativeSignal, marketCtx, state),
+          new Promise(resolve => setTimeout(() => resolve({ approve: true, confidence: 65, reason: 'Timeout IA' }), 5000))
+        ]);
+      } catch(e) {
+        console.log('⚠️ IA skip:', e.message);
+      }
+    }
+
+    // Si IA rechaza con alta confianza (>75%) y score técnico no es excelente (≥95%)
+    // → no generar señal, esperar mejor setup
+    if (!aiResult.approve && aiResult.confidence >= 75 && finalScore < 95) {
+      console.log(`🤖 [${config.shortName}] IA RECHAZA: ${aiResult.reason} (conf: ${aiResult.confidence}%)`);
+      return {
+        action: 'WAIT',
+        score: finalScore,
+        model: best.model,
+        reason: `IA: ${aiResult.reason}`,
+        analysis: { structureM5: structureM5.trend, structureH1: structureH1.trend, mtfConfluence, premiumDiscount }
+      };
+    }
+
+    if (aiResult.warning) {
+      console.log(`⚠️ [${config.shortName}] Advertencia IA: ${aiResult.warning}`);
+    }
+
     const pb = best.pullback;
     return {
       action: pb.side === 'BUY' ? 'LONG' : 'SHORT',
       model: best.model,
       score: finalScore,
+      aiConfidence: aiResult.confidence,
+      aiReason:     aiResult.reason,
+      aiWarning:    aiResult.warning,
       entry: pb.entry,
       stop: pb.stop,
       tp1: pb.tp1,
@@ -4807,7 +4954,7 @@ function requestM1(symbol) {
 // =============================================
 // ANÁLISIS DE ACTIVOS v13.2 (con filtros mejorados)
 // =============================================
-function analyzeAsset(symbol) {
+async function analyzeAsset(symbol) {
   const data = assetData[symbol];
   const config = ASSETS[symbol];
   
@@ -4840,7 +4987,7 @@ function analyzeAsset(symbol) {
   // ═══════════════════════════════════════════
   if (!isInTradingHours()) {
     // Fuera de horario — analizar sin generar señales
-    const signal = SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
+    const signal = await SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
     data.signal = signal;
     return;
   }
@@ -4857,7 +5004,7 @@ function analyzeAsset(symbol) {
       now - data.lastSignalClosed < cooldownTime) {
     // During cooldown: still run analysis to keep zones + structure fresh
     // but don't generate new signals
-    const signal = SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
+    const signal = await SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
     data.signal = { ...signal, action: 'WAIT', model: 'COOLDOWN',
       reason: `Cooldown activo (${Math.ceil((cooldownTime-(now-data.lastSignalClosed))/60000)}min restante)` };
     return;
@@ -4875,7 +5022,7 @@ function analyzeAsset(symbol) {
   if (pendingThisAsset >= SIGNAL_CONFIG.MAX_PENDING_PER_ASSET) {
     console.log(`⏸️ [${config.shortName}] Ya tiene señal abierta (${pendingThisAsset}/${SIGNAL_CONFIG.MAX_PENDING_PER_ASSET})`);
     // Aún analizar para mantener estructura y zonas frescas en el frontend
-    const signal = SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
+    const signal = await SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
     data.signal = signal;
     return;
   }
@@ -4883,13 +5030,13 @@ function analyzeAsset(symbol) {
   // Bloquear si se alcanzó el límite global
   if (totalPending >= SIGNAL_CONFIG.MAX_PENDING_TOTAL) {
     console.log(`⏸️ [${config.shortName}] Límite global alcanzado (${totalPending}/${SIGNAL_CONFIG.MAX_PENDING_TOTAL})`);
-    const signal = SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
+    const signal = await SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
     data.signal = signal;
     return;
   }
   
   // Ejecutar análisis SMC
-  const signal = SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
+  const signal = await SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
   data.signal = signal;
 
   // ── Calcular pasos de M1_PRECISION para visualización en tiempo real ──
@@ -5009,13 +5156,11 @@ function analyzeAsset(symbol) {
     return;
   }
 
-  // FIX-AUDIT: 0.6→0.35 — antes permitía entrar cuando precio ya viajó 60% del riesgo.
-  // 0.35 = máximo 35% de distancia desde la entrada (evita entradas tardías / perseguir precio)
-  if (signalRisk > 0 && priceDistance > signalRisk * 0.35) {
+  if (signalRisk > 0 && priceDistance > signalRisk * 0.6) {
     const direction = signal.action === 'LONG'
       ? (currentPrice > signalEntry ? 'precio ya subió past entry' : 'precio cayó demasiado')
       : (currentPrice < signalEntry ? 'precio ya bajó past entry' : 'precio subió demasiado');
-    console.log(`⛔ [${config.shortName}] SEÑAL VENCIDA — ${direction}: price=${currentPrice.toFixed(config.decimals)} entry=${signalEntry} dist=${priceDistance.toFixed(config.decimals)} > ${(signalRisk*0.35).toFixed(config.decimals)}`);
+    console.log(`⛔ [${config.shortName}] SEÑAL VENCIDA — ${direction}: price=${currentPrice.toFixed(config.decimals)} entry=${signalEntry} dist=${priceDistance.toFixed(config.decimals)} > ${(signalRisk*0.6).toFixed(config.decimals)}`);
     return;
   }
 
@@ -5066,8 +5211,8 @@ function analyzeAsset(symbol) {
   // PERSISTENCIA: guardar señal nueva en Supabase inmediatamente
   saveSignalToSupabase(newSignal).catch(() => {});
 
-  // FIX-AUDIT: señales huérfanas (PENDING > 2h = cerradas sin notificar) — era 4h, demasiado
-  const fourHours = 2 * 60 * 60 * 1000;
+  // FIX: límite de señales en memoria + limpiar huérfanas (PENDING > 4h = cerradas sin notificar)
+  const fourHours = 4 * 60 * 60 * 1000;
   signalHistory = signalHistory.map(s => {
     if (s.status === 'PENDING' && Date.now() - s.timestamp > fourHours) {
       return { ...s, status: 'EXPIRED', closeReason: 'Auto-cerrada por timeout' };
@@ -5434,6 +5579,77 @@ app.post('/api/reset/:symbol', (req, res) => {
 });
 
 app.get('/api/signals', (req, res) => res.json({ signals: signalHistory, stats }));
+
+// ── RESET DE HISTORIAL — borra memoria y empieza desde 0 ──
+app.post('/api/reset-history', async (req, res) => {
+  const { confirm, keepSupabase } = req.body || {};
+  if (confirm !== 'RESET_CONFIRMED') {
+    return res.status(400).json({ error: 'Enviar { confirm: "RESET_CONFIRMED" }' });
+  }
+  // Borrar memoria en RAM
+  signalHistory.length = 0;
+  signalIdCounter = 1;
+  stats.total = stats.wins = stats.losses = stats.pending = 0;
+  stats.tp1Hits = stats.tp2Hits = stats.tp3Hits = 0;
+  Object.keys(stats.byModel).forEach(k => delete stats.byModel[k]);
+  Object.keys(stats.learning.scoreAdjustments).forEach(k => delete stats.learning.scoreAdjustments[k]);
+  // Resetear lockedSignal en todos los assets
+  Object.values(assetData).forEach(d => { d.lockedSignal = null; d.lastSignalTime = 0; });
+
+  // Opcionalmente borrar en Supabase
+  if (!keepSupabase && supabase) {
+    try {
+      await supabase.from('trading_signals').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      console.log('🗑️ Historial borrado en Supabase');
+    } catch(e) {
+      console.log('⚠️ Error borrando Supabase:', e.message);
+    }
+  }
+
+  console.log('🔄 HISTORIAL REINICIADO — empezando desde 0');
+  res.json({ ok: true, message: 'Historial reiniciado. Sistema empezando desde 0.' });
+});
+
+// ── ANÁLISIS MACRO IA — contexto de mercado para un activo ──
+app.get('/api/macro/:symbol', async (req, res) => {
+  const { symbol } = req.params;
+  const data = assetData[symbol];
+  if (!data) return res.status(404).json({ error: 'Activo no encontrado' });
+
+  const news = await fetchMacroNews(symbol).catch(() => 'Sin datos');
+
+  if (!openai) return res.json({ news, analysis: 'OpenAI no configurado', symbol });
+
+  try {
+    const prompt = `Analiza el contexto macro actual para trading de ${symbol === 'frxXAUUSD' ? 'Oro (XAU/USD)' : symbol}.
+
+Noticias disponibles: ${news}
+
+Estructura técnica actual:
+- Precio: ${data.price}
+- Tendencia H1: ${data.signal?.analysis?.structureH1 || 'N/A'}
+- Tendencia M5: ${data.signal?.analysis?.structureM5 || 'N/A'}
+
+Proporciona:
+1. Sesgo macro (alcista/bajista/neutral) con razón en 2 oraciones
+2. Eventos de riesgo en las próximas 24h (si los hay)
+3. Recomendación: operar normal / cautela / evitar hoy
+
+Responde en JSON: {"bias": "BULLISH/BEARISH/NEUTRAL", "biasReason": "...", "riskEvents": "...", "recommendation": "NORMAL/CAUTELA/EVITAR", "details": "..."}`;
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.3,
+      max_tokens: 300,
+      response_format: { type: 'json_object' }
+    });
+    const analysis = JSON.parse(completion.choices[0]?.message?.content || '{}');
+    res.json({ symbol, news, analysis, timestamp: new Date().toISOString() });
+  } catch(e) {
+    res.json({ symbol, news, analysis: { error: e.message }, timestamp: new Date().toISOString() });
+  }
+});
 
 // ── API P&L: puntos ganados/perdidos con filtro por período ──
 app.get('/api/pnl', (req, res) => {
