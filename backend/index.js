@@ -260,6 +260,18 @@ function isInTradingHours(plan = 'free') {
 // Emite veredicto: APROBAR / RECHAZAR / ESPERAR con razón
 // ════════════════════════════════════════════════════════════════════════
 
+const app = express();
+const PORT = process.env.PORT || 3001;
+
+app.use(cors());
+app.use(express.json());
+
+// =============================================
+// CONFIGURACIÓN TELEGRAM
+// =============================================
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+
 // Cache de noticias: evita llamadas repetidas (actualiza cada 30 min)
 const newsCache = { data: null, ts: 0 };
 
