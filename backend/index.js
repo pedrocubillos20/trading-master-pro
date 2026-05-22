@@ -185,7 +185,7 @@ const LearningSystem = {
 // =============================================
 const SIGNAL_CONFIG = {
   // Score mínimo para generar señal
-  MIN_SCORE: 92, // v25: Solo entradas de alta calidad — reducir cantidad, aumentar calidad
+  MIN_SCORE: 92, // v25: Solo entradas de alta calidad: Solo señales de alta calidad — elimina entradas débiles
   // BUG FIX: 82 era demasiado bajo — permite modelos INDUCEMENT y LG sin H1 firme
   
   // Score mínimo específico para Boom/Crash (más estricto)
@@ -197,7 +197,7 @@ const SIGNAL_CONFIG = {
   // Cooldown después de cerrar una señal antes de abrir otra
   // 5 min = permite 2-3 operaciones por activo en una sesión de 8h
   // sin abrir operaciones basura consecutivas
-  POST_SIGNAL_COOLDOWN: 600000, // 10 minutos — espaciar señales para calidad
+  POST_SIGNAL_COOLDOWN: 300000, // 5 minutos
 
   // Boom/Crash: más tiempo porque los spikes son menos frecuentes
   POST_SIGNAL_COOLDOWN_BOOM_CRASH: 600000, // 10 minutos
@@ -250,20 +250,17 @@ function isInTradingHours(plan = 'free') {
   return inDaytime || inNight;
 }
 
-// ════════════════════════════════════════════════════════════════════════
-// MÓDULO DE ANÁLISIS MACRO CON IA — v24.5
-// ════════════════════════════════════════════════════════════════════════
-// Consulta a GPT-4o con contexto de:
-//   1. Estructura técnica SMC detectada
-//   2. Noticias relevantes del activo (via búsqueda web de Deriv/Forex)
-//   3. Contexto macro (tasas, DXY, riesgo)
-// Emite veredicto: APROBAR / RECHAZAR / ESPERAR con razón
-// ════════════════════════════════════════════════════════════════════════
+const app = express();
+const PORT = process.env.PORT || 3001;
 
-// Cache de noticias: evita llamadas repetidas (actualiza cada 30 min)
-const newsCache = { data: null, ts: 0 };
+app.use(cors());
+app.use(express.json());
 
-
+// =============================================
+// CONFIGURACIÓN TELEGRAM
+// =============================================
+const TELEGRAM_BOT_TOKEN = process.env.TOKEN_BOT_DE_TELEGRAM || process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_CHAT_ID = process.env.ID_DE_CHAT_DE_TELEGRAM || process.env.TELEGRAM_CHAT_ID;
 
 async function sendTelegramSignal(signal) {
   if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
@@ -478,7 +475,7 @@ async function sendTelegramDirectionChange(signal, currentPrice, recommendation)
 // CONFIGURACIÓN SUPABASE
 // =============================================
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || '';
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY || '';
 let supabase = null;
 
 if (SUPABASE_URL && SUPABASE_SERVICE_KEY) {
@@ -1178,7 +1175,7 @@ const SMC = {
     // FIX: NO adaptive lookback — adaptive was using candles.length/20
     // which with 300 candles gives lookback=15, missing most real M5 swings
     // Use FIXED lookback: 2 for M5 (catches every real pivot), 3 for H1/M15
-    const lb = Math.max(2, Math.min(lookback, 5));
+    const lb = Math.max(4, Math.min(lookback, 6)); // LuxAlgo-aligned: lb=4 min reduces false pivots
 
     for (let i = lb; i < candles.length - lb; i++) {
       const c = candles[i];
@@ -2061,26 +2058,17 @@ const SMC = {
     // ── Keep only OBs from the MOST RECENT structure ──
     // Priority: 1) at extremity + unmitigated  2) STRONG + unmitigated  3) recent
     const filterOBs = (zones) => {
-      // LuxAlgo approach: only show OBs that are:
-      // 1. From last 100 candles (recent enough to be valid)
-      // 2. At extremity (swing high/low) OR Strong impulse pattern
-      // 3. Not mitigated
-      const recentEnough = zones.filter(z => z.index >= lastIndex - 100);
+      // Only consider OBs from last 120 candles — old zones are irrelevant
+      // FIX: OBs frescos máximo 40 velas (estructura actual, como LuxAlgo PRESENT mode)
+      const recentEnough = zones.filter(z => z.index >= lastIndex - 40);
       const sorted = recentEnough.sort((a,b) => {
-        // Priority: extremity OBs first (LuxAlgo swing OBs > internal OBs)
         if (a.atExtremity !== b.atExtremity) return a.atExtremity ? -1 : 1;
-        // Then strong strength
-        if (a.strength !== b.strength) return a.strength === 'STRONG' ? -1 : 1;
         if (a.mitigated !== b.mitigated) return a.mitigated ? 1 : -1;
         return b.index - a.index;
       });
-      // Only 3 best fresh OBs — prefer STRONG and at extremity
-      const fresh = sorted.filter(z => !z.mitigated).slice(0, 4);
-      // Mark extremity OBs as structural (like LuxAlgo swing order blocks)
-      fresh.forEach(z => {
-        if (z.atExtremity && z.strength === 'STRONG') z.isStructureOB = true;
-      });
-      // 1 recent mitigated for context
+      // Show max 3 fresh (unmitigated) OBs — no mitigated ones in display
+      const fresh = sorted.filter(z => !z.mitigated).slice(0, 3);
+      // Only 1 mitigated if it's from the last 30 candles (context only)
       const mitigated = sorted.filter(z => z.mitigated && z.index >= lastIndex - 30).slice(0, 1);
       return [...fresh, ...mitigated];
     };
@@ -2181,7 +2169,7 @@ const SMC = {
         for (let j = lastHigh.index + 1; j < candles.length; j++) {
           if (candles[j].close < targetHL.price) {
             const recency = candles.length - 1 - j;
-            if (recency <= 60) { // dentro de las últimas 60 velas
+            if (recency <= 20) { // max 20 velas = 100 min en M5 (LuxAlgo: solo ÚLTIMO pivot)
               const epoch = candles[j]?.epoch || (candles[j]?.time ? Math.floor(candles[j].time/1000) : null);
               let obIndex = j - 1;
               while (obIndex > targetHL.index && candles[obIndex].close < candles[obIndex].open) obIndex--;
@@ -2655,7 +2643,7 @@ const SMC = {
     };
   },
 
-  async analyze(candlesM5, candlesH1, config, state, candlesM15 = null, candlesM1 = null) {
+  analyze(candlesM5, candlesH1, config, state, candlesM15 = null, candlesM1 = null) {
     if (candlesM5.length < 30) {
       return { action: 'LOADING', score: 0, model: 'LOADING', reason: 'Cargando datos M5...' };
     }
@@ -2977,63 +2965,37 @@ const SMC = {
       };
     }
 
-    // MTF_CONFLUENCE — LuxAlgo-aligned: necesita ESTRUCTURAL OB + alineación real
-    // FIX CRÍTICO: base 84 (no 88) — solo llega a 92+ con confirmaciones reales
-    // Elimina entradas marginales que causaban el 38% WR
-    if (pullback && pullback.side === opSide && pullback.touchedOB) {
-      // NUEVO REQUISITO: OB debe ser estructural (creado por CHoCH/BOS)
-      // OBs genéricos sin estructura detrás generan falsas señales
-      const hasStructuralOB = pullback.zone?.isStructureOB || pullback.confirmation === 'CHOCH_OB';
-      
-      // NUEVO REQUISITO: H1 y M15 deben estar ALINEADOS (mismo trend o M15 confirma H1)
-      // Si M15 va contra H1 sin CHoCH M15 fresco = señal débil
-      const strongAlignment = sameDirection || m15ChochFresh ||
-        (structureH1.strength >= 70 && m15Strong) ||
-        m15m5BosAligned || m15ChochM5Aligned;
-      
-      if (!hasStructuralOB && !strongAlignment) {
-        // OB no estructural Y alineación débil → descartar (causa principal de pérdidas)
-        console.log(`🚫 [${config.shortName}] MTF_CONFLUENCE bloqueado: OB no estructural + alineación débil`);
-      } else {
-        let score = 84; // base más baja — fuerza filtrado real
-        // Bonus por OB estructural (creado por CHoCH/BOS = más válido)
-        if (hasStructuralOB)  score += 6;
-        // Bonus por zona de valor correcta
-        if (pullback.side === 'BUY'  && premiumDiscount === 'DISCOUNT') score += 4;
-        if (pullback.side === 'SELL' && premiumDiscount === 'PREMIUM')  score += 4;
-        // Bonus por alineación fuerte H1+M15
-        if (sameDirection && structureH1.strength >= 70 && m15Strong) score += 5;
-        else if (sameDirection) score += 3;
-        // Bonus por CHoCH reciente (timing preciso)
-        if (m15ChochFresh)    score += 5;
-        if (choch && choch.side === opSide) score += 4;
-        // Bonus por confluencia triple (H1+M15+M5 alineados)
-        if (tripleConfluence) score += 4;
-        // Bonus por patrón de vela de calidad
-        if (pullback.confirmation === 'CHOCH_OB')   score += 4;
-        if (pullback.confirmation === 'BULLISH_CLOSE' || pullback.confirmation === 'BEARISH_CLOSE') score += 2;
-        // Penalización si H1 no confirma dirección
-        if (!sameDirection && !m15ChochFresh && !m15m5BosAligned) score -= 4;
-        score = Math.min(score, 100);
+    // MTF_CONFLUENCE — exige que pullback coincida con opDir (= H1)
+    if (pullback && pullback.side === opSide) {
+      let score = 88;
+      if (pullback.side === 'BUY'  && premiumDiscount === 'DISCOUNT') score += 5;
+      if (pullback.side === 'SELL' && premiumDiscount === 'PREMIUM')  score += 5;
+      if (m15Strong)        score += 4;
+      if (tripleConfluence) score += 4;
+      if (choch)            score += 3;
+      if (m15ChochFresh)    score += 4;
+      if (pullback.confirmation === 'ENGULFING' || pullback.confirmation === 'PIN_BAR') score += 3;
+      if (pullback.confirmation === 'CHOCH_OB') score += 5;
+      if (pullback.zone?.isStructureOB) score += 3;
+      score = Math.min(score, 100);
 
       const trendCtx = m15ChochFresh
         ? `CHoCH M15(${state.chochM15?.side}) + M5 OB`
         : `H1(${opDir})+M15(${structureM15.trend})`;
 
-                signals.push({
-          model: 'MTF_CONFLUENCE',
-          baseScore: score,
-          pullback,
-          reason: `${trendCtx} + OB ${pullback.confirmation || ''} ${premiumDiscount !== 'EQUILIBRIUM' ? '+ ' + premiumDiscount : ''} ${hasStructuralOB ? '★' : ''}`.trim()
-        });
-      } // end hasStructuralOB || strongAlignment
-    } // end pullback && side === opSide && touchedOB
+      // ✅ FIX CRÍTICO: signals.push faltaba — MTF_CONFLUENCE nunca generaba señales
+      signals.push({
+        model: 'MTF_CONFLUENCE',
+        baseScore: score,
+        pullback,
+        reason: `${trendCtx} + OB ${pullback.confirmation || ''} ${premiumDiscount !== 'EQUILIBRIUM' ? '+ ' + premiumDiscount : ''}`.trim()
+      });
+    }
     
-    // ── CHOCH_PULLBACK: CHoCH en M5 + retroceso al OB ESTRUCTURAL ──
-    // LuxAlgo: CHoCH válido solo si hay estructura previa clara (HH/HL o LL/LH)
-    // y el OB fue creado por ese CHoCH específico
-    if (choch && choch.side === opSide && !pullback &&
-        structureM5.strength >= 55) { // M5 debe tener estructura confirmada
+    // ── CHOCH_PULLBACK: CHoCH en M5 + retroceso al OB ──
+    // Also fires when: CHoCH is fresh (last 15 candles) + structureOB exists near price
+    // This catches cases where the touch happened 4-10 candles ago
+    if (choch && choch.side === opSide && !pullback) {
       // Try to synthesize a pullback from the structureOB
       const structOBs = opSide === 'BUY'
         ? demandZones.filter(z => z.isStructureOB && !z.mitigated)
@@ -3564,252 +3526,761 @@ const SMC = {
     
     // Log cuando SÍ hay señales potenciales
     console.log(`✨ [${config.shortName}] ${signals.length} candidatas: ${signals.map(s=>s.model+'('+s.baseScore+')').join(', ')}`);
+    
+    signals.sort((a, b) => b.baseScore - a.baseScore);
+    const best = signals[0];
 
-    // ═══════════════════════════════════════════════════════════════════
-    // FLUJO COMPARATIVO CON IA v25
-    // IA recibe TODAS las candidatas y elige la mejor en contexto
-    // ═══════════════════════════════════════════════════════════════════
+    // OB_REJECTION puede operar counter-trend:
+    // - Si M5 hizo CHoCH en la misma dirección → umbral 85 (mismo que tendencia)
+    // - Si solo tiene OB estructural sin CHoCH M5 → umbral 90
+    // - Esto captura exactamente el caso: H1 BULLISH + OB rechazo + CHoCH M5 BEARISH
+    const obRejM5Confirms = best.model === 'OB_REJECTION' && (() => {
+      const isShort = best.pullback?.side === 'SELL';
+      const isLong  = best.pullback?.side === 'BUY';
+      const m5Agrees = (isShort && structureM5?.trend === 'BEARISH') ||
+                       (isLong  && structureM5?.trend === 'BULLISH');
+      return m5Agrees;
+    })();
+    const effectiveMinScore = best.model === 'OB_REJECTION'
+      ? (obRejM5Confirms ? 85 : 90)  // M5 CHoCH confirma → mismo umbral que tendencia
+      : minScore;
+    
+    // 🔍 LOG: Mostrar score de la mejor señal
+    console.log(`🎯 [${config.shortName}] Mejor: ${best.model} | Score Base: ${best.baseScore} | Side: ${best.pullback?.side}`);
+    
+    // ═══════════════════════════════════════════
+    // AJUSTE DE SCORE CON SISTEMA DE APRENDIZAJE
+    // ═══════════════════════════════════════════
+    // Nota: Usamos config.shortName en lugar de symbol (que no existe en este contexto)
+    const learningAdj = LearningSystem.getScoreAdjustment(best.model, config.shortName);
+    const finalScore  = Math.min(100, Math.max(0, best.baseScore + learningAdj));
 
-    // 1. Aplicar learning system y filtrar por score mínimo
-    const gradedSignals = signals.map(s => {
-      const lAdj = LearningSystem.getScoreAdjustment(s.model, config.shortName);
-      return { ...s, finalScore: Math.min(100, Math.max(0, s.baseScore + lAdj)) };
-    }).filter(s => s.finalScore >= minScore)
-      .sort((a,b) => b.finalScore - a.finalScore);
+    console.log(`📊 [${config.shortName}] Score Final: ${finalScore} vs Min: ${effectiveMinScore} → ${finalScore >= effectiveMinScore ? '✅ PASA' : '❌ NO PASA'} | Modelo: ${best.model}`);
 
-    if (!gradedSignals.length) {
-      const topRaw = signals.sort((a,b)=>b.baseScore-a.baseScore)[0];
-      const adj = topRaw ? LearningSystem.getScoreAdjustment(topRaw.model, config.shortName) : 0;
-      const fs  = topRaw ? Math.min(100, topRaw.baseScore + adj) : 0;
-      console.log(`❌ [${config.shortName}] Score ${fs}% < ${minScore}%`);
+    if (finalScore < effectiveMinScore) {
+      console.log(`❌ [${config.shortName}] Rechazada: ${finalScore} < ${effectiveMinScore}${best.model==='OB_REJECTION'?' (OB_REJECTION necesita ≥90)':''}`);
       return {
-        action: 'WAIT', score: fs, model: topRaw?.model || 'WAIT',
-        reason: `Score ${fs}% < ${minScore}% mínimo`,
-        analysis: { structureM5: structureM5.trend, structureH1: structureH1.trend, mtfConfluence, premiumDiscount }
+        action: 'WAIT',
+        score: finalScore,
+        model: best.model,
+        reason: `Score ${finalScore}% < ${effectiveMinScore}% min`,
+        analysis: {
+          structureM5: structureM5.trend,
+          structureH1: structureH1.trend,
+          mtfConfluence,
+          premiumDiscount
+        }
       };
     }
-
-    // 2. IA compara todas las candidatas y elige la mejor
-    let chosen = gradedSignals[0];
-    let aiResult = { approve: true, confidence: 70, reason: 'Score técnico', warning: null, patterns: [], chosenIdx: 0 };
-
-    if (openai && gradedSignals.length > 0) {
-      try {
-        const candles  = state?.candles || [];
-        const avgRange = candles.length > 14
-          ? candles.slice(-14).reduce((s,c)=>s+Math.abs(c.high-c.low),0)/14 : 3;
-        const patterns = detectCandlePatterns(candles, avgRange);
-        const last5 = candles.slice(-5).map(c=>({
-          o:+c.open.toFixed(config.decimals||2), h:+c.high.toFixed(config.decimals||2),
-          l:+c.low.toFixed(config.decimals||2),  c:+c.close.toFixed(config.decimals||2),
-          d:c.close>c.open?'▲':'▼'
-        }));
-
-        // Descripción concisa de cada candidata para la IA
-        const candidateDesc = gradedSignals.slice(0,4).map((s,idx)=>{
-          const pb = s.pullback;
-          const rr = pb ? (Math.abs((pb.tp1||0)-(pb.entry||0))/Math.abs((pb.entry||0)-(pb.stop||1))).toFixed(2) : '?';
-          const zone = pb?.zone;
-          return `[${idx+1}] ${s.model} | ${pb?.side||'?'} | Score:${s.finalScore}% | `+
-            `Entry:${pb?.entry||'?'} SL:${pb?.stop||'?'} TP1:${pb?.tp1||'?'} R:R:${rr} | `+
-            `OB:${zone?.isStructureOB?'★':'normal'} ${zone?.strength||''} | Conf:${pb?.confirmation||'-'}`;
-        }).join(' || ');
-
-        const prompt = `Trader institucional SMC. ${gradedSignals.slice(0,4).length} candidatas en ${config.shortName}. Elige la MEJOR o di NINGUNA.
-
-CANDIDATAS:
-${candidateDesc}
-
-CONTEXTO:
-H1:${structureH1?.trend}(${structureH1?.strength}%) M15:${structureM15?.trend||'?'}(${structureM15?.strength||0}%) M5:${structureM5?.trend}
-${premiumDiscount} | CHoCH:${choch?choch.type:'No'} | BOS:${bos?bos.type:'No'}
-Velas: ${last5.map(c=>`[${c.d}${c.c}]`).join(' ')}
-Patrones: ${patterns.length?patterns.map(p=>p.name).join(','):'Ninguno'}
-
-CRITERIOS PARA ELEGIR:
-1. OBs estructurales ★ tienen prioridad sobre normales
-2. CHoCH reciente + pullback al OB = timing ideal
-3. Dirección alineada con H1 (o M15+M5 muy fuertes si hay CHoCH)
-4. DISCOUNT=compras, PREMIUM=ventas (excepto OB estructural counter-trend)
-5. R:R minimo 1.5 — rechazar si es menor
-6. M5 y M15 opuestos sin CHoCH claro = NINGUNA
-
-JSON: {"choice":1,"confidence":85,"reason":"max 50 palabras","warning":"riesgo o null"}
-choice=0 si ninguna vale ahora.`;
-
-        const res = await Promise.race([
-          openai.chat.completions.create({
-            model:'gpt-4o-mini',
-            messages:[{role:'user',content:prompt}],
-            temperature:0.1, max_tokens:200,
-            response_format:{type:'json_object'}
-          }),
-          new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout IA')),7000))
-        ]);
-
-        const p = JSON.parse(res.choices[0]?.message?.content||'{}');
-
-        if (!p.choice || p.choice === 0) {
-          console.log(`🤖 [${config.shortName}] IA: NINGUNA → ${p.reason}`);
-          return {
-            action:'WAIT', score: chosen.finalScore, model: chosen.model,
-            reason: `IA: ${p.reason||'Sin setup válido ahora'}`,
-            analysis:{structureM5:structureM5.trend,structureH1:structureH1.trend,mtfConfluence,premiumDiscount}
-          };
-        }
-
-        const chosenIdx = Math.max(0, Math.min((p.choice||1)-1, gradedSignals.length-1));
-        chosen = gradedSignals[chosenIdx];
-        aiResult = {
-          approve:true, confidence:Math.min(100,Math.max(0,+p.confidence||70)),
-          reason:p.reason||'Validado', warning:p.warning||null, patterns, chosenIdx
-        };
-        console.log(`🤖 [${config.shortName}] IA eligió [${p.choice}] ${chosen.model} | conf:${aiResult.confidence}% | ${aiResult.reason}`);
-
-      } catch(e) {
-        console.log(`⚠️ [${config.shortName}] IA error: ${e.message} — mejor técnico`);
-      }
-    } else if (!openai) {
-      console.log(`✅ [${config.shortName}] Sin IA — usando mejor técnico: ${chosen.model} ${chosen.finalScore}%`);
-    }
-
-    if (aiResult.warning) console.log(`⚠️ [${config.shortName}] Aviso IA: ${aiResult.warning}`);
-
-    // 3. Emitir la señal elegida
-    const pb = chosen.pullback;
+    
+    // ✅ SCORE SUFICIENTE - GENERAR SEÑAL
+    console.log(`✅ [${config.shortName}] APROBADA: ${best.model} con score ${finalScore}`);
+    
+    const pb = best.pullback;
     return {
-      action:      pb.side === 'BUY' ? 'LONG' : 'SHORT',
-      model:       chosen.model,
-      score:       chosen.finalScore,
-      aiConfidence:aiResult.confidence,
-      aiReason:    aiResult.reason,
-      aiWarning:   aiResult.warning,
-      aiPatterns:  (aiResult.patterns||[]).map(p=>p.name).join(',') || null,
-      entry: pb.entry, stop: pb.stop,
-      tp1: pb.tp1, tp2: pb.tp2, tp3: pb.tp3,
-      reason: chosen.reason,
+      action: pb.side === 'BUY' ? 'LONG' : 'SHORT',
+      model: best.model,
+      score: finalScore,
+      entry: pb.entry,
+      stop: pb.stop,
+      tp1: pb.tp1,
+      tp2: pb.tp2,
+      tp3: pb.tp3,
+      reason: best.reason,
       analysis: {
-        structureM5:structureM5.trend, structureH1:structureH1.trend,
-        mtfConfluence, premiumDiscount, orderFlow:orderFlow.momentum
+        structureM5: structureM5.trend,
+        structureH1: structureH1.trend,
+        mtfConfluence,
+        premiumDiscount,
+        orderFlow: orderFlow.momentum
       }
     };
-
-    } // close analyze()
+  } // close analyze()
 }; // close SMC
 
 // =============================================
+// ELISA IA - ASISTENTE EXPRESIVA
 // =============================================
-// MÓDULO IA — LECTURA DE GRÁFICO Y PATRONES
-// =============================================
-
-const iaAnalysisCache = {};
-
-function detectCandlePatterns(candles, avgRange) {
-  if (!candles || candles.length < 3) return [];
-  const patterns = [];
-  const last  = candles[candles.length - 1];
-  const prev  = candles[candles.length - 2];
-  const prev2 = candles[candles.length - 3];
-  const body       = Math.abs(last.close - last.open);
-  const upperWick  = last.high - Math.max(last.open, last.close);
-  const lowerWick  = Math.min(last.open, last.close) - last.low;
-  const isBull = last.close > last.open;
-  const isBear = last.close < last.open;
-
-  if (lowerWick > body * 2 && lowerWick > upperWick * 2 && isBull)
-    patterns.push({ name: 'PIN_BAR_BULL', bias: 'BUY' });
-  if (upperWick > body * 2 && upperWick > lowerWick * 2 && isBear)
-    patterns.push({ name: 'PIN_BAR_BEAR', bias: 'SELL' });
-  if (prev.close < prev.open && isBull && last.close > prev.open && last.open < prev.close)
-    patterns.push({ name: 'ENGULFING_BULL', bias: 'BUY' });
-  if (prev.close > prev.open && isBear && last.close < prev.open && last.open > prev.close)
-    patterns.push({ name: 'ENGULFING_BEAR', bias: 'SELL' });
-  if (body < avgRange * 0.15)
-    patterns.push({ name: 'DOJI', bias: 'WAIT' });
-  if (body > avgRange * 1.8)
-    patterns.push({ name: isBull ? 'IMPULSO_BULL' : 'IMPULSO_BEAR', bias: isBull ? 'BUY' : 'SELL' });
-  if (last.high < prev.high && last.low > prev.low)
-    patterns.push({ name: 'INSIDE_BAR', bias: 'WAIT' });
-  // Morning/Evening star
-  const p2 = prev2, p1 = prev, p0 = last;
-  if (p2.close < p2.open && Math.abs(p1.close-p1.open) < avgRange*0.3 && p0.close > p0.open && p0.close > (p2.open+p2.close)/2)
-    patterns.push({ name: 'MORNING_STAR', bias: 'BUY' });
-  if (p2.close > p2.open && Math.abs(p1.close-p1.open) < avgRange*0.3 && p0.close < p0.open && p0.close < (p2.open+p2.close)/2)
-    patterns.push({ name: 'EVENING_STAR', bias: 'SELL' });
-  return patterns;
-}
-
-async function aiReadChart(signal, data, config) {
-  if (!openai) return { approve: true, confidence: 70, reason: 'IA no configurada', patterns: [] };
-
-  const cacheKey = `${config.symbol || config.shortName}_${signal.model}_${Math.floor(Date.now()/20000)}`;
-  if (iaAnalysisCache[cacheKey]) return iaAnalysisCache[cacheKey];
-
-  const candles   = data.candles || [];
-  const avgRange  = candles.length > 14
-    ? candles.slice(-14).reduce((s,c) => s + Math.abs(c.high - c.low), 0) / 14
-    : 3;
-  const patterns  = detectCandlePatterns(candles, avgRange);
-  const last5     = candles.slice(-5).map(c => ({
-    o: +c.open.toFixed(config.decimals || 2),
-    h: +c.high.toFixed(config.decimals || 2),
-    l: +c.low.toFixed(config.decimals || 2),
-    c: +c.close.toFixed(config.decimals || 2),
-    d: c.close > c.open ? '▲' : '▼'
-  }));
-
-  const side  = signal.action === 'LONG' ? 'COMPRA' : 'VENTA';
-  const risk  = Math.abs(signal.entry - signal.stop).toFixed(2);
-  const rr    = (Math.abs(signal.tp1 - signal.entry) / (Math.abs(signal.entry - signal.stop) || 1)).toFixed(2);
-
-  const prompt = `Trader institucional SMC. Analiza y da veredicto JSON.
-
-SEÑAL: ${side} ${config.shortName} | ${signal.model} | Score:${signal.score}%
-Entry:${signal.entry} SL:${signal.stop} TP1:${signal.tp1} TP2:${signal.tp2} | Risk:${risk}pts R:R:${rr}
-
-ESTRUCTURA: H1:${data.structureH1?.trend||'?'}(${data.structureH1?.strength||0}%) M15:${data.structureM15?.trend||'?'} M5:${data.structure?.trend||'?'}
-Zona:${data.premiumDiscount||'EQ'} | OBs D${(data.demandZones||[]).filter(z=>!z.mitigated).length}/S${(data.supplyZones||[]).filter(z=>!z.mitigated).length}
-CHoCH:${data.choch?data.choch.type:'No'} BOS:${data.bos?data.bos.type:'No'}
-
-VELAS M5 recientes: ${last5.map((c,i)=>`[${c.d}O${c.o}H${c.h}L${c.l}C${c.c}]`).join(' ')}
-PATRONES: ${patterns.length?patterns.map(p=>p.name+'('+p.bias+')').join(','):'Ninguno'}
-
-EVALÚA:
-1. Dirección alineada con H1 o M15+M5?
-2. Velas muestran rechazo real en OB (mechas)?
-3. Precio en zona de valor (DISCOUNT=compras, PREMIUM=ventas)?
-4. R:R≥1.5?
-5. Patrones confirman o contradicen?
-6. Riesgo de trampa/stop hunt?
-
-JSON exacto: {"approve":true,"confidence":85,"reason":"texto max 50 palabras","pattern":"patron_clave o null","warning":"riesgo o null"}`;
-
-  try {
-    const res = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.1,
-      max_tokens: 200,
-      response_format: { type: 'json_object' }
-    });
-    const p = JSON.parse(res.choices[0]?.message?.content || '{}');
-    const result = {
-      approve:    p.approve !== false,
-      confidence: Math.min(100, Math.max(0, +p.confidence || 70)),
-      reason:     p.reason || 'Validado por IA',
-      pattern:    p.pattern || (patterns[0]?.name || null),
-      warning:    p.warning || null,
-      patterns
+const Elisa = {
+  getContext(symbol) {
+    const data = assetData[symbol];
+    const config = ASSETS[symbol];
+    if (!data || !config) return null;
+    
+    const lastCandles = data.candles.slice(-5);
+    const priceChange = lastCandles.length >= 2 
+      ? ((lastCandles[lastCandles.length - 1]?.close - lastCandles[0]?.close) / lastCandles[0]?.close * 100).toFixed(2)
+      : 0;
+    
+    return {
+      symbol,
+      name: config.name,
+      shortName: config.shortName,
+      emoji: config.emoji,
+      price: data.price,
+      decimals: config.decimals,
+      priceChange,
+      structureM5:  data.structure?.trend   || 'LOADING',
+      structureM15: data.structureM15?.trend || 'LOADING',
+      structureH1:  data.structureH1?.trend  || 'LOADING',
+      h1Loaded: data.h1Loaded,
+      mtfConfluence: data.mtfConfluence,
+      premiumDiscount: data.premiumDiscount,
+      orderFlow: data.orderFlow,
+      demandZones: data.demandZones || [],
+      supplyZones: data.supplyZones || [],
+      fvgZones: data.fvgZones || [],
+      liquidityLevels: data.liquidityLevels || [],
+      choch: data.choch,
+      bos: data.bos,
+      lockedSignal: data.lockedSignal,
+      signal: data.signal,
+      candles: data.candles.slice(-10),
+      swings: data.swings || []
     };
-    iaAnalysisCache[cacheKey] = result;
-    setTimeout(() => delete iaAnalysisCache[cacheKey], 20000);
-    return result;
-  } catch(e) {
-    console.log('⚠️ aiReadChart error:', e.message);
-    return { approve: true, confidence: 60, reason: 'Error IA — score técnico válido', patterns };
-  }
-}
+  },
 
+  getGreeting() {
+    const hour = new Date().getHours();
+    if (hour < 12) return '¡Buenos días!';
+    if (hour < 18) return '¡Buenas tardes!';
+    return '¡Buenas noches!';
+  },
+
+  getRandomPhrase(phrases) {
+    return phrases[Math.floor(Math.random() * phrases.length)];
+  },
+
+  chat(question, symbol) {
+    const ctx = this.getContext(symbol);
+    if (!ctx) return { answer: "⏳ Dame un momento, estoy conectándome al mercado...", type: 'loading' };
+    
+    const q = (question || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+    
+    // ═══════════════════════════════════════════
+    // SALUDO
+    // ═══════════════════════════════════════════
+    if (!q || q === 'hola' || q === 'hey' || q === 'hi' || q === 'ey') {
+      const greetings = [
+        `${this.getGreeting()} 💜 Soy Elisa, tu asistente de trading.\n\n`,
+        `¡Hola! 👋 Qué gusto verte por aquí.\n\n`,
+        `${this.getGreeting()} ¿Listo para analizar el mercado juntos?\n\n`
+      ];
+      
+      let r = this.getRandomPhrase(greetings);
+      r += `Estoy viendo **${ctx.emoji} ${ctx.name}** ahora mismo.\n\n`;
+      r += `💵 Precio actual: **${ctx.price?.toFixed(ctx.decimals) || '---'}**\n`;
+      
+      if (ctx.priceChange != 0) {
+        const direction = ctx.priceChange > 0 ? '📈 Subiendo' : '📉 Bajando';
+        r += `${direction} ${Math.abs(ctx.priceChange)}% en las últimas velas\n\n`;
+      }
+      
+      r += `¿Qué quieres saber? Puedo contarte sobre:\n`;
+      r += `• El análisis actual del gráfico\n`;
+      r += `• Las zonas de entrada\n`;
+      r += `• Qué operación buscar\n`;
+      r += `• O pregúntame lo que quieras 😊`;
+      
+      return { answer: r, type: 'greeting' };
+    }
+
+    // ═══════════════════════════════════════════
+    // ANÁLISIS COMPLETO
+    // ═══════════════════════════════════════════
+    if (q.includes('analisis') || q.includes('analiza') || q.includes('que ves') || q.includes('grafico') || q.includes('chart')) {
+      let r = `📊 **Análisis de ${ctx.name}**\n\n`;
+      r += `Déjame contarte lo que veo en el gráfico...\n\n`;
+      
+      // Precio y movimiento
+      r += `💵 **Precio:** ${ctx.price?.toFixed(ctx.decimals)}\n`;
+      if (ctx.priceChange != 0) {
+        const emoji = ctx.priceChange > 0 ? '🟢' : '🔴';
+        r += `${emoji} Movimiento reciente: ${ctx.priceChange > 0 ? '+' : ''}${ctx.priceChange}%\n\n`;
+      }
+      
+      // Estructura
+      r += `**📈 ESTRUCTURA:**\n`;
+      if (ctx.structureM5 === 'BULLISH') {
+        r += `• M5 está **ALCISTA** - Veo máximos y mínimos más altos. Los compradores tienen el control.\n`;
+      } else if (ctx.structureM5 === 'BEARISH') {
+        r += `• M5 está **BAJISTA** - Veo máximos y mínimos más bajos. Los vendedores dominan.\n`;
+      } else {
+        r += `• M5 está **NEUTRAL** - No hay una dirección clara, el mercado está consolidando.\n`;
+      }
+      
+      if (ctx.h1Loaded) {
+        if (ctx.structureH1 === 'BULLISH') {
+          r += `• H1 está **ALCISTA** - La tendencia mayor es de compra.\n`;
+        } else if (ctx.structureH1 === 'BEARISH') {
+          r += `• H1 está **BAJISTA** - La tendencia mayor es de venta.\n`;
+        } else {
+          r += `• H1 está **NEUTRAL** - Sin tendencia clara en temporalidad mayor.\n`;
+        }
+        
+        if (ctx.mtfConfluence) {
+          r += `\n✨ **¡HAY CONFLUENCIA MTF!** Ambas temporalidades apuntan en la misma dirección. Esto es muy bueno para operar.\n`;
+        }
+      } else {
+        r += `• H1: Cargando datos...\n`;
+      }
+      
+      // Premium/Discount
+      r += `\n**💰 CONTEXTO DE PRECIO:**\n`;
+      if (ctx.premiumDiscount === 'PREMIUM') {
+        r += `El precio está en zona **PREMIUM** (caro). Es mejor buscar VENTAS aquí.\n`;
+      } else if (ctx.premiumDiscount === 'DISCOUNT') {
+        r += `El precio está en zona **DISCOUNT** (barato). Es mejor buscar COMPRAS aquí.\n`;
+      } else {
+        r += `El precio está en **EQUILIBRIO**. Podría ir para cualquier lado.\n`;
+      }
+      
+      // Zonas
+      r += `\n**📦 ZONAS DETECTADAS:**\n`;
+      r += `• ${ctx.demandZones.length} zonas de demanda (compra)\n`;
+      r += `• ${ctx.supplyZones.length} zonas de oferta (venta)\n`;
+      
+      if (ctx.fvgZones.length > 0) {
+        r += `• ${ctx.fvgZones.length} FVG (gaps de precio)\n`;
+      }
+      
+      // CHoCH / BOS
+      if (ctx.choch) {
+        r += `\n⚡ **ALERTA:** Detecté un ${ctx.choch.type === 'BULLISH_CHOCH' ? 'cambio alcista' : 'cambio bajista'} en la estructura (CHoCH).\n`;
+      }
+      if (ctx.bos) {
+        r += `📈 **BOS detectado:** ${ctx.bos.type === 'BULLISH_BOS' ? 'Ruptura alcista' : 'Ruptura bajista'} confirmada.\n`;
+      }
+      
+      // Recomendación
+      r += `\n**🎯 MI OPINIÓN:**\n`;
+      if (ctx.lockedSignal) {
+        r += `Tenemos una señal **${ctx.lockedSignal.action}** activa con score de ${ctx.lockedSignal.score}%. ¡Ya estamos en el mercado!`;
+      } else if (ctx.mtfConfluence) {
+        const side = ctx.structureH1 === 'BULLISH' ? 'COMPRAS' : 'VENTAS';
+        r += `Con la confluencia MTF, me gusta buscar **${side}**. Solo falta esperar un buen pullback a zona.`;
+      } else {
+        r += `Ahora mismo no veo un setup claro. Te recomiendo esperar a que el mercado defina mejor su dirección.`;
+      }
+      
+      return { answer: r, type: 'analysis' };
+    }
+
+    // ═══════════════════════════════════════════
+    // SEÑAL ACTIVA
+    // ═══════════════════════════════════════════
+    if (q.includes('senal') || q.includes('signal') || q.includes('operacion') || q.includes('trade') || q.includes('entrada')) {
+      if (ctx.lockedSignal) {
+        const s = ctx.lockedSignal;
+        let r = `🎯 **¡Tenemos una operación activa!**\n\n`;
+        r += `${s.action === 'LONG' ? '🟢 COMPRA' : '🔴 VENTA'} en **${ctx.name}**\n\n`;
+        r += `📊 Modelo: **${s.model}**\n`;
+        r += `💪 Score: **${s.score}%**\n\n`;
+        r += `**Niveles:**\n`;
+        r += `• Entry: ${s.entry}\n`;
+        r += `• Stop Loss: ${s.stop} ${s.trailingActive ? '(🔄 Trailing activo)' : ''}\n`;
+        r += `• TP1: ${s.tp1} ${s.tp1Hit ? '✅ ¡Alcanzado!' : ''}\n`;
+        r += `• TP2: ${s.tp2} ${s.tp2Hit ? '✅ ¡Alcanzado!' : ''}\n`;
+        r += `• TP3: ${s.tp3} ${s.tp3Hit ? '✅ ¡Alcanzado!' : ''}\n\n`;
+        
+        const currentPrice = ctx.price;
+        const entry = s.entry;
+        const pips = s.action === 'LONG' ? currentPrice - entry : entry - currentPrice;
+        
+        if (pips > 0) {
+          r += `💚 Estamos en **profit** ahora mismo (+${pips.toFixed(ctx.decimals)})`;
+        } else if (pips < 0) {
+          r += `💛 Estamos en **pérdida temporal** (${pips.toFixed(ctx.decimals)})`;
+        } else {
+          r += `⚪ Estamos en **breakeven**`;
+        }
+        
+        return { answer: r, type: 'signal' };
+      }
+      
+      let r = `⏳ **No hay señal activa ahora mismo**\n\n`;
+      r += `Score actual: ${ctx.signal?.score || 0}%\n`;
+      r += `Estado: ${ctx.signal?.reason || 'Esperando setup'}\n\n`;
+      
+      if (ctx.signal?.score >= 50) {
+        r += `💡 Estamos cerca de una señal. Solo falta que se cumplan algunas condiciones más.`;
+      } else {
+        r += `El mercado no me está mostrando una oportunidad clara. Paciencia, las mejores operaciones requieren esperar el momento correcto.`;
+      }
+      
+      return { answer: r, type: 'waiting' };
+    }
+
+    // ═══════════════════════════════════════════
+    // PLAN / QUÉ BUSCAR
+    // ═══════════════════════════════════════════
+    if (q.includes('plan') || q.includes('buscar') || q.includes('hacer') || q.includes('estrategia') || q.includes('idea')) {
+      let r = `🎯 **Plan de Trading para ${ctx.name}**\n\n`;
+      
+      if (ctx.mtfConfluence) {
+        if (ctx.structureH1 === 'BULLISH') {
+          r += `✅ **BUSCAR COMPRAS**\n\n`;
+          r += `Tenemos confluencia MTF alcista, esto es ideal.\n\n`;
+          r += `**¿Cómo entrar?**\n`;
+          r += `1. Esperar que el precio baje a una zona de demanda\n`;
+          r += `2. Ver una vela de rechazo (mecha inferior larga)\n`;
+          r += `3. Entrar en la siguiente vela alcista\n\n`;
+          
+          if (ctx.premiumDiscount === 'DISCOUNT') {
+            r += `💎 **¡BONUS!** El precio está en DISCOUNT. Es el mejor momento para buscar compras.\n`;
+          } else if (ctx.premiumDiscount === 'PREMIUM') {
+            r += `⚠️ El precio está en PREMIUM. Esperaría un retroceso antes de comprar.\n`;
+          }
+          
+          if (ctx.demandZones.length > 0) {
+            const bestZone = ctx.demandZones[ctx.demandZones.length - 1];
+            r += `\n📍 Zona de demanda más cercana: ${bestZone.low.toFixed(ctx.decimals)} - ${bestZone.high.toFixed(ctx.decimals)}`;
+          }
+          
+        } else {
+          r += `✅ **BUSCAR VENTAS**\n\n`;
+          r += `Tenemos confluencia MTF bajista, esto es ideal.\n\n`;
+          r += `**¿Cómo entrar?**\n`;
+          r += `1. Esperar que el precio suba a una zona de oferta\n`;
+          r += `2. Ver una vela de rechazo (mecha superior larga)\n`;
+          r += `3. Entrar en la siguiente vela bajista\n\n`;
+          
+          if (ctx.premiumDiscount === 'PREMIUM') {
+            r += `💎 **¡BONUS!** El precio está en PREMIUM. Es el mejor momento para buscar ventas.\n`;
+          } else if (ctx.premiumDiscount === 'DISCOUNT') {
+            r += `⚠️ El precio está en DISCOUNT. Esperaría un rebote antes de vender.\n`;
+          }
+          
+          if (ctx.supplyZones.length > 0) {
+            const bestZone = ctx.supplyZones[ctx.supplyZones.length - 1];
+            r += `\n📍 Zona de oferta más cercana: ${bestZone.low.toFixed(ctx.decimals)} - ${bestZone.high.toFixed(ctx.decimals)}`;
+          }
+        }
+      } else {
+        r += `⚠️ **ESPERAR CONFLUENCIA**\n\n`;
+        r += `Ahora mismo M5 dice "${ctx.structureM5}" y H1 dice "${ctx.structureH1}".\n\n`;
+        r += `No están de acuerdo, así que es mejor no operar.\n\n`;
+        r += `**¿Qué hacer?**\n`;
+        r += `• Esperar a que ambas temporalidades se alineen\n`;
+        r += `• O buscar otro activo con mejor setup\n\n`;
+        r += `Recuerda: No operar también es una decisión inteligente 🧠`;
+      }
+      
+      return { answer: r, type: 'plan' };
+    }
+
+    // ═══════════════════════════════════════════
+    // ZONAS
+    // ═══════════════════════════════════════════
+    if (q.includes('zona') || q.includes('demanda') || q.includes('oferta') || q.includes('soporte') || q.includes('resistencia')) {
+      let r = `📦 **Zonas en ${ctx.name}**\n\n`;
+      
+      r += `**🟢 ZONAS DE DEMANDA (Compra):**\n`;
+      if (ctx.demandZones.length > 0) {
+        ctx.demandZones.forEach((z, i) => {
+          r += `${i + 1}. ${z.low.toFixed(ctx.decimals)} - ${z.high.toFixed(ctx.decimals)} `;
+          r += z.strength === 'STRONG' ? '💪 Fuerte\n' : '👍 Normal\n';
+        });
+      } else {
+        r += `No veo zonas de demanda activas\n`;
+      }
+      
+      r += `\n**🔴 ZONAS DE OFERTA (Venta):**\n`;
+      if (ctx.supplyZones.length > 0) {
+        ctx.supplyZones.forEach((z, i) => {
+          r += `${i + 1}. ${z.low.toFixed(ctx.decimals)} - ${z.high.toFixed(ctx.decimals)} `;
+          r += z.strength === 'STRONG' ? '💪 Fuerte\n' : '👍 Normal\n';
+        });
+      } else {
+        r += `No veo zonas de oferta activas\n`;
+      }
+      
+      if (ctx.fvgZones.length > 0) {
+        r += `\n**📊 FVG (Fair Value Gaps):**\n`;
+        ctx.fvgZones.forEach((f, i) => {
+          r += `${i + 1}. ${f.type === 'BULLISH_FVG' ? '🟢' : '🔴'} ${f.low.toFixed(ctx.decimals)} - ${f.high.toFixed(ctx.decimals)}\n`;
+        });
+      }
+      
+      return { answer: r, type: 'zones' };
+    }
+
+    // ═══════════════════════════════════════════
+    // STATS
+    // ═══════════════════════════════════════════
+    if (q.includes('stat') || q.includes('resultado') || q.includes('rendimiento') || q.includes('win')) {
+      const wr = stats.wins + stats.losses > 0 ? Math.round(stats.wins / (stats.wins + stats.losses) * 100) : 0;
+      
+      let r = `📈 **Estadísticas de Trading**\n\n`;
+      r += `**Win Rate:** ${wr}%\n`;
+      r += `**Operaciones:** ${stats.total} total\n`;
+      r += `• ✅ Wins: ${stats.wins}\n`;
+      r += `• ❌ Losses: ${stats.losses}\n`;
+      r += `• ⏳ Pendientes: ${stats.pending}\n\n`;
+      r += `**TPs Alcanzados:**\n`;
+      r += `• TP1: ${stats.tp1Hits}\n`;
+      r += `• TP2: ${stats.tp2Hits}\n`;
+      r += `• TP3: ${stats.tp3Hits} 💎\n\n`;
+      
+      if (wr >= 60) {
+        r += `🎉 ¡Excelente rendimiento! Sigue así.`;
+      } else if (wr >= 40) {
+        r += `👍 Buen trabajo. Hay espacio para mejorar.`;
+      } else if (stats.total > 5) {
+        r += `💪 Los resultados mejorarán con práctica y paciencia.`;
+      }
+      
+      return { answer: r, type: 'stats' };
+    }
+
+    // ═══════════════════════════════════════════
+    // PRECIO
+    // ═══════════════════════════════════════════
+    if (q.includes('precio') || q.includes('cuanto') || q.includes('cotiza') || q.includes('vale')) {
+      let r = `💵 **${ctx.name}** está en **${ctx.price?.toFixed(ctx.decimals)}**\n\n`;
+      
+      if (ctx.priceChange != 0) {
+        const emoji = ctx.priceChange > 0 ? '📈' : '📉';
+        const direction = ctx.priceChange > 0 ? 'subiendo' : 'bajando';
+        r += `${emoji} Está ${direction} ${Math.abs(ctx.priceChange)}% en las últimas velas.\n`;
+      }
+      
+      if (ctx.premiumDiscount === 'PREMIUM') {
+        r += `\n⚠️ El precio está en zona PREMIUM (caro).`;
+      } else if (ctx.premiumDiscount === 'DISCOUNT') {
+        r += `\n💎 El precio está en zona DISCOUNT (barato).`;
+      }
+      
+      return { answer: r, type: 'price' };
+    }
+
+    // ═══════════════════════════════════════════
+    // MODELOS / COMO FUNCIONA
+    // ═══════════════════════════════════════════
+    if (q.includes('modelo') || q.includes('como funciona') || q.includes('explicar') || q.includes('que es')) {
+      let r = `🧠 **Mis 6 Modelos de Análisis**\n\n`;
+      r += `Uso conceptos de Smart Money (SMC) para encontrar las mejores entradas:\n\n`;
+      r += `**1. MTF_CONFLUENCE (95pts)** ⭐\n`;
+      r += `Cuando H1 y M5 van en la misma dirección + hay pullback. Es mi favorito.\n\n`;
+      r += `**2. CHOCH_PULLBACK (90pts)**\n`;
+      r += `Cuando el mercado cambia de dirección y luego hace pullback.\n\n`;
+      r += `**3. LIQUIDITY_SWEEP (85pts)**\n`;
+      r += `Cuando el precio "caza" stops y luego revierte.\n\n`;
+      r += `**4. BOS_CONTINUATION (80pts)**\n`;
+      r += `Cuando hay ruptura de estructura con pullback.\n\n`;
+      r += `**5. FVG_ENTRY (75pts)**\n`;
+      r += `Entrada en un gap de precio (Fair Value Gap).\n\n`;
+      r += `**6. ORDER_FLOW (70pts)**\n`;
+      r += `Entrada basada en momentum fuerte.\n\n`;
+      r += `¿Quieres que te explique alguno en detalle? 😊`;
+      
+      return { answer: r, type: 'models' };
+    }
+
+    // ═══════════════════════════════════════════
+    // ELISA MENTOR - Solo Premium y Elite
+    // Psicotrading, Plan de Trading, Simulador, Patrones SMC
+    // ═══════════════════════════════════════════
+    
+    if (q.includes('mentor') || q.includes('aprender') || q.includes('curso') || q.includes('enseña')) {
+      let r = `🎓 **ELISA MENTOR** - Tu Academia de Trading\n\n`;
+      r += `¡Bienvenido al módulo de formación! 📚\n\n`;
+      r += `Aquí puedo enseñarte:\n\n`;
+      r += `🧠 **"Psicotrading"** - Control emocional y mentalidad ganadora\n`;
+      r += `📋 **"Plan de trading"** - Cómo crear tu estrategia personal\n`;
+      r += `🎮 **"Simulador"** - Practica sin arriesgar dinero real\n`;
+      r += `📊 **"Patrones SMC"** - Los 12 modelos que uso para operar\n`;
+      r += `📝 **"Control operaciones"** - Gestión de riesgo diario\n\n`;
+      r += `💡 *Recuerda: Máximo 10 operaciones diarias para no sobreoperar.*\n\n`;
+      r += `¿Qué tema te gustaría aprender hoy? 🎯`;
+      
+      return { answer: r, type: 'mentor', requiresPremium: true };
+    }
+    
+    if (q.includes('psicotrading') || q.includes('emociones') || q.includes('psicologia') || q.includes('mentalidad')) {
+      let r = `🧠 **PSICOTRADING** - Mentalidad Ganadora\n\n`;
+      r += `El 80% del éxito en trading es mental. Te comparto mis reglas:\n\n`;
+      r += `**1. Control Emocional:**\n`;
+      r += `• Nunca operes con rabia o frustración después de una pérdida\n`;
+      r += `• Si pierdes 3 trades seguidos, PARA y descansa\n`;
+      r += `• La venganza contra el mercado siempre sale mal\n\n`;
+      r += `**2. Disciplina:**\n`;
+      r += `• Sigue tu plan, no tus emociones\n`;
+      r += `• No muevas el SL para "darle más espacio"\n`;
+      r += `• Acepta que algunas operaciones serán pérdidas\n\n`;
+      r += `**3. Paciencia:**\n`;
+      r += `• Espera los setups de calidad (score 75+)\n`;
+      r += `• No fuerces entradas por aburrimiento\n`;
+      r += `• El mercado siempre dará otra oportunidad\n\n`;
+      r += `**4. Mentalidad de Proceso:**\n`;
+      r += `• Enfócate en ejecutar bien, no en el dinero\n`;
+      r += `• Una pérdida no te hace mal trader\n`;
+      r += `• Una ganancia no te hace invencible\n\n`;
+      r += `💡 *"El trader rentable no es el que nunca pierde, sino el que sabe manejar sus pérdidas"*`;
+      
+      return { answer: r, type: 'mentor_psicotrading', requiresPremium: true };
+    }
+    
+    if (q.includes('plan de trading') || q.includes('estrategia') || q.includes('mi plan')) {
+      let r = `📋 **PLAN DE TRADING** - Tu Hoja de Ruta\n\n`;
+      r += `Un plan de trading es OBLIGATORIO. Aquí te ayudo a crear el tuyo:\n\n`;
+      r += `**1. CAPITAL Y RIESGO:**\n`;
+      r += `• Capital inicial: $ ____\n`;
+      r += `• Riesgo por operación: 1-2% máximo\n`;
+      r += `• Pérdida máxima diaria: 5%\n`;
+      r += `• Meta mensual realista: 5-10%\n\n`;
+      r += `**2. HORARIO DE OPERACIÓN:**\n`;
+      r += `• Sesión principal: 6AM - 2PM (Colombia)\n`;
+      r += `• Sesión nocturna (Premium/Elite): 8:30PM - 1AM\n`;
+      r += `• NO operes fuera de horario\n\n`;
+      r += `**3. REGLAS DE ENTRADA:**\n`;
+      r += `• Solo señales con score 75+\n`;
+      r += `• Máximo 10 operaciones por día\n`;
+      r += `• Requiere confluencia MTF (H1 + M5)\n`;
+      r += `• Siempre usar Stop Loss\n\n`;
+      r += `**4. GESTIÓN DE POSICIONES:**\n`;
+      r += `• TP1: Asegurar breakeven\n`;
+      r += `• TP2: Parcial 50%\n`;
+      r += `• TP3: Dejar correr el resto\n\n`;
+      r += `**5. REVISIÓN:**\n`;
+      r += `• Journaling diario de operaciones\n`;
+      r += `• Revisión semanal de resultados\n`;
+      r += `• Ajustes mensuales de estrategia\n\n`;
+      r += `💡 *"Plan your trade, trade your plan"*`;
+      
+      return { answer: r, type: 'mentor_plan', requiresPremium: true };
+    }
+    
+    if (q.includes('simulador') || q.includes('practica') || q.includes('demo') || q.includes('papel')) {
+      let r = `🎮 **SIMULADOR** - Practica Sin Riesgo\n\n`;
+      r += `Antes de arriesgar dinero real, practica así:\n\n`;
+      r += `**EJERCICIO 1: Identificar Estructura**\n`;
+      r += `1. Abre cualquier gráfico en M5\n`;
+      r += `2. Marca los últimos 5 swings (altos y bajos)\n`;
+      r += `3. Determina: ¿BULLISH, BEARISH o NEUTRAL?\n`;
+      r += `4. Repite en H1 y compara\n\n`;
+      r += `**EJERCICIO 2: Encontrar Zonas**\n`;
+      r += `1. Busca la última vela roja antes de un impulso alcista = Demand\n`;
+      r += `2. Busca la última vela verde antes de un impulso bajista = Supply\n`;
+      r += `3. Marca las zonas en tu gráfico\n\n`;
+      r += `**EJERCICIO 3: Paper Trading**\n`;
+      r += `1. Cuando veas una señal mía, anótala en papel\n`;
+      r += `2. NO operes con dinero real\n`;
+      r += `3. Sigue la operación y anota el resultado\n`;
+      r += `4. Haz esto por 2 semanas mínimo\n\n`;
+      r += `**EJERCICIO 4: Backtesting**\n`;
+      r += `1. Ve al pasado del gráfico\n`;
+      r += `2. Busca setups de MTF Confluence\n`;
+      r += `3. ¿Habrían funcionado? Anota\n\n`;
+      r += `💡 *"Los traders exitosos practican más de lo que operan"*`;
+      
+      return { answer: r, type: 'mentor_simulador', requiresPremium: true };
+    }
+    
+    if (q.includes('patrones smc') || q.includes('patrones') || q.includes('setups') || q.includes('formaciones')) {
+      let r = `📊 **PATRONES SMC** - Los 6 Modelos\n\n`;
+      r += `Estos son los patrones que uso para generar señales:\n\n`;
+      r += `**🎯 1. MTF CONFLUENCE (95pts)** ⭐\n`;
+      r += `El más poderoso. H1 y M5 alineados + pullback a zona.\n`;
+      r += `Win Rate: ~78%\n\n`;
+      r += `**🔄 2. CHOCH PULLBACK (85-90pts)**\n`;
+      r += `Cambio de carácter + retroceso a la zona del cambio.\n`;
+      r += `Win Rate: ~75%\n\n`;
+      r += `**💧 3. LIQUIDITY SWEEP (82pts)**\n`;
+      r += `Barrido de stops + reversión inmediata.\n`;
+      r += `Win Rate: ~73%\n\n`;
+      r += `**📈 4. BOS CONTINUATION (80pts)**\n`;
+      r += `Ruptura de estructura + pullback para continuación.\n`;
+      r += `Win Rate: ~72%\n\n`;
+      r += `**🎯 5. ZONE TOUCH (78pts)**\n`;
+      r += `Toque de Order Block con rechazo fuerte.\n`;
+      r += `Win Rate: ~70%\n\n`;
+      r += `**⚡ 6. FVG ENTRY (77pts)**\n`;
+      r += `Entrada en Fair Value Gap durante pullback.\n`;
+      r += `Win Rate: ~68%\n\n`;
+      r += `💡 *Solo opero cuando el score es 75+. Calidad sobre cantidad.*`;
+      
+      return { answer: r, type: 'mentor_patrones', requiresPremium: true };
+    }
+    
+    if (q.includes('control') || q.includes('operaciones diarias') || q.includes('limite') || q.includes('cuantas')) {
+      let r = `📝 **CONTROL DE OPERACIONES** - Gestión Diaria\n\n`;
+      r += `La sobreoperación es el ENEMIGO #1 del trader. Mis reglas:\n\n`;
+      r += `**LÍMITES DIARIOS:**\n`;
+      r += `• Máximo **10 operaciones por día**\n`;
+      r += `• Máximo **5 operaciones simultáneas**\n`;
+      r += `• Máximo **3 pérdidas consecutivas** (después, STOP)\n`;
+      r += `• Pérdida máxima diaria: **5% del capital**\n\n`;
+      r += `**REGISTRO OBLIGATORIO:**\n`;
+      r += `Anota cada operación:\n`;
+      r += `1. Fecha y hora\n`;
+      r += `2. Activo y dirección\n`;
+      r += `3. Modelo usado (MTF, CHOCH, etc.)\n`;
+      r += `4. Score de la señal\n`;
+      r += `5. Entry, SL, TP\n`;
+      r += `6. Resultado final\n`;
+      r += `7. ¿Seguiste tu plan? Sí/No\n`;
+      r += `8. Emociones durante la operación\n\n`;
+      r += `**SEÑALES DE SOBREOPERACIÓN:**\n`;
+      r += `❌ Entrar sin señal clara por aburrimiento\n`;
+      r += `❌ Aumentar lotaje después de pérdidas\n`;
+      r += `❌ Operar fuera de horario\n`;
+      r += `❌ Ignorar el límite de 10 operaciones\n\n`;
+      r += `**BENEFICIOS DEL CONTROL:**\n`;
+      r += `✅ Preservas capital para otro día\n`;
+      r += `✅ Reduces errores emocionales\n`;
+      r += `✅ Mantienes rentabilidad constante\n`;
+      r += `✅ Construyes disciplina\n\n`;
+      r += `💡 *"Es mejor hacer 5 operaciones buenas que 20 mediocres"*`;
+      
+      return { answer: r, type: 'mentor_control', requiresPremium: true };
+    }
+
+    // ═══════════════════════════════════════════
+    // AYUDA
+    // ═══════════════════════════════════════════
+    if (q.includes('ayuda') || q.includes('help') || q.includes('comando')) {
+      let r = `💜 **¿En qué te puedo ayudar?**\n\n`;
+      r += `Puedes preguntarme:\n\n`;
+      r += `📊 **"Análisis"** - Te cuento todo lo que veo en el gráfico\n`;
+      r += `🎯 **"Plan"** - Te digo qué operación buscar\n`;
+      r += `📦 **"Zonas"** - Te muestro las zonas de entrada\n`;
+      r += `💵 **"Precio"** - Te digo el precio actual\n`;
+      r += `🎯 **"Señal"** - Te muestro la operación activa\n`;
+      r += `📈 **"Stats"** - Nuestros resultados\n`;
+      r += `🧠 **"Modelos"** - Cómo funcionan mis análisis\n`;
+      r += `🎓 **"Mentor"** - Academia de trading (Premium/Elite)\n\n`;
+      r += `O simplemente pregúntame lo que quieras sobre el mercado 😊`;
+      
+      return { answer: r, type: 'help' };
+    }
+
+    // ═══════════════════════════════════════════
+    // RESPUESTA DEFAULT - MÁS CONVERSACIONAL
+    // ═══════════════════════════════════════════
+    let r = `Hmm, déjame pensar sobre "${question}"...\n\n`;
+    r += `${ctx.emoji} **${ctx.name}** @ ${ctx.price?.toFixed(ctx.decimals)}\n\n`;
+    r += `📊 M5: ${ctx.structureM5} | H1: ${ctx.structureH1}\n`;
+    if (ctx.mtfConfluence) r += `✨ Confluencia MTF activa\n`;
+    r += `\n¿Quieres que te haga un análisis completo? Solo dime "análisis" 😊`;
+    
+    return { answer: r, type: 'default' };
+  },
+
+  // ═══════════════════════════════════════════
+  // CHAT CON OPENAI - ANÁLISIS EN TIEMPO REAL
+  // ═══════════════════════════════════════════
+  async chatWithAI(question, symbol) {
+    const ctx = this.getContext(symbol);
+    
+    // ═══════════════════════════════════════════
+    // PRIMERO: Revisar comandos específicos de ELISA MENTOR
+    // Estos tienen respuestas predefinidas y no necesitan OpenAI
+    // ═══════════════════════════════════════════
+    const q = (question || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+    
+    // Comandos de Mentor - usar respuestas estáticas
+    if (q.includes('mentor') || q.includes('aprender') || q.includes('curso') || q.includes('enseña') ||
+        q.includes('psicotrading') || q.includes('emociones') || q.includes('psicologia') || q.includes('mentalidad') ||
+        q.includes('plan de trading') || q.includes('estrategia') || q.includes('mi plan') ||
+        q.includes('simulador') || q.includes('practica') || q.includes('demo') || q.includes('papel') ||
+        q.includes('patrones smc') || q.includes('patrones') || q.includes('setups') || q.includes('formaciones') ||
+        q.includes('control') || q.includes('operaciones diarias') || q.includes('limite') || q.includes('cuantas') ||
+        q.includes('ayuda') || q.includes('help') || q.includes('comando') ||
+        q.includes('modelos') || q.includes('stats') || q.includes('estadisticas') ||
+        q.includes('senal') || q.includes('signal') || q.includes('operacion') ||
+        q.includes('zonas') || q.includes('zones') || q.includes('precio') || q.includes('price')) {
+      // Usar respuestas estáticas del chat normal
+      return this.chat(question, symbol);
+    }
+    
+    // Si no hay OpenAI, usar respuesta estática
+    if (!openai) {
+      return this.chat(question, symbol);
+    }
+    
+    try {
+      // Construir el prompt del sistema con contexto SMC
+      const systemPrompt = `Eres ELISA (Expert Learning Intelligent Signal Analyst), una trader profesional de Smart Money Concepts.
+
+PERSONALIDAD:
+- Amigable, cercana y empática como una mentora de trading
+- Hablas natural, no robótico. Usas expresiones coloquiales pero profesionales
+- 8+ años de experiencia en trading institucional
+- Usas emojis con moderación
+- NUNCA dices que eres IA o bot. Eres ELISA, una trader profesional
+
+EXPERTISE - SOLO SMC PURO (NO usas RSI, MACD, EMA ni indicadores):
+- Market Structure (HH, HL, LH, LL)
+- Order Blocks (zonas de demanda/supply)
+- Fair Value Gaps (FVG) - desequilibrios de precio
+- Liquidity (Equal Highs/Lows, sweeps)
+- Premium/Discount (zonas de valor)
+- BOS (Break of Structure)
+- CHoCH (Change of Character)
+
+TUS 12 MODELOS SMC:
+🏆 TIER S (95pts): 1. MTF_CONFLUENCE - H1+M5 alineados + OB
+⭐ TIER A (85-92pts): 2. CHOCH_PULLBACK, 3. LIQUIDITY_GRAB, 4. OB_ENTRY, 5. FVG_ENTRY
+✅ TIER B (78-85pts): 6. BOS_CONTINUATION, 7. BREAKER_BLOCK, 8. MITIGATION_BLOCK
+📊 TIER C (72-78pts): 9. EQH_EQL, 10. SWING_FAILURE
+🚀 ESPECIALES: 11. BOOM_SPIKE, 12. CRASH_SPIKE
+
+MÓDULO MENTOR (si preguntan sobre aprender):
+- Di "mentor" para ver el menú de la academia
+- Puedo enseñar: psicotrading, plan de trading, simulador, patrones SMC, control de operaciones
+- Máximo 10 operaciones diarias para no sobreoperar
+
+REGLAS: Score mínimo 75. R:R mínimo 1:1.5. Siempre esperas confirmación.
+
+${ctx ? `
+CONTEXTO ACTUAL DEL MERCADO:
+- Activo: ${ctx.name} (${symbol})
+- Precio: ${ctx.price?.toFixed(ctx.decimals)}
+- Estructura M5: ${ctx.structureM5}
+- Estructura H1: ${ctx.structureH1}
+- MTF Confluence: ${ctx.mtfConfluence ? 'SÍ' : 'NO'}
+- Premium/Discount: ${ctx.premiumDiscount}
+- Zonas Demanda: ${ctx.demandZones?.length || 0}
+- Zonas Supply: ${ctx.supplyZones?.length || 0}
+- FVGs: ${ctx.fvgZones?.length || 0}
+- Señal activa: ${ctx.lockedSignal ? ctx.lockedSignal.action + ' @ ' + ctx.lockedSignal.entry : 'Ninguna'}
+` : ''}
+
+ESTADÍSTICAS: Win Rate: ${stats.total > 0 ? (stats.wins/stats.total*100).toFixed(1) : 0}% | Trades: ${stats.total}
+
+Responde conciso (máx 200 palabras). Explica el "por qué" SMC de tu análisis.`;
+
+      const completion = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: question }
+        ],
+        temperature: 0.7,
+        max_tokens: 500
+      });
+
+      const aiResponse = completion.choices[0]?.message?.content;
+      
+      if (aiResponse) {
+        return { 
+          answer: aiResponse, 
+          type: 'ai',
+          model: 'gpt-4o-mini',
+          tokens: completion.usage?.total_tokens
+        };
+      }
+    } catch (error) {
+      console.log('⚠️ Error OpenAI:', error.message);
+    }
+    
+    // Fallback a respuesta estática si falla OpenAI
+    return this.chat(question, symbol);
+  }
+};
+
+// =============================================
 // AUTO-TRACKING CON TRAILING STOP
 // =============================================
 function checkSignalHits() {
@@ -4320,7 +4791,7 @@ function requestM1(symbol) {
 // =============================================
 // ANÁLISIS DE ACTIVOS v13.2 (con filtros mejorados)
 // =============================================
-async function analyzeAsset(symbol) {
+function analyzeAsset(symbol) {
   const data = assetData[symbol];
   const config = ASSETS[symbol];
   
@@ -4353,7 +4824,7 @@ async function analyzeAsset(symbol) {
   // ═══════════════════════════════════════════
   if (!isInTradingHours()) {
     // Fuera de horario — analizar sin generar señales
-    const signal = await SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
+    const signal = SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
     data.signal = signal;
     return;
   }
@@ -4370,7 +4841,7 @@ async function analyzeAsset(symbol) {
       now - data.lastSignalClosed < cooldownTime) {
     // During cooldown: still run analysis to keep zones + structure fresh
     // but don't generate new signals
-    const signal = await SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
+    const signal = SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
     data.signal = { ...signal, action: 'WAIT', model: 'COOLDOWN',
       reason: `Cooldown activo (${Math.ceil((cooldownTime-(now-data.lastSignalClosed))/60000)}min restante)` };
     return;
@@ -4388,7 +4859,7 @@ async function analyzeAsset(symbol) {
   if (pendingThisAsset >= SIGNAL_CONFIG.MAX_PENDING_PER_ASSET) {
     console.log(`⏸️ [${config.shortName}] Ya tiene señal abierta (${pendingThisAsset}/${SIGNAL_CONFIG.MAX_PENDING_PER_ASSET})`);
     // Aún analizar para mantener estructura y zonas frescas en el frontend
-    const signal = await SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
+    const signal = SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
     data.signal = signal;
     return;
   }
@@ -4396,13 +4867,13 @@ async function analyzeAsset(symbol) {
   // Bloquear si se alcanzó el límite global
   if (totalPending >= SIGNAL_CONFIG.MAX_PENDING_TOTAL) {
     console.log(`⏸️ [${config.shortName}] Límite global alcanzado (${totalPending}/${SIGNAL_CONFIG.MAX_PENDING_TOTAL})`);
-    const signal = await SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
+    const signal = SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
     data.signal = signal;
     return;
   }
   
   // Ejecutar análisis SMC
-  const signal = await SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
+  const signal = SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
   data.signal = signal;
 
   // ── Calcular pasos de M1_PRECISION para visualización en tiempo real ──
@@ -4946,68 +5417,21 @@ app.post('/api/reset/:symbol', (req, res) => {
 
 app.get('/api/signals', (req, res) => res.json({ signals: signalHistory, stats }));
 
-// ── RESET DE HISTORIAL — borra memoria y empieza desde 0 ──
 app.post('/api/reset-history', async (req, res) => {
-  const { confirm, keepSupabase } = req.body || {};
-  if (confirm !== 'RESET_CONFIRMED') {
-    return res.status(400).json({ error: 'Enviar { confirm: "RESET_CONFIRMED" }' });
-  }
-
-  // 1. Limpiar RAM completamente
+  const { confirm } = req.body || {};
+  if (confirm !== 'RESET_CONFIRMED') return res.status(400).json({ error: 'Enviar { confirm: "RESET_CONFIRMED" }' });
   signalHistory.length = 0;
   signalIdCounter = 1;
   stats.total = stats.wins = stats.losses = stats.pending = 0;
   stats.tp1Hits = stats.tp2Hits = stats.tp3Hits = 0;
   Object.keys(stats.byModel || {}).forEach(k => delete stats.byModel[k]);
-  Object.keys(stats.byAsset || {}).forEach(k => {
-    stats.byAsset[k] = { wins: 0, losses: 0, total: 0 };
-  });
-  if (stats.learning?.scoreAdjustments)
-    Object.keys(stats.learning.scoreAdjustments).forEach(k => delete stats.learning.scoreAdjustments[k]);
-
-  // 2. Limpiar signals activas en cada asset
-  Object.values(assetData).forEach(d => {
-    d.lockedSignal = null;
-    d.lastSignalTime = 0;
-    d.lastSignalClosed = 0;
-  });
-
-  // 3. Limpiar cache de IA
-  Object.keys(iaAnalysisCache).forEach(k => delete iaAnalysisCache[k]);
-
-  // 4. Borrar en Supabase (con paginación para evitar timeout)
-  let supabaseOk = false;
-  if (!keepSupabase && supabase) {
-    try {
-      // Supabase no permite DELETE sin WHERE — usar filtro en signal_time
-      const { error } = await supabase
-        .from('trading_signals')
-        .delete()
-        .gte('signal_time', '2000-01-01T00:00:00Z'); // borra todo desde 2000
-
-      if (error) throw new Error(error.message);
-      supabaseOk = true;
-      console.log('🗑️ Historial borrado en Supabase');
-    } catch(e) {
-      console.log('⚠️ Error borrando Supabase:', e.message);
-      // Fallback: marcar como EXPIRED en vez de borrar
-      try {
-        await supabase.from('trading_signals').update({ status: 'EXPIRED' }).eq('status', 'PENDING');
-      } catch {}
-    }
+  Object.values(assetData).forEach(d => { d.lockedSignal = null; d.lastSignalTime = 0; d.lastSignalClosed = 0; });
+  if (supabase) {
+    try { await supabase.from('trading_signals').delete().gte('signal_time','2000-01-01T00:00:00Z'); } catch(e) {}
   }
-
-  console.log('🔄 RESET COMPLETO — sistema iniciando desde 0');
-  res.json({
-    ok: true,
-    message: 'Sistema reiniciado desde 0.',
-    supabaseCleared: supabaseOk,
-    ramCleared: true
-  });
+  console.log('🔄 RESET COMPLETO — empezando desde 0');
+  res.json({ ok: true, message: 'Sistema reiniciado desde 0.' });
 });
-
-// ── ANÁLISIS MACRO IA — contexto de mercado para un activo ──
-
 
 // ── API P&L: puntos ganados/perdidos con filtro por período ──
 app.get('/api/pnl', (req, res) => {
@@ -5210,6 +5634,18 @@ app.post('/api/reports/trade', async (req, res) => {
   }
 });
 
+app.post('/api/ai/chat', async (req, res) => {
+  const { question, symbol } = req.body;
+  try {
+    // Usar chat con IA si OpenAI está disponible
+    const response = await Elisa.chatWithAI(question || '', symbol || 'stpRNG');
+    res.json(response);
+  } catch (error) {
+    console.log('⚠️ Error en chat:', error.message);
+    // Fallback a respuesta estática
+    res.json(Elisa.chat(question || '', symbol || 'stpRNG'));
+  }
+});
 
 // =============================================
 // API ENDPOINTS - PUSH NOTIFICATIONS
