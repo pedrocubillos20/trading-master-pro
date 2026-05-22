@@ -1187,10 +1187,10 @@ const SMC = {
     const swings = [];
     if (candles.length < lookback * 2 + 1) return swings;
 
-    // FIX: NO adaptive lookback — adaptive was using candles.length/20
-    // which with 300 candles gives lookback=15, missing most real M5 swings
-    // Use FIXED lookback: 2 for M5 (catches every real pivot), 3 for H1/M15
-    const lb = Math.max(2, Math.min(lookback, 5));
+    // LuxAlgo usa size=5 para internos y size=50 para swing
+    // Equivale a lb=4 para M5 (menos ruido) y lb=5 para H1/M15
+    // lb=2 generaba 3-4x más pivots que LuxAlgo → etiquetado HH/LH incorrecto
+    const lb = Math.max(4, Math.min(lookback, 6));
 
     for (let i = lb; i < candles.length - lb; i++) {
       const c = candles[i];
@@ -1993,6 +1993,10 @@ const SMC = {
 
         if (!rule1 && !rule2 && !rule3) continue;
         if (!nearSwingLow && !rule1 && !rule2) continue; // must be near extremity OR engulfing
+        // FIX 3 (LuxAlgo): OB válido solo si el impulso fue >= 1.2x avgRange
+        const impCheckD = candles.slice(i+1, Math.min(i+6, lastIndex+1));
+        const impMoveD  = impCheckD.length ? Math.max(...impCheckD.map(c=>c.high)) - base.close : 0;
+        if (impMoveD < avgRange * 1.2) continue;
 
         const obHigh = base.open;
         const obLow  = base.close;
@@ -2042,6 +2046,13 @@ const SMC = {
         if (!rule1 && !rule2 && !rule3) continue;
         if (!nearSwingHigh && !rule1 && !rule2) continue;
 
+        // FIX 3 (LuxAlgo-aligned): impulso bajista mínimo requerido
+        const impulseCheckS = candles.slice(i+1, Math.min(i+6, lastIndex+1));
+        const impulseMoveS = impulseCheckS.length
+          ? base.open - Math.min(...impulseCheckS.map(c=>c.low))
+          : 0;
+        if (impulseMoveS < avgRange * 1.2) continue;
+
         const obHigh = base.close;
         const obLow  = base.open;
         const obMid  = (obHigh + obLow) / 2;
@@ -2077,7 +2088,8 @@ const SMC = {
       // 1. From last 100 candles (recent enough to be valid)
       // 2. At extremity (swing high/low) OR Strong impulse pattern
       // 3. Not mitigated
-      const recentEnough = zones.filter(z => z.index >= lastIndex - 100);
+      // FIX 4: OBs frescos — máximo 40 velas = estructura actual (como LuxAlgo PRESENT mode)
+      const recentEnough = zones.filter(z => z.index >= lastIndex - 40);
       const sorted = recentEnough.sort((a,b) => {
         // Priority: extremity OBs first (LuxAlgo swing OBs > internal OBs)
         if (a.atExtremity !== b.atExtremity) return a.atExtremity ? -1 : 1;
@@ -2193,7 +2205,7 @@ const SMC = {
         for (let j = lastHigh.index + 1; j < candles.length; j++) {
           if (candles[j].close < targetHL.price) {
             const recency = candles.length - 1 - j;
-            if (recency <= 60) { // dentro de las últimas 60 velas
+            if (recency <= 20) { // max 20 velas = 100 min en M5 (LuxAlgo: solo ÚLTIMO pivot)
               const epoch = candles[j]?.epoch || (candles[j]?.time ? Math.floor(candles[j].time/1000) : null);
               let obIndex = j - 1;
               while (obIndex > targetHL.index && candles[obIndex].close < candles[obIndex].open) obIndex--;
@@ -2373,7 +2385,7 @@ const SMC = {
     return { momentum: 'NEUTRAL', strength: 50 };
   },
 
-  detectPullback(candles, demandZones, supplyZones, config) {
+  detectPullback(candles, demandZones, supplyZones, config, state = null) {
     if (candles.length < 5) return null;
 
     const last   = candles[candles.length - 1];
@@ -2447,14 +2459,21 @@ const SMC = {
       const risk    = entry - slLevel;
       if (risk <= 0 || risk > avgRange * 10) continue;
 
-      // FIX ENTRADA TARDÍA: eliminar priceJustAbove — era la causa de entrar en HH
-      // Caso del gráfico: OB en 8044-8045, precio hizo HH en 8050.50
-      // priceJustAbove (0.5x avgRange) permitía entrar hasta 8046 = zona de HH
-      // AHORA: precio DENTRO del OB o wick mínimo (0.1x) por debajo — no encima
+      // PRECIO en el OB — tolerancia mínima
       const priceInOB      = entry >= zone.low && entry <= zone.high;
       const priceJustBelow = entry < zone.low  && entry >= zone.low - avgRange * 0.1;
-      // priceJustAbove ELIMINADO: si el precio está encima del OB = oportunidad pasó
       if (!priceInOB && !priceJustBelow) continue;
+
+      // FIX 5 (LuxAlgo Premium/Discount): BUY solo en DISCOUNT o EQUILIBRIUM
+      // Comprar en PREMIUM = comprar en zona cara = probabilidad baja
+      // LuxAlgo: drawPremiumDiscountZones define 70%+ = premium, 30%- = discount
+      // Nota: estructureOBs near CHoCH pueden estar en equilibrio y son válidos
+      const premDisc = state?.premiumDiscount || 'EQUILIBRIUM';
+      const pdOkForBuy = premDisc !== 'PREMIUM' || zone.isStructureOB;
+      if (!pdOkForBuy) {
+        // Si el OB de demanda está en zona PREMIUM sin ser estructural → ignorar
+        continue;
+      }
 
       const conf = candles.slice(-3).some(c => c.close>c.open && c.close>candles[candles.length-4]?.close)
         ? 'BULLISH_CLOSE'
@@ -2718,7 +2737,7 @@ const SMC = {
       }
     }
 
-    const pullback = this.detectPullback(candlesM5, demandZones, supplyZones, config);
+    const pullback = this.detectPullback(candlesM5, demandZones, supplyZones, config, state);
 
     state.swings = swingsM5;
     state.structure = structureM5;
