@@ -185,7 +185,7 @@ const LearningSystem = {
 // =============================================
 const SIGNAL_CONFIG = {
   // Score mínimo para generar señal
-  MIN_SCORE: 85, // v24.3: Solo señales de alta calidad — elimina entradas débiles
+  MIN_SCORE: 92, // v25: Solo entradas de alta calidad — reducir cantidad, aumentar calidad
   // BUG FIX: 82 era demasiado bajo — permite modelos INDUCEMENT y LG sin H1 firme
   
   // Score mínimo específico para Boom/Crash (más estricto)
@@ -197,7 +197,7 @@ const SIGNAL_CONFIG = {
   // Cooldown después de cerrar una señal antes de abrir otra
   // 5 min = permite 2-3 operaciones por activo en una sesión de 8h
   // sin abrir operaciones basura consecutivas
-  POST_SIGNAL_COOLDOWN: 300000, // 5 minutos
+  POST_SIGNAL_COOLDOWN: 600000, // 10 minutos — espaciar señales para calidad
 
   // Boom/Crash: más tiempo porque los spikes son menos frecuentes
   POST_SIGNAL_COOLDOWN_BOOM_CRASH: 600000, // 10 minutos
@@ -2073,16 +2073,26 @@ const SMC = {
     // ── Keep only OBs from the MOST RECENT structure ──
     // Priority: 1) at extremity + unmitigated  2) STRONG + unmitigated  3) recent
     const filterOBs = (zones) => {
-      // Only consider OBs from last 120 candles — old zones are irrelevant
-      const recentEnough = zones.filter(z => z.index >= lastIndex - 120);
+      // LuxAlgo approach: only show OBs that are:
+      // 1. From last 100 candles (recent enough to be valid)
+      // 2. At extremity (swing high/low) OR Strong impulse pattern
+      // 3. Not mitigated
+      const recentEnough = zones.filter(z => z.index >= lastIndex - 100);
       const sorted = recentEnough.sort((a,b) => {
+        // Priority: extremity OBs first (LuxAlgo swing OBs > internal OBs)
         if (a.atExtremity !== b.atExtremity) return a.atExtremity ? -1 : 1;
+        // Then strong strength
+        if (a.strength !== b.strength) return a.strength === 'STRONG' ? -1 : 1;
         if (a.mitigated !== b.mitigated) return a.mitigated ? 1 : -1;
         return b.index - a.index;
       });
-      // Show max 3 fresh (unmitigated) OBs — no mitigated ones in display
-      const fresh = sorted.filter(z => !z.mitigated).slice(0, 3);
-      // Only 1 mitigated if it's from the last 30 candles (context only)
+      // Only 3 best fresh OBs — prefer STRONG and at extremity
+      const fresh = sorted.filter(z => !z.mitigated).slice(0, 4);
+      // Mark extremity OBs as structural (like LuxAlgo swing order blocks)
+      fresh.forEach(z => {
+        if (z.atExtremity && z.strength === 'STRONG') z.isStructureOB = true;
+      });
+      // 1 recent mitigated for context
       const mitigated = sorted.filter(z => z.mitigated && z.index >= lastIndex - 30).slice(0, 1);
       return [...fresh, ...mitigated];
     };
@@ -2979,37 +2989,63 @@ const SMC = {
       };
     }
 
-    // MTF_CONFLUENCE — exige que pullback coincida con opDir (= H1)
-    if (pullback && pullback.side === opSide) {
-      let score = 88;
-      if (pullback.side === 'BUY'  && premiumDiscount === 'DISCOUNT') score += 5;
-      if (pullback.side === 'SELL' && premiumDiscount === 'PREMIUM')  score += 5;
-      if (m15Strong)        score += 4;
-      if (tripleConfluence) score += 4;
-      if (choch)            score += 3;
-      if (m15ChochFresh)    score += 4;
-      if (pullback.confirmation === 'ENGULFING' || pullback.confirmation === 'PIN_BAR') score += 3;
-      if (pullback.confirmation === 'CHOCH_OB') score += 5;
-      if (pullback.zone?.isStructureOB) score += 3;
-      score = Math.min(score, 100);
+    // MTF_CONFLUENCE — LuxAlgo-aligned: necesita ESTRUCTURAL OB + alineación real
+    // FIX CRÍTICO: base 84 (no 88) — solo llega a 92+ con confirmaciones reales
+    // Elimina entradas marginales que causaban el 38% WR
+    if (pullback && pullback.side === opSide && pullback.touchedOB) {
+      // NUEVO REQUISITO: OB debe ser estructural (creado por CHoCH/BOS)
+      // OBs genéricos sin estructura detrás generan falsas señales
+      const hasStructuralOB = pullback.zone?.isStructureOB || pullback.confirmation === 'CHOCH_OB';
+      
+      // NUEVO REQUISITO: H1 y M15 deben estar ALINEADOS (mismo trend o M15 confirma H1)
+      // Si M15 va contra H1 sin CHoCH M15 fresco = señal débil
+      const strongAlignment = sameDirection || m15ChochFresh ||
+        (structureH1.strength >= 70 && m15Strong) ||
+        m15m5BosAligned || m15ChochM5Aligned;
+      
+      if (!hasStructuralOB && !strongAlignment) {
+        // OB no estructural Y alineación débil → descartar (causa principal de pérdidas)
+        console.log(`🚫 [${config.shortName}] MTF_CONFLUENCE bloqueado: OB no estructural + alineación débil`);
+      } else {
+        let score = 84; // base más baja — fuerza filtrado real
+        // Bonus por OB estructural (creado por CHoCH/BOS = más válido)
+        if (hasStructuralOB)  score += 6;
+        // Bonus por zona de valor correcta
+        if (pullback.side === 'BUY'  && premiumDiscount === 'DISCOUNT') score += 4;
+        if (pullback.side === 'SELL' && premiumDiscount === 'PREMIUM')  score += 4;
+        // Bonus por alineación fuerte H1+M15
+        if (sameDirection && structureH1.strength >= 70 && m15Strong) score += 5;
+        else if (sameDirection) score += 3;
+        // Bonus por CHoCH reciente (timing preciso)
+        if (m15ChochFresh)    score += 5;
+        if (choch && choch.side === opSide) score += 4;
+        // Bonus por confluencia triple (H1+M15+M5 alineados)
+        if (tripleConfluence) score += 4;
+        // Bonus por patrón de vela de calidad
+        if (pullback.confirmation === 'CHOCH_OB')   score += 4;
+        if (pullback.confirmation === 'BULLISH_CLOSE' || pullback.confirmation === 'BEARISH_CLOSE') score += 2;
+        // Penalización si H1 no confirma dirección
+        if (!sameDirection && !m15ChochFresh && !m15m5BosAligned) score -= 4;
+        score = Math.min(score, 100);
 
       const trendCtx = m15ChochFresh
         ? `CHoCH M15(${state.chochM15?.side}) + M5 OB`
         : `H1(${opDir})+M15(${structureM15.trend})`;
 
-      // ✅ FIX CRÍTICO: signals.push faltaba — MTF_CONFLUENCE nunca generaba señales
-      signals.push({
-        model: 'MTF_CONFLUENCE',
-        baseScore: score,
-        pullback,
-        reason: `${trendCtx} + OB ${pullback.confirmation || ''} ${premiumDiscount !== 'EQUILIBRIUM' ? '+ ' + premiumDiscount : ''}`.trim()
-      });
-    }
+                signals.push({
+          model: 'MTF_CONFLUENCE',
+          baseScore: score,
+          pullback,
+          reason: `${trendCtx} + OB ${pullback.confirmation || ''} ${premiumDiscount !== 'EQUILIBRIUM' ? '+ ' + premiumDiscount : ''} ${hasStructuralOB ? '★' : ''}`.trim()
+        });
+      } // end hasStructuralOB || strongAlignment
+    } // end pullback && side === opSide && touchedOB
     
-    // ── CHOCH_PULLBACK: CHoCH en M5 + retroceso al OB ──
-    // Also fires when: CHoCH is fresh (last 15 candles) + structureOB exists near price
-    // This catches cases where the touch happened 4-10 candles ago
-    if (choch && choch.side === opSide && !pullback) {
+    // ── CHOCH_PULLBACK: CHoCH en M5 + retroceso al OB ESTRUCTURAL ──
+    // LuxAlgo: CHoCH válido solo si hay estructura previa clara (HH/HL o LL/LH)
+    // y el OB fue creado por ese CHoCH específico
+    if (choch && choch.side === opSide && !pullback &&
+        structureM5.strength >= 55) { // M5 debe tener estructura confirmada
       // Try to synthesize a pullback from the structureOB
       const structOBs = opSide === 'BUY'
         ? demandZones.filter(z => z.isStructureOB && !z.mitigated)
