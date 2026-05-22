@@ -260,18 +260,6 @@ function isInTradingHours(plan = 'free') {
 // Emite veredicto: APROBAR / RECHAZAR / ESPERAR con razón
 // ════════════════════════════════════════════════════════════════════════
 
-const app = express();
-const PORT = process.env.PORT || 3001;
-
-app.use(cors());
-app.use(express.json());
-
-// =============================================
-// CONFIGURACIÓN TELEGRAM
-// =============================================
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
-
 // Cache de noticias: evita llamadas repetidas (actualiza cada 30 min)
 const newsCache = { data: null, ts: 0 };
 
@@ -1187,10 +1175,10 @@ const SMC = {
     const swings = [];
     if (candles.length < lookback * 2 + 1) return swings;
 
-    // LuxAlgo usa size=5 para internos y size=50 para swing
-    // Equivale a lb=4 para M5 (menos ruido) y lb=5 para H1/M15
-    // lb=2 generaba 3-4x más pivots que LuxAlgo → etiquetado HH/LH incorrecto
-    const lb = Math.max(4, Math.min(lookback, 6));
+    // FIX: NO adaptive lookback — adaptive was using candles.length/20
+    // which with 300 candles gives lookback=15, missing most real M5 swings
+    // Use FIXED lookback: 2 for M5 (catches every real pivot), 3 for H1/M15
+    const lb = Math.max(2, Math.min(lookback, 5));
 
     for (let i = lb; i < candles.length - lb; i++) {
       const c = candles[i];
@@ -1993,10 +1981,6 @@ const SMC = {
 
         if (!rule1 && !rule2 && !rule3) continue;
         if (!nearSwingLow && !rule1 && !rule2) continue; // must be near extremity OR engulfing
-        // FIX 3 (LuxAlgo): OB válido solo si el impulso fue >= 1.2x avgRange
-        const impCheckD = candles.slice(i+1, Math.min(i+6, lastIndex+1));
-        const impMoveD  = impCheckD.length ? Math.max(...impCheckD.map(c=>c.high)) - base.close : 0;
-        if (impMoveD < avgRange * 1.2) continue;
 
         const obHigh = base.open;
         const obLow  = base.close;
@@ -2046,13 +2030,6 @@ const SMC = {
         if (!rule1 && !rule2 && !rule3) continue;
         if (!nearSwingHigh && !rule1 && !rule2) continue;
 
-        // FIX 3 (LuxAlgo-aligned): impulso bajista mínimo requerido
-        const impulseCheckS = candles.slice(i+1, Math.min(i+6, lastIndex+1));
-        const impulseMoveS = impulseCheckS.length
-          ? base.open - Math.min(...impulseCheckS.map(c=>c.low))
-          : 0;
-        if (impulseMoveS < avgRange * 1.2) continue;
-
         const obHigh = base.close;
         const obLow  = base.open;
         const obMid  = (obHigh + obLow) / 2;
@@ -2088,8 +2065,7 @@ const SMC = {
       // 1. From last 100 candles (recent enough to be valid)
       // 2. At extremity (swing high/low) OR Strong impulse pattern
       // 3. Not mitigated
-      // FIX 4: OBs frescos — máximo 40 velas = estructura actual (como LuxAlgo PRESENT mode)
-      const recentEnough = zones.filter(z => z.index >= lastIndex - 40);
+      const recentEnough = zones.filter(z => z.index >= lastIndex - 100);
       const sorted = recentEnough.sort((a,b) => {
         // Priority: extremity OBs first (LuxAlgo swing OBs > internal OBs)
         if (a.atExtremity !== b.atExtremity) return a.atExtremity ? -1 : 1;
@@ -2205,7 +2181,7 @@ const SMC = {
         for (let j = lastHigh.index + 1; j < candles.length; j++) {
           if (candles[j].close < targetHL.price) {
             const recency = candles.length - 1 - j;
-            if (recency <= 20) { // max 20 velas = 100 min en M5 (LuxAlgo: solo ÚLTIMO pivot)
+            if (recency <= 60) { // dentro de las últimas 60 velas
               const epoch = candles[j]?.epoch || (candles[j]?.time ? Math.floor(candles[j].time/1000) : null);
               let obIndex = j - 1;
               while (obIndex > targetHL.index && candles[obIndex].close < candles[obIndex].open) obIndex--;
@@ -2385,7 +2361,7 @@ const SMC = {
     return { momentum: 'NEUTRAL', strength: 50 };
   },
 
-  detectPullback(candles, demandZones, supplyZones, config, state = null) {
+  detectPullback(candles, demandZones, supplyZones, config) {
     if (candles.length < 5) return null;
 
     const last   = candles[candles.length - 1];
@@ -2459,21 +2435,14 @@ const SMC = {
       const risk    = entry - slLevel;
       if (risk <= 0 || risk > avgRange * 10) continue;
 
-      // PRECIO en el OB — tolerancia mínima
+      // FIX ENTRADA TARDÍA: eliminar priceJustAbove — era la causa de entrar en HH
+      // Caso del gráfico: OB en 8044-8045, precio hizo HH en 8050.50
+      // priceJustAbove (0.5x avgRange) permitía entrar hasta 8046 = zona de HH
+      // AHORA: precio DENTRO del OB o wick mínimo (0.1x) por debajo — no encima
       const priceInOB      = entry >= zone.low && entry <= zone.high;
       const priceJustBelow = entry < zone.low  && entry >= zone.low - avgRange * 0.1;
+      // priceJustAbove ELIMINADO: si el precio está encima del OB = oportunidad pasó
       if (!priceInOB && !priceJustBelow) continue;
-
-      // FIX 5 (LuxAlgo Premium/Discount): BUY solo en DISCOUNT o EQUILIBRIUM
-      // Comprar en PREMIUM = comprar en zona cara = probabilidad baja
-      // LuxAlgo: drawPremiumDiscountZones define 70%+ = premium, 30%- = discount
-      // Nota: estructureOBs near CHoCH pueden estar en equilibrio y son válidos
-      const premDisc = state?.premiumDiscount || 'EQUILIBRIUM';
-      const pdOkForBuy = premDisc !== 'PREMIUM' || zone.isStructureOB;
-      if (!pdOkForBuy) {
-        // Si el OB de demanda está en zona PREMIUM sin ser estructural → ignorar
-        continue;
-      }
 
       const conf = candles.slice(-3).some(c => c.close>c.open && c.close>candles[candles.length-4]?.close)
         ? 'BULLISH_CLOSE'
@@ -2737,7 +2706,7 @@ const SMC = {
       }
     }
 
-    const pullback = this.detectPullback(candlesM5, demandZones, supplyZones, config, state);
+    const pullback = this.detectPullback(candlesM5, demandZones, supplyZones, config);
 
     state.swings = swingsM5;
     state.structure = structureM5;
@@ -3594,105 +3563,138 @@ const SMC = {
     }
     
     // Log cuando SÍ hay señales potenciales
-    console.log(`✨ [${config.shortName}] ${signals.length} señales detectadas: ${signals.map(s => s.model).join(', ')}`);
-    
-    signals.sort((a, b) => b.baseScore - a.baseScore);
-    const best = signals[0];
+    console.log(`✨ [${config.shortName}] ${signals.length} candidatas: ${signals.map(s=>s.model+'('+s.baseScore+')').join(', ')}`);
 
-    // OB_REJECTION puede operar counter-trend:
-    // - Si M5 hizo CHoCH en la misma dirección → umbral 85 (mismo que tendencia)
-    // - Si solo tiene OB estructural sin CHoCH M5 → umbral 90
-    // - Esto captura exactamente el caso: H1 BULLISH + OB rechazo + CHoCH M5 BEARISH
-    const obRejM5Confirms = best.model === 'OB_REJECTION' && (() => {
-      const isShort = best.pullback?.side === 'SELL';
-      const isLong  = best.pullback?.side === 'BUY';
-      const m5Agrees = (isShort && structureM5?.trend === 'BEARISH') ||
-                       (isLong  && structureM5?.trend === 'BULLISH');
-      return m5Agrees;
-    })();
-    const effectiveMinScore = best.model === 'OB_REJECTION'
-      ? (obRejM5Confirms ? 85 : 90)  // M5 CHoCH confirma → mismo umbral que tendencia
-      : minScore;
-    
-    // 🔍 LOG: Mostrar score de la mejor señal
-    console.log(`🎯 [${config.shortName}] Mejor: ${best.model} | Score Base: ${best.baseScore} | Side: ${best.pullback?.side}`);
-    
-    // ═══════════════════════════════════════════
-    // AJUSTE DE SCORE CON SISTEMA DE APRENDIZAJE
-    // ═══════════════════════════════════════════
-    // Nota: Usamos config.shortName en lugar de symbol (que no existe en este contexto)
-    const learningAdj = LearningSystem.getScoreAdjustment(best.model, config.shortName);
-    const finalScore  = Math.min(100, Math.max(0, best.baseScore + learningAdj));
+    // ═══════════════════════════════════════════════════════════════════
+    // FLUJO COMPARATIVO CON IA v25
+    // IA recibe TODAS las candidatas y elige la mejor en contexto
+    // ═══════════════════════════════════════════════════════════════════
 
-    console.log(`📊 [${config.shortName}] Score Final: ${finalScore} vs Min: ${effectiveMinScore} → ${finalScore >= effectiveMinScore ? '✅ PASA' : '❌ NO PASA'} | Modelo: ${best.model}`);
+    // 1. Aplicar learning system y filtrar por score mínimo
+    const gradedSignals = signals.map(s => {
+      const lAdj = LearningSystem.getScoreAdjustment(s.model, config.shortName);
+      return { ...s, finalScore: Math.min(100, Math.max(0, s.baseScore + lAdj)) };
+    }).filter(s => s.finalScore >= minScore)
+      .sort((a,b) => b.finalScore - a.finalScore);
 
-    if (finalScore < effectiveMinScore) {
-      console.log(`❌ [${config.shortName}] Rechazada: ${finalScore} < ${effectiveMinScore}${best.model==='OB_REJECTION'?' (OB_REJECTION necesita ≥90)':''}`);
+    if (!gradedSignals.length) {
+      const topRaw = signals.sort((a,b)=>b.baseScore-a.baseScore)[0];
+      const adj = topRaw ? LearningSystem.getScoreAdjustment(topRaw.model, config.shortName) : 0;
+      const fs  = topRaw ? Math.min(100, topRaw.baseScore + adj) : 0;
+      console.log(`❌ [${config.shortName}] Score ${fs}% < ${minScore}%`);
       return {
-        action: 'WAIT',
-        score: finalScore,
-        model: best.model,
-        reason: `Score ${finalScore}% < ${effectiveMinScore}% min`,
-        analysis: {
-          structureM5: structureM5.trend,
-          structureH1: structureH1.trend,
-          mtfConfluence,
-          premiumDiscount
-        }
-      };
-    }
-    
-    // ✅ SCORE SUFICIENTE - VALIDACIÓN IA CON LECTURA DE GRÁFICO
-    console.log(`✅ [${config.shortName}] APROBADA técnicamente: ${best.model} con score ${finalScore}`);
-    let aiResult = { approve: true, confidence: 70, reason: '', warning: null, patterns: [] };
-    if (openai) {
-      try {
-        const tSig = { action: pb.side==='BUY'?'LONG':'SHORT', model: best.model, score: finalScore, entry: pb.entry, stop: pb.stop, tp1: pb.tp1, tp2: pb.tp2 };
-        aiResult = await Promise.race([
-          aiReadChart(tSig, state||{}, config),
-          new Promise(r => setTimeout(()=>r({approve:true,confidence:60,reason:'Timeout',patterns:[]}), 6000))
-        ]);
-        console.log(`🤖 [${config.shortName}] IA: ${aiResult.approve?'✅':'❌'} conf:${aiResult.confidence}% → ${aiResult.reason}`);
-      } catch(e) { console.log('⚠️ IA error:', e.message); }
-    }
-    if (!aiResult.approve && aiResult.confidence >= 78 && finalScore < 93) {
-      console.log(`🤖 [${config.shortName}] IA RECHAZA: ${aiResult.reason} (conf: ${aiResult.confidence}%)`);
-      return {
-        action: 'WAIT',
-        score: finalScore,
-        model: best.model,
-        reason: `IA: ${aiResult.reason}`,
+        action: 'WAIT', score: fs, model: topRaw?.model || 'WAIT',
+        reason: `Score ${fs}% < ${minScore}% mínimo`,
         analysis: { structureM5: structureM5.trend, structureH1: structureH1.trend, mtfConfluence, premiumDiscount }
       };
     }
 
-    if (aiResult.warning) {
-      console.log(`⚠️ [${config.shortName}] Advertencia IA: ${aiResult.warning}`);
+    // 2. IA compara todas las candidatas y elige la mejor
+    let chosen = gradedSignals[0];
+    let aiResult = { approve: true, confidence: 70, reason: 'Score técnico', warning: null, patterns: [], chosenIdx: 0 };
+
+    if (openai && gradedSignals.length > 0) {
+      try {
+        const candles  = state?.candles || [];
+        const avgRange = candles.length > 14
+          ? candles.slice(-14).reduce((s,c)=>s+Math.abs(c.high-c.low),0)/14 : 3;
+        const patterns = detectCandlePatterns(candles, avgRange);
+        const last5 = candles.slice(-5).map(c=>({
+          o:+c.open.toFixed(config.decimals||2), h:+c.high.toFixed(config.decimals||2),
+          l:+c.low.toFixed(config.decimals||2),  c:+c.close.toFixed(config.decimals||2),
+          d:c.close>c.open?'▲':'▼'
+        }));
+
+        // Descripción concisa de cada candidata para la IA
+        const candidateDesc = gradedSignals.slice(0,4).map((s,idx)=>{
+          const pb = s.pullback;
+          const rr = pb ? (Math.abs((pb.tp1||0)-(pb.entry||0))/Math.abs((pb.entry||0)-(pb.stop||1))).toFixed(2) : '?';
+          const zone = pb?.zone;
+          return `[${idx+1}] ${s.model} | ${pb?.side||'?'} | Score:${s.finalScore}% | `+
+            `Entry:${pb?.entry||'?'} SL:${pb?.stop||'?'} TP1:${pb?.tp1||'?'} R:R:${rr} | `+
+            `OB:${zone?.isStructureOB?'★':'normal'} ${zone?.strength||''} | Conf:${pb?.confirmation||'-'}`;
+        }).join(' || ');
+
+        const prompt = `Trader institucional SMC. ${gradedSignals.slice(0,4).length} candidatas en ${config.shortName}. Elige la MEJOR o di NINGUNA.
+
+CANDIDATAS:
+${candidateDesc}
+
+CONTEXTO:
+H1:${structureH1?.trend}(${structureH1?.strength}%) M15:${structureM15?.trend||'?'}(${structureM15?.strength||0}%) M5:${structureM5?.trend}
+${premiumDiscount} | CHoCH:${choch?choch.type:'No'} | BOS:${bos?bos.type:'No'}
+Velas: ${last5.map(c=>`[${c.d}${c.c}]`).join(' ')}
+Patrones: ${patterns.length?patterns.map(p=>p.name).join(','):'Ninguno'}
+
+CRITERIOS PARA ELEGIR:
+1. OBs estructurales ★ tienen prioridad sobre normales
+2. CHoCH reciente + pullback al OB = timing ideal
+3. Dirección alineada con H1 (o M15+M5 muy fuertes si hay CHoCH)
+4. DISCOUNT=compras, PREMIUM=ventas (excepto OB estructural counter-trend)
+5. R:R minimo 1.5 — rechazar si es menor
+6. M5 y M15 opuestos sin CHoCH claro = NINGUNA
+
+JSON: {"choice":1,"confidence":85,"reason":"max 50 palabras","warning":"riesgo o null"}
+choice=0 si ninguna vale ahora.`;
+
+        const res = await Promise.race([
+          openai.chat.completions.create({
+            model:'gpt-4o-mini',
+            messages:[{role:'user',content:prompt}],
+            temperature:0.1, max_tokens:200,
+            response_format:{type:'json_object'}
+          }),
+          new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout IA')),7000))
+        ]);
+
+        const p = JSON.parse(res.choices[0]?.message?.content||'{}');
+
+        if (!p.choice || p.choice === 0) {
+          console.log(`🤖 [${config.shortName}] IA: NINGUNA → ${p.reason}`);
+          return {
+            action:'WAIT', score: chosen.finalScore, model: chosen.model,
+            reason: `IA: ${p.reason||'Sin setup válido ahora'}`,
+            analysis:{structureM5:structureM5.trend,structureH1:structureH1.trend,mtfConfluence,premiumDiscount}
+          };
+        }
+
+        const chosenIdx = Math.max(0, Math.min((p.choice||1)-1, gradedSignals.length-1));
+        chosen = gradedSignals[chosenIdx];
+        aiResult = {
+          approve:true, confidence:Math.min(100,Math.max(0,+p.confidence||70)),
+          reason:p.reason||'Validado', warning:p.warning||null, patterns, chosenIdx
+        };
+        console.log(`🤖 [${config.shortName}] IA eligió [${p.choice}] ${chosen.model} | conf:${aiResult.confidence}% | ${aiResult.reason}`);
+
+      } catch(e) {
+        console.log(`⚠️ [${config.shortName}] IA error: ${e.message} — mejor técnico`);
+      }
+    } else if (!openai) {
+      console.log(`✅ [${config.shortName}] Sin IA — usando mejor técnico: ${chosen.model} ${chosen.finalScore}%`);
     }
 
-    const pb = best.pullback;
+    if (aiResult.warning) console.log(`⚠️ [${config.shortName}] Aviso IA: ${aiResult.warning}`);
+
+    // 3. Emitir la señal elegida
+    const pb = chosen.pullback;
     return {
-      action: pb.side === 'BUY' ? 'LONG' : 'SHORT',
-      model: best.model,
-      score: finalScore,
-      aiConfidence: aiResult.confidence,
-      aiReason:     aiResult.reason,
-      aiWarning:    aiResult.warning,
-      entry: pb.entry,
-      stop: pb.stop,
-      tp1: pb.tp1,
-      tp2: pb.tp2,
-      tp3: pb.tp3,
-      reason: best.reason,
+      action:      pb.side === 'BUY' ? 'LONG' : 'SHORT',
+      model:       chosen.model,
+      score:       chosen.finalScore,
+      aiConfidence:aiResult.confidence,
+      aiReason:    aiResult.reason,
+      aiWarning:   aiResult.warning,
+      aiPatterns:  (aiResult.patterns||[]).map(p=>p.name).join(',') || null,
+      entry: pb.entry, stop: pb.stop,
+      tp1: pb.tp1, tp2: pb.tp2, tp3: pb.tp3,
+      reason: chosen.reason,
       analysis: {
-        structureM5: structureM5.trend,
-        structureH1: structureH1.trend,
-        mtfConfluence,
-        premiumDiscount,
-        orderFlow: orderFlow.momentum
+        structureM5:structureM5.trend, structureH1:structureH1.trend,
+        mtfConfluence, premiumDiscount, orderFlow:orderFlow.momentum
       }
     };
-  } // close analyze()
+
+    } // close analyze()
 }; // close SMC
 
 // =============================================
