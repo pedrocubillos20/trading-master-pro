@@ -1175,7 +1175,7 @@ const SMC = {
     // FIX: NO adaptive lookback — adaptive was using candles.length/20
     // which with 300 candles gives lookback=15, missing most real M5 swings
     // Use FIXED lookback: 2 for M5 (catches every real pivot), 3 for H1/M15
-    const lb = Math.max(4, Math.min(lookback, 6)); // LuxAlgo-aligned: lb=4 min reduces false pivots
+    const lb = Math.max(3, Math.min(lookback, 5)); // lb=3 M5: detecta pivots sin exceso de ruidoces false pivots
 
     for (let i = lb; i < candles.length - lb; i++) {
       const c = candles[i];
@@ -2060,7 +2060,8 @@ const SMC = {
     const filterOBs = (zones) => {
       // Only consider OBs from last 120 candles — old zones are irrelevant
       // FIX: OBs frescos máximo 40 velas (estructura actual, como LuxAlgo PRESENT mode)
-      const recentEnough = zones.filter(z => z.index >= lastIndex - 40);
+      // OBs válidos: últimas 60 velas = ~5 horas M5 (balance entre frescura y cobertura)
+      const recentEnough = zones.filter(z => z.index >= lastIndex - 60);
       const sorted = recentEnough.sort((a,b) => {
         if (a.atExtremity !== b.atExtremity) return a.atExtremity ? -1 : 1;
         if (a.mitigated !== b.mitigated) return a.mitigated ? 1 : -1;
@@ -2169,7 +2170,7 @@ const SMC = {
         for (let j = lastHigh.index + 1; j < candles.length; j++) {
           if (candles[j].close < targetHL.price) {
             const recency = candles.length - 1 - j;
-            if (recency <= 20) { // max 20 velas = 100 min en M5 (LuxAlgo: solo ÚLTIMO pivot)
+            if (recency <= 35) { // 35 velas = ~175 min M5 — balance entre frescura y oportunidades)
               const epoch = candles[j]?.epoch || (candles[j]?.time ? Math.floor(candles[j].time/1000) : null);
               let obIndex = j - 1;
               while (obIndex > targetHL.index && candles[obIndex].close < candles[obIndex].open) obIndex--;
@@ -2200,7 +2201,7 @@ const SMC = {
         for (let j = lastLow.index + 1; j < candles.length; j++) {
           if (candles[j].close > targetLH.price) {
             const recency = candles.length - 1 - j;
-            if (recency <= 60) {
+            if (recency <= 35) {
               const epoch = candles[j]?.epoch || (candles[j]?.time ? Math.floor(candles[j].time/1000) : null);
               let obIndex = j - 1;
               while (obIndex > targetLH.index && candles[obIndex].close > candles[obIndex].open) obIndex--;
@@ -2359,10 +2360,10 @@ const SMC = {
     // FIX: tolerancia 0.15x avgRange (era 0.5x — demasiado amplio)
     // FIX: ventana máx 5 velas = 25 min en M5 (era 8 = 40 min)
     const touchedRecently = (zone, n, side) => {
-      const window = candles.slice(-Math.min(n, 5));
+      const window = candles.slice(-Math.min(n, 8));
       return window.some(c => {
-        if (side === 'BUY')  return c.low  <= zone.high + avgRange * 0.15 && c.high >= zone.low;
-        if (side === 'SELL') return c.high >= zone.low  - avgRange * 0.15 && c.low  <= zone.high;
+        if (side === 'BUY')  return c.low  <= zone.high + avgRange * 0.25 && c.high >= zone.low;
+        if (side === 'SELL') return c.high >= zone.low  - avgRange * 0.25 && c.low  <= zone.high;
         return false;
       });
     };
@@ -2407,13 +2408,13 @@ const SMC = {
       // puede ser una vela verde ENCIMA del OB sin que el precio haya retrocedido
       // NUEVO: verificar que al menos 1 vela en las últimas 5 tocó el OB (low dentro)
       // Y que después de ese toque hay confirmación alcista
-      const touchIdx = candles.slice(-5).findIndex(c => c.low <= zone.high + avgRange * 0.15 && c.low >= zone.low - avgRange * 0.5);
+      const touchIdx = candles.slice(-8).findIndex(c => c.low <= zone.high + avgRange * 0.3 && c.low >= zone.low - avgRange * 0.7);
       const hasOBTouch = touchIdx >= 0;
-      // Confirmación: vela alcista DESPUÉS del toque (cierre encima del piso del OB)
-      const afterTouch = hasOBTouch ? candles.slice(-(5-touchIdx)) : [];
-      const confAfterTouch = afterTouch.some(c => c.close > c.open && c.close >= zone.low);
+      // Confirmación flexible: toque real O precio cerca + vela confirmatoria
+      const afterTouch = hasOBTouch ? candles.slice(Math.max(-8, -(8-touchIdx))) : candles.slice(-3);
+      const confAfterTouch = afterTouch.some(c => c.close > c.open && c.close >= zone.low - avgRange*0.2);
       const hasConf = isStructOB
-        ? hasOBTouch && (confAfterTouch || recentConf(zone, 3, 'BUY'))
+        ? (hasOBTouch || touchedRecently(zone, 8, 'BUY')) && (confAfterTouch || recentConf(zone, 4, 'BUY'))
         : hasOBTouch && confAfterTouch;
 
       if (!hasConf) continue;
@@ -2428,8 +2429,8 @@ const SMC = {
       // priceJustAbove (0.5x avgRange) permitía entrar hasta 8046 = zona de HH
       // AHORA: precio DENTRO del OB o wick mínimo (0.1x) por debajo — no encima
       const priceInOB      = entry >= zone.low && entry <= zone.high;
-      const priceJustBelow = entry < zone.low  && entry >= zone.low - avgRange * 0.1;
-      // priceJustAbove ELIMINADO: si el precio está encima del OB = oportunidad pasó
+      const priceJustBelow = entry < zone.low  && entry >= zone.low - avgRange * 0.3;
+      // priceJustAbove ELIMINADO
       if (!priceInOB && !priceJustBelow) continue;
 
       const conf = candles.slice(-3).some(c => c.close>c.open && c.close>candles[candles.length-4]?.close)
@@ -2459,12 +2460,12 @@ const SMC = {
       const isStructOB = zone.isStructureOB || zone.pattern === 'CHOCH_OB';
 
       // FIX: mismo patrón que BUY — toque real del OB primero, confirmación después
-      const touchIdxS = candles.slice(-5).findIndex(c => c.high >= zone.low - avgRange * 0.15 && c.high <= zone.high + avgRange * 0.5);
+      const touchIdxS = candles.slice(-8).findIndex(c => c.high >= zone.low - avgRange * 0.3 && c.high <= zone.high + avgRange * 0.7);
       const hasOBTouchS = touchIdxS >= 0;
-      const afterTouchS = hasOBTouchS ? candles.slice(-(5-touchIdxS)) : [];
-      const confAfterTouchS = afterTouchS.some(c => c.close < c.open && c.close <= zone.high);
+      const afterTouchS = hasOBTouchS ? candles.slice(Math.max(-8,-(8-touchIdxS))) : candles.slice(-3);
+      const confAfterTouchS = afterTouchS.some(c => c.close < c.open && c.close <= zone.high + avgRange*0.2);
       const hasConf = isStructOB
-        ? hasOBTouchS && (confAfterTouchS || recentConf(zone, 3, 'SELL'))
+        ? (hasOBTouchS || touchedRecently(zone, 8, 'SELL')) && (confAfterTouchS || recentConf(zone, 4, 'SELL'))
         : hasOBTouchS && confAfterTouchS;
 
       if (!hasConf) continue;
@@ -2477,8 +2478,8 @@ const SMC = {
       // FIX: eliminar priceJustBelow — si el precio ya cayó del OB = tarde
       // Para venta: precio dentro del OB o wick mínimo (0.1x) por encima
       const priceInOB      = entry >= zone.low && entry <= zone.high;
-      const priceJustAbove = entry > zone.high && entry <= zone.high + avgRange * 0.1;
-      // priceJustBelow ELIMINADO: precio debajo del OB = momento de venta pasó
+      const priceJustAbove = entry > zone.high && entry <= zone.high + avgRange * 0.3;
+      // priceJustBelow ELIMINADO
       if (!priceInOB && !priceJustAbove) continue;
 
       const conf = candles.slice(-3).some(c => c.close<c.open && c.close<candles[candles.length-4]?.close)
@@ -2950,10 +2951,8 @@ const SMC = {
     const opSide = opDir === 'BULLISH' ? 'BUY' : 'SELL';
 
     const isCounterTrend = opDir !== structureH1.trend && structureH1.trend !== 'NEUTRAL';
-    // Counter-H1 con BOS: 90%; Counter-H1 sin BOS: 92%; Con-tendencia: 85
-    const minScore = isCounterTrend
-      ? (m15m5BosAligned ? 90 : 92)
-      : Math.max(SIGNAL_CONFIG.MIN_SCORE, 85);
+    // Con-tendencia: 88% (era 92 = cero señales), Counter: 92%
+    const minScore = isCounterTrend ? 92 : 88;
 
     if (!marketReady && !m5ChochReversal) {
       return {
@@ -3107,8 +3106,8 @@ const SMC = {
         if (zone.mitigated) continue;
 
         // El precio ACTUAL debe estar cerca del OB (no entrar cuando ya viajó lejos)
-        const priceNearZone = lastCandle.close >= zone.low - avgRange * 0.2 &&
-                              lastCandle.close <= zone.high + avgRange * 0.2;
+        const priceNearZone = lastCandle.close >= zone.low - avgRange * 0.4 &&
+                              lastCandle.close <= zone.high + avgRange * 0.4;
         if (!priceNearZone) continue;
 
         // Buscar la vela de rechazo más fuerte dentro de las últimas 8
@@ -3182,8 +3181,8 @@ const SMC = {
         if (zone.mitigated) continue;
 
         // El precio ACTUAL debe estar cerca del OB
-        const priceNearZoneB = lastCandle.close <= zone.high + avgRange * 0.2 &&
-                               lastCandle.close >= zone.low - avgRange * 0.2;
+        const priceNearZoneB = lastCandle.close <= zone.high + avgRange * 0.4 &&
+                               lastCandle.close >= zone.low - avgRange * 0.4;
         if (!priceNearZoneB) continue;
 
         let bestBull = null, bestScore = 0;
