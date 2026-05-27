@@ -212,6 +212,10 @@ const SIGNAL_CONFIG = {
   // Modelos que SIEMPRE pueden operar sin MTF (tienen su propia lógica H1)
   MODELS_WITHOUT_MTF: [
     'MTF_CONFLUENCE',    // Ya incluye MTF
+    'BREAKER_BLOCK',    // Institucional — tiene su propia lógica
+    'JUDAS_SWING',      // Institucional — trampa de liquidez
+    'PROPULSION_BLOCK', // Institucional — FVG post-CHoCH
+    'KILL_ZONE_OB',
     'BOOM_SPIKE',        // Tiene lógica H1 propia
     'CRASH_SPIKE'        // Tiene lógica H1 propia
   ],
@@ -3488,6 +3492,307 @@ const SMC = {
             reason: m1Result.reason
           });
         }
+      }
+    }
+
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODELOS INSTITUCIONALES — Smart Money Institucional v25
+    // ════════════════════════════════════════════════════════════════════
+    // Operativa real institucional — NO retail:
+    // 1. BREAKER_BLOCK   — OB que fue mitigado y se convierte en soporte/resistencia
+    // 2. JUDAS_SWING     — Barrido falso de liquidez al inicio de sesión
+    // 3. MITIGATION_BLOCK— Precio regresa a zona donde se cerró una posición
+    // 4. PROPULSION_BLOCK— Bloque de continuación después de CHoCH con gap
+    // ════════════════════════════════════════════════════════════════════
+
+    const lastC  = candlesM5[candlesM5.length - 1];
+    const prevC  = candlesM5[candlesM5.length - 2];
+    const prev2C = candlesM5[candlesM5.length - 3];
+
+    // ── Kill Zones institucionales (cuando las instituciones operan) ──
+    // NY Open:     12:00-15:00 UTC (7:00-10:00 AM NY)
+    // London Open: 07:00-10:00 UTC (3:00-6:00 AM NY)
+    // London Close:15:00-17:00 UTC (10:00-12:00 NY)
+    const utcH = new Date().getUTCHours() + new Date().getUTCMinutes()/60;
+    const inNYOpen     = utcH >= 12.0 && utcH < 15.0;
+    const inLondonOpen = utcH >= 7.0  && utcH < 10.0;
+    const inLondonClose= utcH >= 15.0 && utcH < 17.0;
+    const inKillZone   = inNYOpen || inLondonOpen || inLondonClose;
+    const killZoneName = inNYOpen ? 'NY_OPEN' : inLondonOpen ? 'LONDON_OPEN' : inLondonClose ? 'LONDON_CLOSE' : null;
+
+    // ── 1. BREAKER BLOCK ──
+    // Cuando un OB es mitigado (precio lo atravesó) y luego el precio regresa,
+    // ese OB se convierte en Breaker: zona de oferta se convierte en demanda y viceversa
+    // Instituciones usan Breakers para entrar en la dirección del bias HTF
+    const allDemandMitigated = (state.demandZonesAll || []).filter(z => z.mitigated && !z.tested);
+    const allSupplyMitigated = (state.supplyZonesAll || []).filter(z => z.mitigated && !z.tested);
+
+    // Breaker alcista: OB supply mitigado (precio subió a través) — ahora actúa como demand
+    if (opSide === 'BUY' && allSupplyMitigated.length > 0) {
+      const breakerZone = allSupplyMitigated
+        .filter(z => lastC.close >= z.low - avgRange*0.5 && lastC.close <= z.high + avgRange*0.3)
+        .sort((a,b) => b.index - a.index)[0];
+
+      if (breakerZone && structureH1.trend === 'BULLISH' && choch?.side === 'BUY') {
+        const entry = +(lastC.close).toFixed(config.decimals);
+        const sl    = +(breakerZone.low - avgRange * 0.3).toFixed(config.decimals);
+        const risk  = entry - sl;
+        if (risk > 0 && risk < avgRange * 6) {
+          let score = 86;
+          if (inKillZone)                                           score += 5;
+          if (premiumDiscount === 'DISCOUNT')                       score += 4;
+          if (tripleConfluence)                                     score += 4;
+          if (m15Strong)                                            score += 3;
+          score = Math.min(score, 97);
+          signals.push({
+            model: 'BREAKER_BLOCK',
+            baseScore: score,
+            pullback: {
+              side: 'BUY', entry, stop: sl,
+              tp1: +(entry + risk * 1.5).toFixed(config.decimals),
+              tp2: +(entry + risk * 2.5).toFixed(config.decimals),
+              tp3: +(entry + risk * 4.0).toFixed(config.decimals),
+              zone: { ...breakerZone, isStructureOB: true }, touchedOB: true,
+              confirmation: 'BREAKER_FLIP'
+            },
+            reason: `Breaker alcista H1 BULL + CHoCH BUY${inKillZone?' + '+killZoneName:''}${premiumDiscount==='DISCOUNT'?' + DISCOUNT':''}`
+          });
+        }
+      }
+    }
+
+    // Breaker bajista: OB demand mitigado — ahora actúa como supply
+    if (opSide === 'SELL' && allDemandMitigated.length > 0) {
+      const breakerZone = allDemandMitigated
+        .filter(z => lastC.close <= z.high + avgRange*0.5 && lastC.close >= z.low - avgRange*0.3)
+        .sort((a,b) => b.index - a.index)[0];
+
+      if (breakerZone && structureH1.trend === 'BEARISH' && choch?.side === 'SELL') {
+        const entry = +(lastC.close).toFixed(config.decimals);
+        const sl    = +(breakerZone.high + avgRange * 0.3).toFixed(config.decimals);
+        const risk  = sl - entry;
+        if (risk > 0 && risk < avgRange * 6) {
+          let score = 86;
+          if (inKillZone)                                           score += 5;
+          if (premiumDiscount === 'PREMIUM')                        score += 4;
+          if (tripleConfluence)                                     score += 4;
+          if (m15Strong)                                            score += 3;
+          score = Math.min(score, 97);
+          signals.push({
+            model: 'BREAKER_BLOCK',
+            baseScore: score,
+            pullback: {
+              side: 'SELL', entry, stop: sl,
+              tp1: +(entry - risk * 1.5).toFixed(config.decimals),
+              tp2: +(entry - risk * 2.5).toFixed(config.decimals),
+              tp3: +(entry - risk * 4.0).toFixed(config.decimals),
+              zone: { ...breakerZone, isStructureOB: true }, touchedOB: true,
+              confirmation: 'BREAKER_FLIP'
+            },
+            reason: `Breaker bajista H1 BEAR + CHoCH SELL${inKillZone?' + '+killZoneName:''}${premiumDiscount==='PREMIUM'?' + PREMIUM':''}`
+          });
+        }
+      }
+    }
+
+    // ── 2. JUDAS SWING (Engaño institucional) ──
+    // Patrón: precio hace un movimiento falso para liquidar stops minoristas,
+    // luego revierte bruscamente hacia la dirección real (bias HTF)
+    // Condición: vela con mecha larga que rompió equal high/low y cerró de vuelta
+    // La "trampa" ya se ejecutó — entramos en la dirección real
+    if (candlesM5.length >= 5) {
+      const judas = candlesM5[candlesM5.length - 2]; // vela anterior (la trampa)
+      const curr  = candlesM5[candlesM5.length - 1]; // vela actual (reversión)
+
+      // JUDAS SELL (falso alza, real bajista):
+      // - Vela anterior: subió a nuevo HH luego cerró DEBAJO del high anterior
+      // - Vela actual: cierra bajista confirmando
+      // - H1 BEARISH
+      if (opSide === 'SELL' && structureH1.trend === 'BEARISH') {
+        const recentHigh = Math.max(...candlesM5.slice(-8, -2).map(c => c.high));
+        const judas_swept_high = judas.high > recentHigh; // rompió high (sweep)
+        const judas_reversed   = judas.close < recentHigh; // cerró por debajo (trampa)
+        const curr_bearish     = curr.close < curr.open && curr.close < judas.close;
+        const wickRatio        = (judas.high - Math.max(judas.open, judas.close)) / (Math.abs(judas.close - judas.open) || 0.001);
+
+        if (judas_swept_high && judas_reversed && curr_bearish && wickRatio > 1.5) {
+          const entry = +(curr.close).toFixed(config.decimals);
+          const sl    = +(judas.high + avgRange * 0.2).toFixed(config.decimals);
+          const risk  = sl - entry;
+          if (risk > 0 && risk < avgRange * 5) {
+            let score = 87;
+            if (inKillZone)                score += 6; // Judas swings ocurren MÁS en kill zones
+            if (m15Strong)                 score += 4;
+            if (premiumDiscount==='PREMIUM') score += 3;
+            if (tripleConfluence)          score += 3;
+            score = Math.min(score, 98);
+            signals.push({
+              model: 'JUDAS_SWING',
+              baseScore: score,
+              pullback: {
+                side: 'SELL', entry, stop: sl,
+                tp1: +(entry - risk * 1.5).toFixed(config.decimals),
+                tp2: +(entry - risk * 2.5).toFixed(config.decimals),
+                tp3: +(entry - risk * 4.0).toFixed(config.decimals),
+                touchedOB: true, confirmation: 'JUDAS_REVERSAL'
+              },
+              reason: `Judas Swing ↑FALSO H1 BEAR${inKillZone?' + '+killZoneName:''}${premiumDiscount==='PREMIUM'?' + PREMIUM':''}`
+            });
+          }
+        }
+      }
+
+      // JUDAS BUY (falso bajada, real alcista):
+      if (opSide === 'BUY' && structureH1.trend === 'BULLISH') {
+        const recentLow  = Math.min(...candlesM5.slice(-8, -2).map(c => c.low));
+        const judas_swept_low  = judas.low < recentLow;
+        const judas_reversed   = judas.close > recentLow;
+        const curr_bullish     = curr.close > curr.open && curr.close > judas.close;
+        const wickRatio        = (Math.min(judas.open, judas.close) - judas.low) / (Math.abs(judas.close - judas.open) || 0.001);
+
+        if (judas_swept_low && judas_reversed && curr_bullish && wickRatio > 1.5) {
+          const entry = +(curr.close).toFixed(config.decimals);
+          const sl    = +(judas.low - avgRange * 0.2).toFixed(config.decimals);
+          const risk  = entry - sl;
+          if (risk > 0 && risk < avgRange * 5) {
+            let score = 87;
+            if (inKillZone)                score += 6;
+            if (m15Strong)                 score += 4;
+            if (premiumDiscount==='DISCOUNT') score += 3;
+            if (tripleConfluence)          score += 3;
+            score = Math.min(score, 98);
+            signals.push({
+              model: 'JUDAS_SWING',
+              baseScore: score,
+              pullback: {
+                side: 'BUY', entry, stop: sl,
+                tp1: +(entry + risk * 1.5).toFixed(config.decimals),
+                tp2: +(entry + risk * 2.5).toFixed(config.decimals),
+                tp3: +(entry + risk * 4.0).toFixed(config.decimals),
+                touchedOB: true, confirmation: 'JUDAS_REVERSAL'
+              },
+              reason: `Judas Swing ↓FALSO H1 BULL${inKillZone?' + '+killZoneName:''}${premiumDiscount==='DISCOUNT'?' + DISCOUNT':''}`
+            });
+          }
+        }
+      }
+    }
+
+    // ── 3. PROPULSION BLOCK ──
+    // Después de un CHoCH, el precio crea un imbalance (FVG) y regresa a llenarlo
+    // Instituciones reentran en el gap antes de la continuación
+    // Es el modelo más preciso — combina CHoCH + FVG + retroceso
+    if (choch && choch.side === opSide && candlesM5.length >= 6) {
+      // Buscar FVG creado DESPUÉS del CHoCH
+      const chochIdx = choch.breakIndex || (candlesM5.length - 10);
+      const postChoch = candlesM5.slice(chochIdx);
+
+      for (let k = 1; k < postChoch.length - 1; k++) {
+        const c0 = postChoch[k-1], c1 = postChoch[k], c2 = postChoch[k+1];
+
+        // FVG alcista: gap entre low de c2 y high de c0
+        if (opSide === 'BUY' && c2.low > c0.high && c1.close > c1.open) {
+          const fvgTop    = c2.low;
+          const fvgBottom = c0.high;
+          const fvgMid    = (fvgTop + fvgBottom) / 2;
+
+          // Precio actual está en el FVG (retroceso al gap)
+          if (lastC.close >= fvgBottom - avgRange*0.2 && lastC.close <= fvgTop + avgRange*0.2) {
+            const entry = +(lastC.close).toFixed(config.decimals);
+            const sl    = +(fvgBottom - avgRange * 0.4).toFixed(config.decimals);
+            const risk  = entry - sl;
+            if (risk > 0 && risk < avgRange * 5) {
+              let score = 88;
+              if (inKillZone)                    score += 5;
+              if (premiumDiscount === 'DISCOUNT') score += 4;
+              if (m15Strong)                     score += 4;
+              if (tripleConfluence)              score += 3;
+              score = Math.min(score, 98);
+              signals.push({
+                model: 'PROPULSION_BLOCK',
+                baseScore: score,
+                pullback: {
+                  side: 'BUY', entry, stop: sl,
+                  tp1: +(entry + risk * 1.5).toFixed(config.decimals),
+                  tp2: +(entry + risk * 2.5).toFixed(config.decimals),
+                  tp3: +(entry + risk * 4.0).toFixed(config.decimals),
+                  zone: { low: fvgBottom, high: fvgTop, mid: fvgMid, isStructureOB: true },
+                  touchedOB: true, confirmation: 'FVG_PROPULSION'
+                },
+                reason: `Propulsion Block BUY: CHoCH + FVG retroceso${inKillZone?' + '+killZoneName:''}${premiumDiscount==='DISCOUNT'?' + DISCOUNT':''}`
+              });
+              break;
+            }
+          }
+        }
+
+        // FVG bajista
+        if (opSide === 'SELL' && c2.high < c0.low && c1.close < c1.open) {
+          const fvgBottom = c2.high;
+          const fvgTop    = c0.low;
+
+          if (lastC.close >= fvgBottom - avgRange*0.2 && lastC.close <= fvgTop + avgRange*0.2) {
+            const entry = +(lastC.close).toFixed(config.decimals);
+            const sl    = +(fvgTop + avgRange * 0.4).toFixed(config.decimals);
+            const risk  = sl - entry;
+            if (risk > 0 && risk < avgRange * 5) {
+              let score = 88;
+              if (inKillZone)                   score += 5;
+              if (premiumDiscount === 'PREMIUM') score += 4;
+              if (m15Strong)                    score += 4;
+              if (tripleConfluence)             score += 3;
+              score = Math.min(score, 98);
+              signals.push({
+                model: 'PROPULSION_BLOCK',
+                baseScore: score,
+                pullback: {
+                  side: 'SELL', entry, stop: sl,
+                  tp1: +(entry - risk * 1.5).toFixed(config.decimals),
+                  tp2: +(entry - risk * 2.5).toFixed(config.decimals),
+                  tp3: +(entry - risk * 4.0).toFixed(config.decimals),
+                  zone: { low: fvgBottom, high: fvgTop, isStructureOB: true },
+                  touchedOB: true, confirmation: 'FVG_PROPULSION'
+                },
+                reason: `Propulsion Block SELL: CHoCH + FVG retroceso${inKillZone?' + '+killZoneName:''}${premiumDiscount==='PREMIUM'?' + PREMIUM':''}`
+              });
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    // ── 4. KILL ZONE + OB PURO ──
+    // En kill zones (NY Open, London), cualquier OB estructural tiene mayor prioridad
+    // Las instituciones mueven el mercado desde estas horas — el OB tiene mayor probabilidad
+    if (inKillZone && pullback && pullback.side === opSide &&
+        pullback.zone?.isStructureOB && pullback.touchedOB) {
+      const entry = +(lastC.close).toFixed(config.decimals);
+      const isBuyKZ = pullback.side === 'BUY';
+      const sl = isBuyKZ
+        ? +((pullback.zone.wickLow || pullback.zone.low) - avgRange * 0.3).toFixed(config.decimals)
+        : +((pullback.zone.wickHigh || pullback.zone.high) + avgRange * 0.3).toFixed(config.decimals);
+      const risk = Math.abs(entry - sl);
+      if (risk > 0 && risk < avgRange * 8) {
+        let score = 88;
+        if (sameDirection)   score += 5;
+        if (m15Strong)       score += 4;
+        if (tripleConfluence) score += 4;
+        if (choch)           score += 3;
+        if ((isBuyKZ && premiumDiscount==='DISCOUNT') || (!isBuyKZ && premiumDiscount==='PREMIUM')) score += 4;
+        score = Math.min(score, 99);
+        signals.push({
+          model: 'KILL_ZONE_OB',
+          baseScore: score,
+          pullback: {
+            ...pullback, entry, stop: sl,
+            tp1: isBuyKZ ? +(entry + risk*1.5).toFixed(config.decimals) : +(entry - risk*1.5).toFixed(config.decimals),
+            tp2: isBuyKZ ? +(entry + risk*2.5).toFixed(config.decimals) : +(entry - risk*2.5).toFixed(config.decimals),
+            tp3: isBuyKZ ? +(entry + risk*4.0).toFixed(config.decimals) : +(entry - risk*4.0).toFixed(config.decimals),
+          },
+          reason: `${killZoneName}: OB★ ${pullback.side} ${premiumDiscount} ${tripleConfluence?'+ Triple':''}`
+        });
       }
     }
 
