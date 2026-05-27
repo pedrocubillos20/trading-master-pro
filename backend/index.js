@@ -2951,20 +2951,30 @@ const SMC = {
     // 2. M15+M5+BOS alineados contra H1 → dirección de M15 (setup counter-H1 con evidencia fuerte)
     // 3. M5 CHoCH con M15 neutral → dirección CHoCH M5
     // 4. DEFAULT: siempre H1
-    const opDir = m15ChochFresh
-      ? (state.chochM15.side === 'BUY' ? 'BULLISH' : 'BEARISH')
-      : m15m5BosAligned
-        ? (structureM15.trend === 'BEARISH' ? 'BEARISH' : 'BULLISH')
-        : (m5ChochReversal && choch && structureM15.trend === 'NEUTRAL')
-          ? (choch.side === 'BUY' ? 'BULLISH' : 'BEARISH')
-          : structureH1.trend; // DEFAULT
+    // BUG FIX 1: H1 muy fuerte (≥85%) = NO override permitido
+    // H1 BEAR 99% + M15 BULL = M15 es pullback, no reversión
+    // Las instituciones no van contra tendencia H1 con esa fuerza
+    const h1VeryStrong = structureH1.trend !== 'NEUTRAL' && structureH1.strength >= 85;
+
+    const opDir = h1VeryStrong
+      ? structureH1.trend  // H1 domina absolutamente — sin override posible
+      : m15ChochFresh
+        ? (state.chochM15.side === 'BUY' ? 'BULLISH' : 'BEARISH')
+        : m15m5BosAligned
+          ? (structureM15.trend === 'BEARISH' ? 'BEARISH' : 'BULLISH')
+          : (m5ChochReversal && choch && structureM15.trend === 'NEUTRAL')
+            ? (choch.side === 'BUY' ? 'BULLISH' : 'BEARISH')
+            : structureH1.trend;
     const opSide = opDir === 'BULLISH' ? 'BUY' : 'SELL';
 
     const isCounterTrend = opDir !== structureH1.trend && structureH1.trend !== 'NEUTRAL';
-    // Counter-H1 con BOS: 90%; Counter-H1 sin BOS: 92%; Con-tendencia: 85
-    const minScore = isCounterTrend
-      ? (m15m5BosAligned ? 90 : 92)
-      : Math.max(SIGNAL_CONFIG.MIN_SCORE, 85);
+    // Con H1 muy fuerte: siempre con tendencia (no counter-trend posible)
+    // Counter-trend normal: mínimo 92%
+    const minScore = h1VeryStrong
+      ? 88   // solo con tendencia H1
+      : isCounterTrend
+        ? (m15m5BosAligned ? 90 : 92)
+        : Math.max(SIGNAL_CONFIG.MIN_SCORE, 85);
 
     if (!marketReady && !m5ChochReversal) {
       return {
@@ -2988,7 +2998,9 @@ const SMC = {
       if (pullback.confirmation === 'ENGULFING' || pullback.confirmation === 'PIN_BAR') score += 3;
       if (pullback.confirmation === 'CHOCH_OB') score += 5;
       if (pullback.zone?.isStructureOB) score += 3;
-      score = Math.min(score, 100);
+      // BUG 3 FIX: penalizar counter-trend — nunca debe llegar a 100 contra H1
+      if (isCounterTrend) score -= 8;
+      score = Math.min(score, 96);
 
       const trendCtx = m15ChochFresh
         ? `CHoCH M15(${state.chochM15?.side}) + M5 OB`
@@ -5103,7 +5115,7 @@ function requestM1(symbol) {
 // =============================================
 // ANÁLISIS DE ACTIVOS v13.2 (con filtros mejorados)
 // =============================================
-function analyzeAsset(symbol) {
+async function analyzeAsset(symbol) {
   const data = assetData[symbol];
   const config = ASSETS[symbol];
   
@@ -5136,7 +5148,7 @@ function analyzeAsset(symbol) {
   // ═══════════════════════════════════════════
   if (!isInTradingHours()) {
     // Fuera de horario — analizar sin generar señales
-    const signal = SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
+    const signal = await SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
     data.signal = signal;
     return;
   }
@@ -5149,13 +5161,14 @@ function analyzeAsset(symbol) {
     ? SIGNAL_CONFIG.POST_SIGNAL_COOLDOWN_BOOM_CRASH 
     : SIGNAL_CONFIG.POST_SIGNAL_COOLDOWN;
   
-  if (data.lastSignalClosed && 
-      now - data.lastSignalClosed < cooldownTime) {
-    // During cooldown: still run analysis to keep zones + structure fresh
-    // but don't generate new signals
-    const signal = SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
+  // BUG 2 FIX: usar max(lastSignalClosed, lastSignalTime) para cooldown
+  // El bug: solo miraba lastSignalClosed (=0 mientras señal abierta)
+  // lastSignalTime se setea al EMITIR → cooldown correcto
+  const lastEmission = Math.max(data.lastSignalClosed || 0, data.lastSignalTime || 0);
+  if (lastEmission && now - lastEmission < cooldownTime) {
+    const signal = await SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
     data.signal = { ...signal, action: 'WAIT', model: 'COOLDOWN',
-      reason: `Cooldown activo (${Math.ceil((cooldownTime-(now-data.lastSignalClosed))/60000)}min restante)` };
+      reason: `Cooldown (${Math.ceil((cooldownTime-(now-lastEmission))/60000)}min restantes)` };
     return;
   }
   
@@ -5171,7 +5184,7 @@ function analyzeAsset(symbol) {
   if (pendingThisAsset >= SIGNAL_CONFIG.MAX_PENDING_PER_ASSET) {
     console.log(`⏸️ [${config.shortName}] Ya tiene señal abierta (${pendingThisAsset}/${SIGNAL_CONFIG.MAX_PENDING_PER_ASSET})`);
     // Aún analizar para mantener estructura y zonas frescas en el frontend
-    const signal = SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
+    const signal = await SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
     data.signal = signal;
     return;
   }
@@ -5179,7 +5192,7 @@ function analyzeAsset(symbol) {
   // Bloquear si se alcanzó el límite global
   if (totalPending >= SIGNAL_CONFIG.MAX_PENDING_TOTAL) {
     console.log(`⏸️ [${config.shortName}] Límite global alcanzado (${totalPending}/${SIGNAL_CONFIG.MAX_PENDING_TOTAL})`);
-    const signal = SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
+    const signal = await SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
     data.signal = signal;
     return;
   }
