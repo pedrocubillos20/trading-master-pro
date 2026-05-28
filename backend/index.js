@@ -4086,6 +4086,15 @@ const SMC = {
     signals.sort((a, b) => b.baseScore - a.baseScore);
     const best = signals[0];
 
+    // GUARD: si después del filtro no quedan señales → WAIT inmediato
+    if (!best) {
+      return {
+        action: 'WAIT', score: 0, model: 'WAIT',
+        reason: 'Sin candidatas tras filtro de modelos',
+        analysis: { structureM5: structureM5.trend, structureH1: structureH1.trend, mtfConfluence, premiumDiscount }
+      };
+    }
+
     // OB_REJECTION puede operar counter-trend:
     // - Si M5 hizo CHoCH en la misma dirección → umbral 85 (mismo que tendencia)
     // - Si solo tiene OB estructural sin CHoCH M5 → umbral 90
