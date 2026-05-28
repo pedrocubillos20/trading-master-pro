@@ -3101,19 +3101,32 @@ const SMC = {
     // Caso exacto: H1 BULL + M15 BEAR(76%) + M5 BEAR(74%) + BOS↓
     // En SMC esto es: pullback dentro de H1 bullish → SHORT válido
     // Con threshold de score más alto (90%) por ser counter-H1
+    // M15+M5 alineados — dos variantes:
+    // A) Con BOS confirmado (alta confianza)
+    // B) Sin BOS pero M15+M5 muy fuertes (≥70%) — momentum claro
     const m15m5BosAligned = m15Loaded &&
       structureM15.trend !== 'NEUTRAL' &&
       structureM5.trend  !== 'NEUTRAL' &&
-      structureM15.trend === structureM5.trend &&       // M15 y M5 misma dirección
-      structureM15.strength >= 65 &&                    // M15 fuerte (≥65%)
-      structureM5.strength  >= 60 &&                    // M5 confirma (≥60%)
+      structureM15.trend === structureM5.trend &&
+      structureM15.strength >= 65 &&
+      structureM5.strength  >= 60 &&
       bos !== null &&
-      bos.side === (structureM15.trend === 'BEARISH' ? 'SELL' : 'BUY') && // BOS confirma
-      structureM15.trend !== structureH1.trend;         // SOLO cuando H1 diverge
+      bos.side === (structureM15.trend === 'BEARISH' ? 'SELL' : 'BUY') &&
+      structureM15.trend !== structureH1.trend;
+
+    // NUEVO: M15+M5 fuertes sin BOS — permite operar momentum claro
+    // Caso Oro: M5 BULL + M15 BULL fuertes aunque H1 BEAR → señal BUY válida
+    const m15m5MomentumAligned = m15Loaded &&
+      structureM15.trend !== 'NEUTRAL' &&
+      structureM5.trend  !== 'NEUTRAL' &&
+      structureM15.trend === structureM5.trend &&
+      structureM15.strength >= 70 &&   // M15 muy fuerte
+      structureM5.strength  >= 65 &&   // M5 muy fuerte
+      structureM15.trend !== structureH1.trend; // contra H1 (requiere más evidencia)
 
     const h1m15Aligned = h1Loaded && m15Loaded && (
       sameDirection || h1StrongM15Neutral || m15ChochOverride ||
-      m15m5BosAligned || // M15+M5+BOS alineados = estructura clara aunque H1 diverge
+      m15m5BosAligned || m15m5MomentumAligned || // M15+M5 alineados
       // M5 CHoCH+BOS solo si la dirección coincide con H1
       (choch !== null && bos !== null &&
        bos.side === choch.side &&
@@ -3179,11 +3192,11 @@ const SMC = {
     // Las instituciones no van contra tendencia H1 con esa fuerza
     const h1VeryStrong = structureH1.trend !== 'NEUTRAL' && structureH1.strength >= 85;
 
-    const opDir = h1VeryStrong
-      ? structureH1.trend  // H1 domina absolutamente — sin override posible
+    const opDir = h1VeryStrong && !m15m5MomentumAligned
+      ? structureH1.trend  // H1 domina — EXCEPTO si M15+M5 tienen momentum muy claro
       : m15ChochFresh
         ? (state.chochM15.side === 'BUY' ? 'BULLISH' : 'BEARISH')
-        : m15m5BosAligned
+        : m15m5BosAligned || m15m5MomentumAligned
           ? (structureM15.trend === 'BEARISH' ? 'BEARISH' : 'BULLISH')
           : (m5ChochReversal && choch && structureM15.trend === 'NEUTRAL')
             ? (choch.side === 'BUY' ? 'BULLISH' : 'BEARISH')
@@ -3193,10 +3206,10 @@ const SMC = {
     const isCounterTrend = opDir !== structureH1.trend && structureH1.trend !== 'NEUTRAL';
     // Con H1 muy fuerte: siempre con tendencia (no counter-trend posible)
     // Counter-trend normal: mínimo 92%
-    const minScore = h1VeryStrong
-      ? 88   // solo con tendencia H1
+    const minScore = h1VeryStrong && !m15m5MomentumAligned
+      ? 88   // con tendencia H1 pura
       : isCounterTrend
-        ? (m15m5BosAligned ? 90 : 92)
+        ? (m15m5BosAligned ? 90 : m15m5MomentumAligned ? 91 : 92)
         : Math.max(SIGNAL_CONFIG.MIN_SCORE, 85);
 
     if (!marketReady && !m5ChochReversal) {
