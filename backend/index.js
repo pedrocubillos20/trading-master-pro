@@ -207,7 +207,16 @@ const SIGNAL_CONFIG = {
   // MTF CONFLUENCE - AHORA REQUERIDO PARA CALIDAD
   // true = H1 y M5 deben estar alineados (menos señales, mejor calidad)
   // ═══════════════════════════════════════════════════════════════
-  REQUIRE_MTF_CONFLUENCE: false, // H1+M15 already enforced by marketReady — no double block
+  REQUIRE_MTF_CONFLUENCE: false,
+
+  // Modelos habilitados/deshabilitados según rendimiento real
+  // LIQUIDITY_GRAB: alta tasa de pérdida (ruido excesivo) → deshabilitado
+  // M1_PRECISION: raramente activa → deshabilitado
+  // Deshabilitados basado en 200 ops reales:
+  // M1_PRECISION: 0% WR (5 ops, -34pts)
+  // LIQUIDITY_GRAB: 0% WR (2 ops, -9pts)
+  // CHOCH_PULLBACK: 20% WR (5 ops, -18pts) — señales falsas frecuentes
+  DISABLED_MODELS: ['M1_PRECISION', 'LIQUIDITY_GRAB', 'CHOCH_PULLBACK'], // H1+M15 already enforced by marketReady — no double block
   
   // Modelos que SIEMPRE pueden operar sin MTF (tienen su propia lógica H1)
   MODELS_WITHOUT_MTF: [
@@ -254,6 +263,215 @@ function isInTradingHours(plan = 'free') {
 
   return inDaytime || inNight;
 }
+
+// ══════════════════════════════════════════════════════════════════════
+// PLAN DE TRADING INSTITUCIONAL — Trading Master Pro v25
+// ══════════════════════════════════════════════════════════════════════
+// Reglas que el sistema sigue al pie de la letra para ser rentable
+// ══════════════════════════════════════════════════════════════════════
+
+const TRADING_PLAN = {
+  // ── GESTIÓN DE RIESGO ──
+  MAX_RISK_PER_TRADE_PCT: 1.0,   // Máximo 1% del capital por operación
+  MAX_DAILY_LOSS_PCT:     3.0,   // Si se pierde 3% en el día → STOP total
+  MAX_WEEKLY_LOSS_PCT:    6.0,   // Si se pierde 6% en la semana → pausa 48h
+  MIN_RR:                 1.5,   // R:R mínimo aceptable
+  TARGET_RR:              2.0,   // R:R objetivo
+  MAX_CONCURRENT:         1,     // Máximo 1 operación por activo
+
+  // ── SESIONES PERMITIDAS (kill zones institucionales) ──
+  PREFERRED_SESSIONS: ['NY_OPEN', 'LONDON_OPEN', 'LONDON_CLOSE'],
+  AVOID_SESSIONS: ['ASIA_OPEN'],  // Oro: evitar apertura Asia (spread alto)
+
+  // ── CONDICIONES OBLIGATORIAS PARA OPERAR ──
+  REQUIRED: {
+    H1_ALIGNED: true,            // H1 debe confirmar la dirección
+    OB_MUST_BE_FRESH: true,      // OB creado en las últimas 60 velas
+    MIN_SCORE: 88,               // Score mínimo para activar
+    ZONE_ALIGNMENT: true,        // DISCOUNT para BUY, PREMIUM para SELL
+  },
+
+  // ── REGLAS DE SALIDA ──
+  EXIT: {
+    MOVE_SL_TO_BE_AT_TP1: true,  // Al tocar TP1 → SL a breakeven
+    PARTIAL_CLOSE_AT_TP1: 0.33,  // Cerrar 33% en TP1
+    PARTIAL_CLOSE_AT_TP2: 0.33,  // Cerrar 33% en TP2
+    RUN_BALANCE_TO_TP3: true,    // Dejar correr el 34% hasta TP3
+    MAX_HOLD_HOURS: 24,          // Máximo 24h en posición
+  },
+
+  // ── ACTIVOS PREFERIDOS POR SESIÓN ──
+  ASSET_SESSION_MAP: {
+    stpRNG:    ['NY_OPEN', 'LONDON_OPEN', 'LONDON_CLOSE', 'NIGHT'], // 24h sintético
+    '1HZ100V': ['NY_OPEN', 'LONDON_OPEN', 'LONDON_CLOSE', 'NIGHT'], // 24h sintético
+    frxXAUUSD: ['LONDON_OPEN', 'NY_OPEN'],  // Oro: solo London+NY (mayor volumen)
+  },
+
+  // ── FILTROS ANTI-REVENGE TRADING ──
+  ANTI_REVENGE: {
+    PAUSE_AFTER_CONSECUTIVE_LOSSES: 2,   // Pausar tras 2 pérdidas seguidas
+    PAUSE_DURATION_MIN: 60,              // Pausa de 60 minutos
+    REDUCE_SIZE_AFTER_LOSS: true,        // Reducir tamaño tras pérdida
+  }
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// BITÁCORA DE TRADING — Registro detallado de cada operación
+// ══════════════════════════════════════════════════════════════════════
+const TradingJournal = {
+  entries: [],
+
+  // Registrar apertura de operación
+  logOpen(signal) {
+    const utcH = new Date().getUTCHours() + new Date().getUTCMinutes()/60;
+    const session = utcH >= 12 && utcH < 15 ? 'NY_OPEN'
+                  : utcH >= 7  && utcH < 10 ? 'LONDON_OPEN'
+                  : utcH >= 15 && utcH < 17 ? 'LONDON_CLOSE'
+                  : utcH >= 1  && utcH < 6  ? 'NIGHT'
+                  : 'OFF_SESSION';
+
+    const entry = {
+      id:         signal.id,
+      symbol:     signal.symbol,
+      asset:      signal.assetName,
+      action:     signal.action,
+      model:      signal.model,
+      session,
+      score:      signal.score,
+      aiConf:     signal.aiConfidence,
+      aiReason:   signal.aiReason,
+      entry:      signal.entry,
+      stop:       signal.stop,
+      tp1:        signal.tp1, tp2: signal.tp2, tp3: signal.tp3,
+      risk:       Math.abs(signal.entry - signal.stop),
+      rrTP1:      +(Math.abs(signal.tp1 - signal.entry) / Math.abs(signal.entry - signal.stop)).toFixed(2),
+      rrTP2:      +(Math.abs(signal.tp2 - signal.entry) / Math.abs(signal.entry - signal.stop)).toFixed(2),
+      h1Trend:    signal.structureH1,
+      premDisc:   signal.premiumDiscount,
+      openTime:   new Date().toISOString(),
+      closeTime:  null,
+      result:     null,   // WIN/LOSS/BE
+      tpHit:      null,   // 1/2/3
+      pnlPts:     null,
+      mfe:        null,   // Maximum Favorable Excursion
+      mae:        null,   // Maximum Adverse Excursion
+      notes:      '',
+      planCheck: {        // Verificación contra el plan
+        h1Aligned:    signal.structureH1 === (signal.action === 'LONG' ? 'BULLISH' : 'BEARISH'),
+        inSession:    TRADING_PLAN.PREFERRED_SESSIONS.includes(session),
+        zoneOk:       (signal.action==='LONG' && signal.premiumDiscount!=='PREMIUM') ||
+                      (signal.action==='SHORT' && signal.premiumDiscount!=='DISCOUNT'),
+        rrOk:         Math.abs(signal.tp1-signal.entry)/Math.abs(signal.entry-signal.stop) >= TRADING_PLAN.MIN_RR,
+        scoreOk:      signal.score >= TRADING_PLAN.REQUIRED.MIN_SCORE,
+      }
+    };
+
+    this.entries.unshift(entry);
+    if (this.entries.length > 500) this.entries = this.entries.slice(0, 500);
+
+    console.log(`📓 [BITÁCORA] #${signal.id} ABIERTA | ${session} | ${signal.model} | Score:${signal.score}% | R:R ${entry.rrTP1} | ${signal.premiumDiscount}`);
+    return entry;
+  },
+
+  // Registrar cierre de operación
+  logClose(signalId, result, tpHit, pnlPts, closePrice) {
+    const entry = this.entries.find(e => e.id === signalId);
+    if (!entry) return;
+
+    entry.closeTime = new Date().toISOString();
+    entry.result    = result;
+    entry.tpHit     = tpHit;
+    entry.pnlPts    = pnlPts;
+
+    const durationMin = Math.round((new Date(entry.closeTime) - new Date(entry.openTime)) / 60000);
+    console.log(`📓 [BITÁCORA] #${signalId} CERRADA | ${result} TP${tpHit||'SL'} | ${pnlPts>=0?'+':''}${pnlPts}pts | ${durationMin}min | ${entry.session}`);
+    return entry;
+  },
+
+  // Calcular estadísticas del plan
+  getStats(period = 'all') {
+    const now = Date.now();
+    const cutoff = {
+      day:   now - 86400000,
+      week:  now - 604800000,
+      month: now - 2592000000,
+      all:   0
+    }[period] || 0;
+
+    const closed = this.entries.filter(e =>
+      e.result && new Date(e.openTime).getTime() >= cutoff
+    );
+
+    const wins   = closed.filter(e => e.result === 'WIN');
+    const losses = closed.filter(e => e.result === 'LOSS');
+    const be     = closed.filter(e => e.result === 'BE');
+
+    const bySession = {};
+    closed.forEach(e => {
+      if (!bySession[e.session]) bySession[e.session] = { wins:0, losses:0, pts:0 };
+      bySession[e.session][e.result==='WIN'?'wins':'losses']++;
+      bySession[e.session].pts += e.pnlPts || 0;
+    });
+
+    const byModel = {};
+    closed.forEach(e => {
+      if (!byModel[e.model]) byModel[e.model] = { wins:0, losses:0, pts:0 };
+      byModel[e.model][e.result==='WIN'?'wins':'losses']++;
+      byModel[e.model].pts += e.pnlPts || 0;
+    });
+
+    // Verificar reglas del plan
+    const planViolations = this.entries.slice(0,20).filter(e =>
+      e.planCheck && Object.values(e.planCheck).some(v => !v)
+    ).length;
+
+    // Detectar revenge trading (2 pérdidas consecutivas recientes)
+    let consecLosses = 0;
+    for (const e of this.entries.slice(0,10)) {
+      if (!e.result) continue;
+      if (e.result === 'LOSS') consecLosses++;
+      else break;
+    }
+    const revengeAlert = consecLosses >= TRADING_PLAN.ANTI_REVENGE.PAUSE_AFTER_CONSECUTIVE_LOSSES;
+
+    return {
+      period, total: closed.length,
+      wins: wins.length, losses: losses.length, be: be.length,
+      wr: closed.length ? Math.round(wins.length/closed.length*100) : 0,
+      netPts: +closed.reduce((a,e)=>a+(e.pnlPts||0),0).toFixed(2),
+      avgRR: wins.length ? +(wins.reduce((a,e)=>a+(e.rrTP1||0),0)/wins.length).toFixed(2) : 0,
+      profitFactor: losses.reduce((a,e)=>a+Math.abs(e.pnlPts||0),0) > 0
+        ? +(wins.reduce((a,e)=>a+(e.pnlPts||0),0) / losses.reduce((a,e)=>a+Math.abs(e.pnlPts||0),0)).toFixed(2)
+        : wins.length > 0 ? 99 : 0,
+      bySession: Object.entries(bySession).map(([s,d])=>({session:s,...d,wr:d.wins+d.losses>0?Math.round(d.wins/(d.wins+d.losses)*100):0})),
+      byModel:   Object.entries(byModel).map(([m,d])=>({model:m,...d,wr:d.wins+d.losses>0?Math.round(d.wins/(d.wins+d.losses)*100):0})),
+      revengeAlert, consecLosses, planViolations,
+      topSession: Object.entries(bySession).sort((a,b)=>b[1].pts-a[1].pts)[0]?.[0] || 'N/A',
+    };
+  },
+
+  // Verificar si el plan permite operar ahora
+  checkPlanAllowed(symbol) {
+    // Consecutive losses check
+    let consecLosses = 0;
+    for (const e of this.entries.slice(0,5)) {
+      if (!e.result || e.symbol !== symbol) continue;
+      if (e.result === 'LOSS') consecLosses++;
+      else break;
+    }
+    if (consecLosses >= TRADING_PLAN.ANTI_REVENGE.PAUSE_AFTER_CONSECUTIVE_LOSSES) {
+      const lastLoss = this.entries.find(e => e.symbol === symbol && e.result === 'LOSS');
+      if (lastLoss) {
+        const minsSinceLoss = (Date.now() - new Date(lastLoss.closeTime).getTime()) / 60000;
+        if (minsSinceLoss < TRADING_PLAN.ANTI_REVENGE.PAUSE_DURATION_MIN) {
+          return { allowed: false, reason: `Anti-revenge: ${Math.round(TRADING_PLAN.ANTI_REVENGE.PAUSE_DURATION_MIN - minsSinceLoss)}min de pausa` };
+        }
+      }
+    }
+    return { allowed: true };
+  }
+};
+
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -2429,19 +2647,21 @@ const SMC = {
 
       if (!hasConf) continue;
 
-      const entry   = +(last.close).toFixed(config.decimals);
-      const slLevel = +((zone.wickLow || zone.low) - avgRange * 0.3).toFixed(config.decimals);
-      const risk    = entry - slLevel;
-      if (risk <= 0 || risk > avgRange * 10) continue;
-
-      // FIX ENTRADA TARDÍA: eliminar priceJustAbove — era la causa de entrar en HH
-      // Caso del gráfico: OB en 8044-8045, precio hizo HH en 8050.50
-      // priceJustAbove (0.5x avgRange) permitía entrar hasta 8046 = zona de HH
-      // AHORA: precio DENTRO del OB o wick mínimo (0.1x) por debajo — no encima
-      const priceInOB      = entry >= zone.low && entry <= zone.high;
-      const priceJustBelow = entry < zone.low  && entry >= zone.low - avgRange * 0.1;
-      // priceJustAbove ELIMINADO: si el precio está encima del OB = oportunidad pasó
+      // ENTRADA INSTITUCIONAL: en el borde del OB, no en el cierre de vela
+      // BUY → entry en zone.high (techo del OB de demanda)
+      // SL → debajo del wick más bajo del OB
+      // Si precio ya pasó el OB → usar last.close pero verificar sigue cerca
+      const priceInOB      = last.close >= zone.low && last.close <= zone.high;
+      const priceJustBelow = last.close < zone.low  && last.close >= zone.low - avgRange * 0.3;
       if (!priceInOB && !priceJustBelow) continue;
+
+      // Entrada en el techo del OB (zona de mayor valor) — SL más corto
+      const entry   = priceInOB
+        ? +(zone.high).toFixed(config.decimals)  // precio llega al OB → entrada en el techo
+        : +(last.close).toFixed(config.decimals); // precio justo debajo → entrada en close
+      const slLevel = +((zone.wickLow || zone.low) - avgRange * 0.2).toFixed(config.decimals);
+      const risk    = entry - slLevel;
+      if (risk <= 0 || risk > avgRange * 8) continue;
 
       const conf = candles.slice(-3).some(c => c.close>c.open && c.close>candles[candles.length-4]?.close)
         ? 'BULLISH_CLOSE'
@@ -2480,17 +2700,17 @@ const SMC = {
 
       if (!hasConf) continue;
 
-      const entry   = +(last.close).toFixed(config.decimals);
-      const slLevel = +((zone.wickHigh || zone.high) + avgRange * 0.3).toFixed(config.decimals);
-      const risk    = slLevel - entry;
-      if (risk <= 0 || risk > avgRange * 10) continue;
-
-      // FIX: eliminar priceJustBelow — si el precio ya cayó del OB = tarde
-      // Para venta: precio dentro del OB o wick mínimo (0.1x) por encima
-      const priceInOB      = entry >= zone.low && entry <= zone.high;
-      const priceJustAbove = entry > zone.high && entry <= zone.high + avgRange * 0.1;
-      // priceJustBelow ELIMINADO: precio debajo del OB = momento de venta pasó
+      // ENTRADA INSTITUCIONAL SELL: en el piso del OB de oferta → SL más corto
+      const priceInOB      = last.close >= zone.low && last.close <= zone.high;
+      const priceJustAbove = last.close > zone.high && last.close <= zone.high + avgRange * 0.3;
       if (!priceInOB && !priceJustAbove) continue;
+
+      const entry   = priceInOB
+        ? +(zone.low).toFixed(config.decimals)   // en OB → entrada en el piso (nivel más bajo)
+        : +(last.close).toFixed(config.decimals); // justo encima → entrada en close
+      const slLevel = +((zone.wickHigh || zone.high) + avgRange * 0.2).toFixed(config.decimals);
+      const risk    = slLevel - entry;
+      if (risk <= 0 || risk > avgRange * 8) continue;
 
       const conf = candles.slice(-3).some(c => c.close<c.open && c.close<candles[candles.length-4]?.close)
         ? 'BEARISH_CLOSE'
@@ -2986,20 +3206,28 @@ const SMC = {
       };
     }
 
-    // MTF_CONFLUENCE — exige que pullback coincida con opDir (= H1)
+    // MTF_CONFLUENCE — DATOS REALES: 38% WR, 128 ops, -66.51 pts
+    // Rediseñado: solo señales con OB estructural ★ + CHoCH + zona correcta
+    // Sin OB estructural: penalización severa (evitar señales débiles)
     if (pullback && pullback.side === opSide) {
-      let score = 88;
-      if (pullback.side === 'BUY'  && premiumDiscount === 'DISCOUNT') score += 5;
-      if (pullback.side === 'SELL' && premiumDiscount === 'PREMIUM')  score += 5;
-      if (m15Strong)        score += 4;
-      if (tripleConfluence) score += 4;
-      if (choch)            score += 3;
-      if (m15ChochFresh)    score += 4;
-      if (pullback.confirmation === 'ENGULFING' || pullback.confirmation === 'PIN_BAR') score += 3;
-      if (pullback.confirmation === 'CHOCH_OB') score += 5;
-      if (pullback.zone?.isStructureOB) score += 3;
-      // BUG 3 FIX: penalizar counter-trend — nunca debe llegar a 100 contra H1
-      if (isCounterTrend) score -= 8;
+      const hasStructOB = pullback.zone?.isStructureOB || pullback.confirmation === 'CHOCH_OB';
+      const correctZone = (opSide==='BUY' && premiumDiscount==='DISCOUNT') ||
+                          (opSide==='SELL' && premiumDiscount==='PREMIUM');
+      // NUEVO: requerir CHoCH O triple confluencia — sin estos dos, muy poca probabilidad
+      const hasHighConf  = m15ChochFresh || tripleConfluence || (choch && choch.side === opSide && m15Strong);
+
+      let score = 84; // base baja — acumular solo con confirmaciones REALES
+      if (hasStructOB)   score += 6; // OB estructural ★ = mayor bonus
+      else               score -= 4; // sin ★ = penalizar
+      if (correctZone)   score += 6; // zona correcta es CRÍTICO para MTF
+      else               score -= 5; // zona incorrecta = muy penalizado
+      if (m15Strong)     score += 4;
+      if (tripleConfluence) score += 5;
+      if (m15ChochFresh) score += 5; // CHoCH M15 = timing perfecto
+      if (choch && choch.side === opSide) score += 3;
+      if (pullback.confirmation === 'CHOCH_OB') score += 4;
+      if (!hasHighConf)  score -= 6; // sin CHoCH ni triple = señal débil
+      if (isCounterTrend) score -= 12; // counter-trend: penalización máxima
       score = Math.min(score, 96);
 
       const trendCtx = m15ChochFresh
@@ -3849,6 +4077,10 @@ const SMC = {
     }
     
     // Log cuando SÍ hay señales potenciales
+    // Filtrar modelos deshabilitados
+    const enabledSignals = signals.filter(s => !(SIGNAL_CONFIG.DISABLED_MODELS||[]).includes(s.model));
+    if (enabledSignals.length !== signals.length) console.log(`🚫 [${config.shortName}] ${signals.length - enabledSignals.length} modelos deshabilitados filtrados`);
+    signals.length = 0; enabledSignals.forEach(s => signals.push(s));
     console.log(`✨ [${config.shortName}] ${signals.length} candidatas: ${signals.map(s=>s.model+'('+s.baseScore+')').join(', ')}`);
     
     signals.sort((a, b) => b.baseScore - a.baseScore);
@@ -4720,9 +4952,11 @@ function checkSignalHits() {
     if ((isLong && price <= currentSL) || (!isLong && price >= currentSL)) {
       // Si ya tocó TP1, es WIN parcial, no LOSS
       if (signal.tp1Hit) {
-        closeSignal(signal.id, 'WIN', symbol);
-        sendTelegramSL(signal, price, true); // Breakeven/WIN parcial
-        console.log(`✅ #${signal.id} cerrado en TRAILING STOP (WIN parcial - TP1 alcanzado)`);
+        // Detectar cuál TP se alcanzó para cierre correcto
+        const trailTP = signal.tp2Hit ? 2 : 1;
+        closeSignal(signal.id, 'WIN', symbol, trailTP);
+        sendTelegramSL(signal, price, true);
+        console.log(`✅ #${signal.id} cerrado TRAILING STOP TP${trailTP} (WIN)`);
       } else {
         closeSignal(signal.id, 'LOSS', symbol);
         sendTelegramSL(signal, price, false); // LOSS
@@ -4750,7 +4984,7 @@ function checkSignalHits() {
         signal.tp3Hit = locked.tp3Hit = true; 
         stats.tp3Hits++; 
         sendTelegramTP(signal, 'TP3', price);
-        closeSignal(signal.id, 'WIN', symbol); 
+        closeSignal(signal.id, 'WIN', symbol, 3); 
         console.log(`💎 TP3 HIT #${signal.id} - TRADE COMPLETO`);
       }
     } else {
@@ -4770,7 +5004,7 @@ function checkSignalHits() {
         signal.tp3Hit = locked.tp3Hit = true; 
         stats.tp3Hits++; 
         sendTelegramTP(signal, 'TP3', price);
-        closeSignal(signal.id, 'WIN', symbol); 
+        closeSignal(signal.id, 'WIN', symbol, 3); 
         console.log(`💎 TP3 HIT #${signal.id} - TRADE COMPLETO`);
       }
     }
@@ -4783,9 +5017,17 @@ function closeSignal(id, status, symbol, tpHit = null) {
 
   signal.status   = status;
   signal.closedAt = new Date().toISOString();
-  signal.tpHit    = status === 'WIN' ? (tpHit || 1) : null;
+
+  // BUG FIX: detectar cuál TP se alcanzó si no se pasó explícitamente
+  // TP3 y TP2 eran siempre contados como TP1 porque tpHit llegaba null
+  const detectedTP = tpHit !== null ? tpHit
+    : signal.tp3Hit ? 3
+    : signal.tp2Hit ? 2
+    : signal.tp1Hit ? 1
+    : 1; // fallback
+  signal.tpHit    = status === 'WIN' ? detectedTP : null;
   signal.closePrice = status === 'WIN'
-    ? (tpHit===3 ? signal.tp3 : tpHit===2 ? signal.tp2 : signal.tp1)
+    ? (detectedTP===3 ? signal.tp3 : detectedTP===2 ? signal.tp2 : signal.tp1)
     : signal.stop;
 
   // ── PUNTOS GANADOS/PERDIDOS (P&L real en puntos del activo) ──
@@ -4808,6 +5050,7 @@ function closeSignal(id, status, symbol, tpHit = null) {
 
   // PERSISTENCIA: actualizar estado en Supabase (incluyendo pnlPoints)
   updateSignalStatusInSupabase(signal.id, status, signal.closePrice, signal.tpHit || 0, signal.pnlPoints || 0).catch(() => {});
+  TradingJournal.logClose(signal.id, status, signal.tpHit, signal.pnlPoints, signal.closePrice);
   
   stats.byModel[signal.model] = stats.byModel[signal.model] || { wins: 0, losses: 0 };
   stats.byAsset[signal.symbol] = stats.byAsset[signal.symbol] || { wins: 0, losses: 0, total: 0 };
@@ -4817,12 +5060,10 @@ function closeSignal(id, status, symbol, tpHit = null) {
     stats.byModel[signal.model].wins++;
     stats.byAsset[signal.symbol].wins++;
     
-    // Contabilizar TP alcanzado (para marcado manual)
-    if (tpHit) {
-      if (tpHit === 1) stats.tp1Hits++;
-      else if (tpHit === 2) stats.tp2Hits++;
-      else if (tpHit === 3) stats.tp3Hits++;
-    }
+    // Contabilizar TP alcanzado — usando detectedTP (corregido)
+    if (detectedTP === 1) stats.tp1Hits++;
+    else if (detectedTP === 2) stats.tp2Hits++;
+    else if (detectedTP === 3) stats.tp3Hits++;
   } else if (status === 'LOSS') {
     stats.losses++;
     stats.byModel[signal.model].losses++;
@@ -5141,6 +5382,9 @@ async function analyzeAsset(symbol) {
     ` | ${data.premiumDiscount||'EQ'}`
   );
   
+  // V100 ha mostrado 27% WR en 200 ops — requiere score más alto
+  const assetMinScoreOverride = symbol === '1HZ100V' ? 92 : null;
+
   // ═══════════════════════════════════════════
   // FILTRO 2: Verificar horas de trading
   // Sesión diurna:   7:00 AM - 1:00 PM Colombia
@@ -5197,9 +5441,19 @@ async function analyzeAsset(symbol) {
     return;
   }
   
-  // Ejecutar análisis SMC
-  const signal = SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
+  // Ejecutar análisis SMC (ASYNC para validación IA)
+  const signal = await SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
   data.signal = signal;
+
+  // Filtro de score mínimo por activo (basado en datos reales de 200 ops)
+  // V100: 27% WR histórico → solo señales de máxima calidad (92%)
+  if (signal && signal.action !== 'WAIT') {
+    const assetMin = symbol === '1HZ100V' ? 92 : (SIGNAL_CONFIG.MIN_SCORE || 88);
+    if (signal.score < assetMin) {
+      console.log(`📉 [${config.shortName}] Score ${signal.score}% < ${assetMin}% (filtro activo) → WAIT`);
+      data.signal = { ...signal, action: 'WAIT', reason: `Score ${signal.score}% insuficiente` };
+    }
+  }
 
   // ── Calcular pasos de M1_PRECISION para visualización en tiempo real ──
   // Esto muestra en el gráfico M1 qué condiciones están cumplidas ahora mismo
@@ -5235,6 +5489,13 @@ async function analyzeAsset(symbol) {
   console.log(`🔎 [${config.shortName}] Resultado: ${signal.action} | ${signal.model} | Score: ${signal.score}`);
   
   // Ya tiene señal activa?
+  // Anti-revenge trading check
+  const planCheck = TradingJournal.checkPlanAllowed(symbol);
+  if (!planCheck.allowed) {
+    console.log(`🛑 [${config.shortName}] PLAN: ${planCheck.reason}`);
+    return;
+  }
+
   if (data.lockedSignal) {
     console.log(`🔒 [${config.shortName}] Bloqueado: Ya tiene señal activa #${data.lockedSignal.id}`);
     return;
@@ -5367,6 +5628,7 @@ async function analyzeAsset(symbol) {
   signalHistory.unshift(newSignal);
   data.lockedSignal = { ...newSignal };
   data.lastSignalTime = now;
+  TradingJournal.logOpen(newSignal); // Registrar en bitácora
   stats.total++;
   stats.pending++;
 
@@ -5741,6 +6003,22 @@ app.post('/api/reset/:symbol', (req, res) => {
 });
 
 app.get('/api/signals', (req, res) => res.json({ signals: signalHistory, stats }));
+
+// ── BITÁCORA Y PLAN DE TRADING ──
+app.get('/api/journal', (req, res) => {
+  const { period = 'all', limit = 50 } = req.query;
+  res.json({
+    entries:    TradingJournal.entries.slice(0, +limit),
+    stats:      TradingJournal.getStats(period),
+    plan:       TRADING_PLAN,
+    updatedAt:  new Date().toISOString()
+  });
+});
+
+app.get('/api/journal/stats', (req, res) => {
+  const { period = 'week' } = req.query;
+  res.json(TradingJournal.getStats(period));
+});
 
 app.post('/api/reset-history', async (req, res) => {
   const { confirm } = req.body || {};
