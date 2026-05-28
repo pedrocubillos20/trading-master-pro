@@ -1391,98 +1391,101 @@ const SMC = {
     return recent.reduce((sum, c) => sum + (c.high - c.low), 0) / recent.length;
   },
 
+  // ═══════════════════════════════════════════════════════════════════
+  // WILLIAMS FRACTALS — detección estándar de pivots
+  // Un fractal alto: la vela del medio tiene el HIGH más alto de 5 velas
+  // Un fractal bajo: la vela del medio tiene el LOW más bajo de 5 velas
+  // Más limpio que swing detection personalizada — sin false pivots
+  // ═══════════════════════════════════════════════════════════════════
   findSwings(candles, lookback = 3) {
     const swings = [];
-    if (candles.length < lookback * 2 + 1) return swings;
+    if (candles.length < 10) return swings;
 
-    // FIX: NO adaptive lookback — adaptive was using candles.length/20
-    // which with 300 candles gives lookback=15, missing most real M5 swings
-    // Use FIXED lookback: 2 for M5 (catches every real pivot), 3 for H1/M15
-    const lb = Math.max(4, Math.min(lookback, 6)); // LuxAlgo-aligned: lb=4 min reduces false pivots
+    // Williams Fractal: ventana de 5 velas (2 a cada lado)
+    // Para M5 usamos 3 a cada lado (más sensible), M15/H1 usa 5
+    const lb = Math.max(2, Math.min(lookback, 4));
 
     for (let i = lb; i < candles.length - lb; i++) {
       const c = candles[i];
-      const left  = candles.slice(i - lb, i);
-      const right = candles.slice(i + 1, i + lb + 1);
+      let isHigh = true, isLow = true;
 
-      // Strict: must be strictly higher/lower than ALL neighbors
-      const isHigh = left.every(x => x.high <= c.high) && right.every(x => x.high <= c.high);
-      const isLow  = left.every(x => x.low  >= c.low)  && right.every(x => x.low  >= c.low);
+      for (let j = 1; j <= lb; j++) {
+        if (candles[i-j].high > c.high || candles[i+j].high > c.high) isHigh = false;
+        if (candles[i-j].low  < c.low  || candles[i+j].low  < c.low)  isLow  = false;
+      }
 
-      if (isHigh) swings.push({ type: 'high', price: c.high, index: i,
-        time: c.time, epoch: c.epoch || (c.time ? Math.floor(c.time/1000) : null) });
-      if (isLow)  swings.push({ type: 'low',  price: c.low,  index: i,
-        time: c.time, epoch: c.epoch || (c.time ? Math.floor(c.time/1000) : null) });
+      if (isHigh) swings.push({ type:'high', price:c.high, index:i,
+        time:c.time, epoch:c.epoch||(c.time?Math.floor(c.time/1000):null) });
+      if (isLow)  swings.push({ type:'low',  price:c.low,  index:i,
+        time:c.time, epoch:c.epoch||(c.time?Math.floor(c.time/1000):null) });
     }
     return swings;
   },
 
-  analyzeStructure(swings) {
-    if (swings.length < 4) return { trend: 'NEUTRAL', strength: 0, labels: [] };
+  analyzeStructure(swings, candles = null) {
+    // ── MOMENTUM OVERRIDE: impulso fuerte reciente → estructura clara ──
+    // FIX CRÍTICO: bug donde M15 BULLISH era reportado como BEARISH
+    // porque swings históricos acumulados ganaban por volumen
+    if (candles && candles.length >= 20) {
+      const recent20 = candles.slice(-20);
+      const avg20 = recent20.reduce((s,c)=>s+Math.abs(c.high-c.low),0)/20;
+      let bullMom=0, bearMom=0;
+      recent20.forEach(c => {
+        const body = c.close - c.open;
+        if (body > 0) bullMom += body;
+        else          bearMom -= body;
+      });
+      const totalMom = bullMom + bearMom;
+      const bPct = totalMom > 0 ? bullMom/totalMom : 0.5;
+      const maxBody = Math.max(...recent20.map(c=>Math.abs(c.close-c.open)));
+      const hasImpulse = maxBody > avg20 * 2.5;
 
-    const highs = swings.filter(s => s.type === 'high');
-    const lows  = swings.filter(s => s.type === 'low');
-    if (highs.length < 2 || lows.length < 2) return { trend: 'NEUTRAL', strength: 0, labels: [] };
+      if (hasImpulse && bPct >= 0.68) return { trend:'BULLISH', strength:Math.min(100,Math.round(bPct*120)), hh:1,hl:1,lh:0,ll:0, labels:[], momentum:true };
+      if (hasImpulse && bPct <= 0.32) return { trend:'BEARISH', strength:Math.min(100,Math.round((1-bPct)*120)), hh:0,hl:0,lh:1,ll:1, labels:[], momentum:true };
+    }
 
-    let hh = 0, hl = 0, lh = 0, ll = 0;
+    if (swings.length < 4) return { trend:'NEUTRAL', strength:0, labels:[] };
+    const highs = swings.filter(s=>s.type==='high');
+    const lows  = swings.filter(s=>s.type==='low');
+    if (highs.length < 2 || lows.length < 2) return { trend:'NEUTRAL', strength:0, labels:[] };
+
+    let hh=0,hl=0,lh=0,ll=0;
     const labels = [];
 
-    // ── Label EVERY high including the first (reference point) ──
-    // First high gets labeled vs second to give it context
-    for (let i = 0; i < highs.length; i++) {
-      if (i === 0) {
-        // First swing: label it relative to the next
-        if (highs.length > 1) {
-          const type = highs[0].price > highs[1].price ? 'HH' : 'LH';
-          labels.push({ type, price:highs[0].price, index:highs[0].index, time:highs[0].time, epoch:highs[0].epoch, ref:true });
-        }
-        continue;
-      }
-      const isHH = highs[i].price > highs[i-1].price;
-      if (isHH) { hh++; labels.push({ type:'HH', price:highs[i].price, index:highs[i].index, time:highs[i].time, epoch:highs[i].epoch }); }
-      else       { lh++; labels.push({ type:'LH', price:highs[i].price, index:highs[i].index, time:highs[i].time, epoch:highs[i].epoch }); }
+    // Solo últimos 8 fractales por tipo — no acumular historia vieja
+    const rH = highs.slice(-8), rL = lows.slice(-8);
+    for (let i=1;i<rH.length;i++) {
+      if (rH[i].price > rH[i-1].price) { hh++; labels.push({type:'HH',price:rH[i].price,index:rH[i].index,time:rH[i].time}); }
+      else { lh++; labels.push({type:'LH',price:rH[i].price,index:rH[i].index,time:rH[i].time}); }
+    }
+    for (let i=1;i<rL.length;i++) {
+      if (rL[i].price > rL[i-1].price) { hl++; labels.push({type:'HL',price:rL[i].price,index:rL[i].index,time:rL[i].time}); }
+      else { ll++; labels.push({type:'LL',price:rL[i].price,index:rL[i].index,time:rL[i].time}); }
     }
 
-    // ── Label EVERY low including the first ──
-    for (let i = 0; i < lows.length; i++) {
-      if (i === 0) {
-        if (lows.length > 1) {
-          const type = lows[0].price < lows[1].price ? 'LL' : 'HL';
-          labels.push({ type, price:lows[0].price, index:lows[0].index, time:lows[0].time, epoch:lows[0].epoch, ref:true });
-        }
-        continue;
-      }
-      const isHL = lows[i].price > lows[i-1].price;
-      if (isHL) { hl++; labels.push({ type:'HL', price:lows[i].price, index:lows[i].index, time:lows[i].time, epoch:lows[i].epoch }); }
-      else      { ll++; labels.push({ type:'LL', price:lows[i].price, index:lows[i].index, time:lows[i].time, epoch:lows[i].epoch }); }
-    }
+    // Últimos 4 fractales tienen 3x más peso
+    const sorted = labels.sort((a,b)=>a.index-b.index);
+    const last4 = sorted.slice(-4), older = sorted.slice(0,-4);
+    const lBull=last4.filter(l=>l.type==='HH'||l.type==='HL').length;
+    const lBear=last4.filter(l=>l.type==='LH'||l.type==='LL').length;
+    const oBull=older.filter(l=>l.type==='HH'||l.type==='HL').length;
+    const oBear=older.filter(l=>l.type==='LH'||l.type==='LL').length;
 
-    // ── Recent structure matters 3x more ──
-    const recLabels = labels.filter(l => !l.ref).slice(-6);
-    const recBull = recLabels.filter(l => l.type==='HH'||l.type==='HL').length;
-    const recBear = recLabels.filter(l => l.type==='LH'||l.type==='LL').length;
+    const bW=lBull*3+oBull, brW=lBear*3+oBear, tot=bW+brW;
+    if (tot===0) return { trend:'NEUTRAL', strength:20, labels };
 
-    const total = hh + hl + lh + ll;
-    if (total === 0) return { trend:'NEUTRAL', strength:0, labels };
+    const bPctF=bW/tot, brPctF=brW/tot;
+    const str=Math.min(100,Math.round(Math.max(bPctF,brPctF)*130));
+    const lastL=sorted[sorted.length-1];
+    const lastBull=lastL?.type==='HH'||lastL?.type==='HL';
 
-    const bullW = hh + hl + recBull * 3;
-    const bearW = lh + ll + recBear * 3;
-    const totalW = bullW + bearW;
-    const bullPct = bullW / totalW;
-    const bearPct = bearW / totalW;
-    const strengthBase = Math.round(Math.max(bullPct, bearPct) * 130);
-
-    if (bullPct >= 0.52) return { trend:'BULLISH', strength:Math.min(100,strengthBase), hh,hl,lh,ll, labels };
-    if (bearPct >= 0.52) return { trend:'BEARISH', strength:Math.min(100,strengthBase), hh,hl,lh,ll, labels };
-    if (recBull > recBear) return { trend:'BULLISH', strength:42, hh,hl,lh,ll, labels };
-    if (recBear > recBull) return { trend:'BEARISH', strength:42, hh,hl,lh,ll, labels };
+    if (bPctF>=0.55) return { trend:'BULLISH', strength:str, hh,hl,lh,ll, labels };
+    if (brPctF>=0.55) return { trend:'BEARISH', strength:str, hh,hl,lh,ll, labels };
+    if (lastL) return { trend:lastBull?'BULLISH':'BEARISH', strength:40, hh,hl,lh,ll, labels };
     return { trend:'NEUTRAL', strength:20, labels };
   },
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // ANÁLISIS DE ESTRUCTURA ESPECÍFICO PARA BOOM/CRASH
-  // Detecta spikes y no se confunde con rebotes temporales
-  // ═══════════════════════════════════════════════════════════════════════
+
   analyzeStructureBoomCrash(candles, assetType) {
     if (!candles || candles.length < 30) return { trend: 'NEUTRAL', strength: 0 };
     
@@ -1665,7 +1668,7 @@ const SMC = {
     }
     
     const swingsH1 = this.findSwings(candlesH1, 2);
-    const structureH1 = this.analyzeStructure(swingsH1);
+    const structureH1 = this.analyzeStructure(swingsH1, candlesH1);
     
     if (shouldLog) {
       console.log(`📊 [${config.shortName}] Análisis ${assetType.toUpperCase()}:`);
@@ -2885,7 +2888,7 @@ const SMC = {
     const isBoomCrash = config.type === 'boom' || config.type === 'crash';
     const structureM5 = isBoomCrash 
       ? this.analyzeStructureBoomCrash(candlesM5, config.type)
-      : this.analyzeStructure(swingsM5);
+      : this.analyzeStructure(swingsM5, candlesM5);
     
     const { demandZones, supplyZones } = this.findZones(candlesM5);
     const fvgZones = this.findFVGs(candlesM5);
@@ -3004,7 +3007,7 @@ const SMC = {
     if (candlesM15 && candlesM15.length >= 20) {
       m15Loaded = true;
       const swingsM15 = this.findSwings(candlesM15, 3);
-      structureM15 = this.analyzeStructure(swingsM15);
+      structureM15 = this.analyzeStructure(swingsM15, candlesM15);
       state.structureM15 = structureM15;
       state.swingsM15 = swingsM15; // save for frontend labels
 

@@ -243,18 +243,37 @@ function drawChart(canvas, state) {
   drawLvl(bosM15,   'rgba(140,140,255,.9)', bosM15?.side==='BUY'?'BOS↑ M15':'BOS↓ M15')
   drawLvl(chochM15, 'rgba(255,200,60,.8)',  chochM15?.type==='BULLISH_CHOCH'?'CHoCH↑ M15':'CHoCH↓ M15')
 
-  /* Swing labels */
+  /* Williams Fractals — triángulos en lugar de etiquetas HH/HL/LH/LL */
   ;(structure.labels||[]).forEach(lb=>{
     const li=lb.index-visOff
     if(li<0||li>=n||!vis[li])return
     const isBull=lb.type==='HH'||lb.type==='HL'
-    const y=isBull?py(vis[li].high)-14:py(vis[li].low)+14
-    const clr=(lb.type==='HH'||lb.type==='HL')?C.green:(lb.type==='LL'||lb.type==='LH')?C.red:C.yellow
-    const tw=lb.type.length*6+10
-    ctx.fillStyle=clr+'33';ctx.strokeStyle=clr;ctx.lineWidth=.8
-    ctx.beginPath();ctx.roundRect(cx(li)-tw/2,y-8,tw,13,3);ctx.fill();ctx.stroke()
-    ctx.fillStyle=clr;ctx.font='bold 8px system-ui';ctx.textAlign='center'
-    ctx.fillText(lb.type,cx(li),y)
+    const x=cx(li), size=5
+    // Fractal alto (▼): triángulo hacia abajo sobre la vela
+    // Fractal bajo (▲): triángulo hacia arriba bajo la vela
+    if(!isBull){
+      // Fractal ALTO (bearish fractal) — triángulo rojo hacia abajo
+      const y=py(vis[li].high)-3
+      const clr=lb.type==='HH'?'#ff4757':'#ff6b81'
+      ctx.fillStyle=clr;ctx.globalAlpha=0.85
+      ctx.beginPath()
+      ctx.moveTo(x,y+size*1.5)
+      ctx.lineTo(x-size,y)
+      ctx.lineTo(x+size,y)
+      ctx.closePath();ctx.fill()
+      ctx.globalAlpha=1
+    } else {
+      // Fractal BAJO (bullish fractal) — triángulo verde hacia arriba
+      const y=py(vis[li].low)+3
+      const clr=lb.type==='HL'?'#2ed573':'#7bed9f'
+      ctx.fillStyle=clr;ctx.globalAlpha=0.85
+      ctx.beginPath()
+      ctx.moveTo(x,y-size*1.5)
+      ctx.lineTo(x-size,y)
+      ctx.lineTo(x+size,y)
+      ctx.closePath();ctx.fill()
+      ctx.globalAlpha=1
+    }
   })
 
   /* Signal lines */
