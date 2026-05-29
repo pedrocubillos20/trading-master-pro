@@ -255,6 +255,9 @@ async function deleteSubscription(userId) {
 // CONFIGURACIÓN DE ACTIVOS Y PLANES
 // =============================================
 
+// Activos operados en la plataforma
+const MY_ASSETS = ['stpRNG', 'frxXAUUSD', '1HZ100V'];
+
 const PLANS = {
   free: {
     name: 'Free Trial',
