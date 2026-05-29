@@ -1,12 +1,9 @@
 /**
- * Trading Master Pro — Dashboard v24.3
- * BUGS CORREGIDOS:
- *  - Pantalla negra: hooks después de return null (Rules of Hooks violation)
- *  - Event listeners acumulados en SignalCard
- *  - onMouseMove/Up no memoizados → removeEventListener no limpiaba
- *  - ChartContainer: wheel event no se agregaba con passive:false correctamente
- *  - conflictData causaba re-render infinito por referencia nueva cada render
- *  - drawConflictOverlay llamado después de drawChart borraba el canvas
+ * Trading Master Pro — Dashboard v25.0
+ * CAMBIO PRINCIPAL: Sistema de IA Institucional (SMC)
+ * - Eliminadas: señales automáticas, conflictos, señal card
+ * - Agregado: Botón "🧠 Activar IA" que analiza el gráfico en vivo
+ * - La IA escribe análisis SMC completo + dibuja zonas automáticamente
  */
 import React, {
   useState, useEffect, useRef, useCallback, useMemo
@@ -20,83 +17,19 @@ const C = {
   border:'#30363d', text:'#e6edf3', muted:'#7d8590',
   teal:'#00d4aa', tealDark:'#00b894', tealBg:'rgba(0,212,170,.12)',
   red:'#ff6b6b', redBg:'rgba(255,107,107,.12)',
-  yellow:'#f9ca24', green:'#3fb950', bull:'#3fb950', bear:'#ff6b6b'
-}
-
-/* ─────────────────────────────────────────── CONFLICT DETECTION ENGINE */
-function detectConflict(lockedSignal, analyze) {
-  if (!lockedSignal || !analyze) return null
-  const { action, tp1Hit } = lockedSignal
-  const isShort = action === 'SHORT' || action === 'SELL'
-  const isLong  = action === 'LONG'  || action === 'BUY'
-  const price   = analyze.price || lockedSignal.entry
-  const demand  = analyze.demandZones || []
-  const supply  = analyze.supplyZones || []
-  const scan    = analyze.signal
-  const conflicts = [], warnings = []
-
-  const inDemand = demand.some(z => !z.mitigated && price >= z.low && price <= z.high * 1.002)
-  const inSupply = supply.some(z => !z.mitigated && price <= z.high && price >= z.low * 0.998)
-
-  if (isShort && inDemand) conflicts.push({
-    type:'ZONE', sev:'HIGH', icon:'⚠️',
-    title:'VENTA en zona de DEMANDA',
-    msg:'Precio dentro de OB de demanda. Alta probabilidad de rechazo alcista.',
-    action:'Si el OB no se rompe con cierre M5 → probable continuación ALCISTA.'
-  })
-  if (isLong && inSupply) conflicts.push({
-    type:'ZONE', sev:'HIGH', icon:'⚠️',
-    title:'COMPRA en zona de OFERTA',
-    msg:'Precio dentro de OB de oferta. Alta probabilidad de rechazo bajista.',
-    action:'Si el OB no se rompe con cierre M5 → probable continuación BAJISTA.'
-  })
-  if (scan && scan.action !== 'WAIT' && scan.score >= 80) {
-    const scanLong  = scan.action === 'LONG'  || scan.action === 'BUY'
-    const scanShort = scan.action === 'SHORT' || scan.action === 'SELL'
-    if (isShort && scanLong) conflicts.push({
-      type:'SIGNAL', sev: scan.score >= 90 ? 'HIGH' : 'MEDIUM', icon:'🔄',
-      title:`Scanner detecta COMPRA · ${scan.score}%`,
-      msg:`Modelo ${scan.model} ve oportunidad ALCISTA mientras el trade activo es VENTA.`,
-      action:'Monitorear cierres M5. Si respeta demanda → VENTA se invalida.'
-    })
-    if (isLong && scanShort) conflicts.push({
-      type:'SIGNAL', sev: scan.score >= 90 ? 'HIGH' : 'MEDIUM', icon:'🔄',
-      title:`Scanner detecta VENTA · ${scan.score}%`,
-      msg:`Modelo ${scan.model} ve oportunidad BAJISTA mientras el trade activo es COMPRA.`,
-      action:'Monitorear cierres M5. Si respeta oferta → COMPRA se invalida.'
-    })
-  }
-  const s5=analyze.structureM5?.trend, s15=analyze.structureM15?.trend, sH1=analyze.structureH1?.trend
-  if (isShort && sH1==='BULLISH' && s15==='BULLISH' && s5==='BULLISH')
-    warnings.push({ icon:'📊', msg:'Triple confluencia BULLISH (H1+M15+M5) en contra de la VENTA.' })
-  if (isLong  && sH1==='BEARISH' && s15==='BEARISH' && s5==='BEARISH')
-    warnings.push({ icon:'📊', msg:'Triple confluencia BEARISH (H1+M15+M5) en contra de la COMPRA.' })
-  if (tp1Hit) warnings.push({ icon:'✅', msg:'TP1 alcanzado · SL en Breakeven · considerar salida parcial.' })
-
-  let reversal = null
-  const hasZone = conflicts.some(c=>c.type==='ZONE')
-  const hasSig  = conflicts.some(c=>c.type==='SIGNAL')
-  if (hasZone || hasSig) {
-    const prob = Math.min(92, 55 + (hasSig?(conflicts.find(c=>c.type==='SIGNAL')?.sev==='HIGH'?25:15):0) + (hasZone?12:0))
-    reversal = {
-      direction: isShort ? 'ALCISTA' : 'BAJISTA',
-      prob,
-      condition: isShort
-        ? 'Cierre M5 por encima del OB de demanda confirma continuación alcista'
-        : 'Cierre M5 por debajo del OB de oferta confirma continuación bajista'
-    }
-  }
-  if (!conflicts.length && !warnings.length) return null
-  return { conflicts, warnings, reversal }
+  yellow:'#f9ca24', green:'#3fb950', bull:'#3fb950', bear:'#ff6b6b',
+  purple:'#a78bfa', orange:'#fb923c', blue:'#60a5fa'
 }
 
 /* ─────────────────────────────────────────────────── CHART DRAW ENGINE */
 function drawChart(canvas, state) {
   const {
     candles=[], demandZones=[], supplyZones=[],
+    fvgZones=[], liquidityLevels=[],
+    aiZones=null, // zonas extra del análisis IA
     choch, bos, chochM15, bosM15,
-    structure={}, lockedSignal,
-    zoom=1, offsetX=0, conflictData=null
+    structure={}, zoom=1, offsetX=0,
+    premiumDiscount='EQUILIBRIUM'
   } = state
   if (!canvas || candles.length < 5) return
   const dpr  = window.devicePixelRatio || 1
@@ -110,7 +43,7 @@ function drawChart(canvas, state) {
   const W = rect.width, H = rect.height
   ctx.fillStyle = C.bg1; ctx.fillRect(0,0,W,H)
 
-  const ML=64, MR=70, MT=conflictData?54:24, MB=32
+  const ML=64, MR=80, MT=24, MB=32
   const CW=W-ML-MR, CH=H-MT-MB
   if (CW<40||CH<40) return
 
@@ -123,12 +56,7 @@ function drawChart(canvas, state) {
   const visOff   = startIdx
   if (!vis.length) return
 
-  /* Price range including signal levels */
   const allP = vis.flatMap(c=>[c.high,c.low])
-  if (lockedSignal) {
-    const {entry,stop,tp1,tp2,tp3}=lockedSignal
-    ;[entry,stop,tp1,tp2,tp3].forEach(v=>{if(v!=null)allP.push(v)})
-  }
   const mn=Math.min(...allP), mx=Math.max(...allP), rng=mx-mn||1
   const PN=mn-rng*.09, PX=mx+rng*.13, PR=PX-PN
   const py=p=>MT+CH*(1-(p-PN)/PR)
@@ -136,76 +64,66 @@ function drawChart(canvas, state) {
   const cx=i=>ML+SL*i+SL/2
   const gs=rng<3?.5:rng<10?1:rng<30?5:10
 
-  /* Conflict banner BEFORE grid so it's under everything */
-  if (conflictData) {
-    const hasHigh = conflictData.conflicts.some(c=>c.sev==='HIGH')
-    const col = hasHigh ? C.yellow : '#f0883e'
-    const c1  = conflictData.conflicts[0]
-    const txt = c1 ? `${c1.icon}  ${c1.title}` : '⚠️  Conflicto detectado'
-    ctx.fillStyle = hasHigh ? 'rgba(249,202,36,.09)' : 'rgba(240,136,62,.09)'
-    ctx.fillRect(ML, 2, CW, MT-4)
-    ctx.strokeStyle = col+'66'; ctx.lineWidth=1; ctx.setLineDash([])
-    ctx.strokeRect(ML, 2, CW, MT-4)
-    ctx.fillStyle = col; ctx.font='bold 10px system-ui'; ctx.textAlign='center'
-    ctx.fillText(txt, ML+CW/2, MT-10)
-    if (conflictData.reversal) {
-      const {direction,prob} = conflictData.reversal
-      ctx.fillStyle = col+'99'; ctx.font='9px system-ui'
-      ctx.fillText(`Reversión ${direction}: ${prob}%`, ML+CW/2, MT-1)
-    }
-    ctx.setLineDash([])
-  }
-
   /* Grid */
   ctx.strokeStyle='rgba(255,255,255,.04)'; ctx.lineWidth=1
   for(let p=Math.ceil(PN/gs)*gs;p<=PX;p+=gs){
     ctx.beginPath();ctx.moveTo(ML,py(p));ctx.lineTo(ML+CW,py(p));ctx.stroke()
   }
 
-  /* OB Zones — active zones extend to current candle, mitigated shown briefly */
+  /* Premium/Discount shading */
+  if(premiumDiscount!=='EQUILIBRIUM'){
+    const midP=(PN+PX)/2
+    if(premiumDiscount==='PREMIUM'){
+      ctx.fillStyle='rgba(255,107,107,.04)'
+      ctx.fillRect(ML,MT,CW,CH/2)
+      ctx.fillStyle='rgba(255,107,107,.5)';ctx.font='8px system-ui';ctx.textAlign='right'
+      ctx.fillText('PREMIUM',ML+CW-4,MT+10)
+    } else {
+      ctx.fillStyle='rgba(63,185,80,.04)'
+      ctx.fillRect(ML,MT+CH/2,CW,CH/2)
+      ctx.fillStyle='rgba(63,185,80,.5)';ctx.font='8px system-ui';ctx.textAlign='right'
+      ctx.fillText('DISCOUNT',ML+CW-4,MT+CH-4)
+    }
+    // 50% line
+    ctx.strokeStyle='rgba(255,255,255,.12)';ctx.lineWidth=1;ctx.setLineDash([4,4])
+    ctx.beginPath();ctx.moveTo(ML,py(midP));ctx.lineTo(ML+CW,py(midP));ctx.stroke()
+    ctx.setLineDash([])
+  }
+
+  /* OB Zones */
   ;[
     {zones:demandZones, fillA:'rgba(63,185,80,.18)', fillS:'rgba(63,185,80,.06)',
-     stroke:C.green, strokeS:'rgba(63,185,80,.25)', label:'OB demanda'},
+     stroke:C.green, strokeS:'rgba(63,185,80,.25)', label:'OB Demanda'},
     {zones:supplyZones, fillA:'rgba(255,107,107,.18)', fillS:'rgba(255,107,107,.06)',
-     stroke:C.red,   strokeS:'rgba(255,107,107,.25)', label:'OB oferta'}
+     stroke:C.red,   strokeS:'rgba(255,107,107,.25)', label:'OB Oferta'}
   ].forEach(({zones,fillA,fillS,stroke,strokeS,label})=>{
     zones.forEach(z=>{
       const zi=z.index-visOff
-      if(zi<-5||zi>n+2)return // not in view
+      if(zi<-5||zi>n+2)return
       const x1=zi>=0?Math.max(ML,cx(zi)-SL/2):ML
       const x2=z.mitigated
-        ? Math.min(ML+CW, x1+Math.max(60,(zi+15)*SL)) // mitigated: extend 15 candles
-        : ML+CW                                          // active: extend to right edge
+        ? Math.min(ML+CW, x1+Math.max(60,(zi+15)*SL))
+        : ML+CW
       if(x1>=x2)return
       const y1=py(z.high),y2=py(z.low)
-      const isMit=z.mitigated
-      const isStruc=z.isStructureOB
-
-      // Fill
+      const isMit=z.mitigated, isStruc=z.isStructureOB
       ctx.fillStyle=isMit?fillS:fillA
       ctx.fillRect(x1,y1,x2-x1,y2-y1)
-
-      // Border — structural OBs get thicker border
       ctx.strokeStyle=isMit?strokeS:stroke
       ctx.lineWidth=isStruc?2:1.5
       if(isStruc&&!isMit){
         ctx.setLineDash([])
         ctx.strokeRect(x1,y1,x2-x1,y2-y1)
-        // Highlight left edge
-        ctx.strokeStyle=stroke; ctx.lineWidth=3
+        ctx.strokeStyle=stroke;ctx.lineWidth=3
         ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x1,y2);ctx.stroke()
       } else {
         ctx.setLineDash(isMit?[3,3]:[])
         ctx.strokeRect(x1,y1,x2-x1,y2-y1)
         ctx.setLineDash([])
       }
-
-      // Label
       if(!isMit){
-        const lbl=isStruc?label+' ★':label
         ctx.fillStyle=stroke;ctx.font=`${isStruc?'bold ':''  }9px system-ui`;ctx.textAlign='left'
-        ctx.fillText(lbl,x1+4,y1+11)
-        // Price label on right edge
+        ctx.fillText(isStruc?label+' ★':label,x1+4,y1+11)
         if(x2>=ML+CW-60){
           ctx.fillStyle=stroke+'cc';ctx.font='8px system-ui'
           ctx.fillText(z.high.toFixed(2),ML+CW+2,y1+4)
@@ -215,22 +133,72 @@ function drawChart(canvas, state) {
     })
   })
 
-  /* Structure lines — start from BREAK POINT, not full width */
+  /* FVG Zones — light blue imbalance zones */
+  fvgZones.forEach(z=>{
+    const zi=z.index-visOff
+    if(zi<-5||zi>n+5)return
+    const x1=zi>=0?Math.max(ML,cx(zi)-SL/2):ML
+    const x2=ML+CW
+    if(x1>=x2)return
+    const y1=py(z.high),y2=py(z.low)
+    const col=z.side==='BUY'?'rgba(96,165,250,.15)':'rgba(251,146,60,.15)'
+    const colS=z.side==='BUY'?C.blue:C.orange
+    ctx.fillStyle=col;ctx.fillRect(x1,y1,x2-x1,y2-y1)
+    ctx.strokeStyle=colS+'66';ctx.lineWidth=1;ctx.setLineDash([3,3])
+    ctx.strokeRect(x1,y1,x2-x1,y2-y1)
+    ctx.setLineDash([])
+    ctx.fillStyle=colS;ctx.font='8px system-ui';ctx.textAlign='left'
+    ctx.fillText('FVG',x1+3,y1+10)
+    ctx.fillText(z.high.toFixed(2),ML+CW+2,y1+4)
+    ctx.fillText(z.low.toFixed(2),ML+CW+2,y2+4)
+  })
+
+  /* Liquidity Levels — dashed lines */
+  liquidityLevels.forEach(lv=>{
+    const y=py(lv.price)
+    if(y<MT||y>MT+CH)return
+    const isHigh=lv.type==='EQUAL_HIGHS'
+    const col=isHigh?'rgba(255,107,107,.7)':'rgba(63,185,80,.7)'
+    ctx.strokeStyle=col;ctx.lineWidth=1;ctx.setLineDash([2,4])
+    ctx.beginPath();ctx.moveTo(ML,y);ctx.lineTo(ML+CW,y);ctx.stroke()
+    ctx.setLineDash([])
+    ctx.fillStyle=col;ctx.font='8px system-ui';ctx.textAlign='right'
+    ctx.fillText(`${isHigh?'BSL':'SSL'} ${lv.price.toFixed(2)} (${lv.touches}x)`,ML+CW-4,y-2)
+  })
+
+  /* AI extra zones (from Claude analysis) */
+  if(aiZones){
+    // AI Key levels as horizontal lines
+    ;(aiZones.keyLevels||[]).forEach(lv=>{
+      const y=py(lv.price)
+      if(y<MT-10||y>MT+CH+10)return
+      const col=lv.type==='resistance'?'rgba(167,139,250,.8)':'rgba(167,139,250,.8)'
+      ctx.strokeStyle=col;ctx.lineWidth=2;ctx.setLineDash([8,3])
+      ctx.beginPath();ctx.moveTo(ML,y);ctx.lineTo(ML+CW,y);ctx.stroke()
+      ctx.setLineDash([])
+      // Label pill
+      const lbl=lv.label||lv.type
+      const lw=lbl.length*5.5+lv.price.toFixed(2).length*5+14
+      ctx.fillStyle='rgba(167,139,250,.15)';ctx.strokeStyle=col;ctx.lineWidth=1
+      ctx.beginPath();ctx.roundRect(ML+4,y-9,lw,16,3);ctx.fill();ctx.stroke()
+      ctx.fillStyle=col;ctx.font='bold 8px system-ui';ctx.textAlign='left'
+      ctx.fillText(`${lbl} ${lv.price.toFixed(2)}`,ML+8,y+4)
+    })
+  }
+
+  /* Structure lines */
   const drawLvl=(lvl,color,tag)=>{
     if(!lvl||lvl.level==null)return
     const bi=(lvl.breakIndex||0)-visOff
-    if(bi<0||bi>=n)return // not visible in current view
-    const sx=cx(bi) // start exactly at the break candle
-    const ex=Math.min(ML+CW, cx(Math.min(n-1, bi+30))) // max 30 candles forward = contextual
+    if(bi<0||bi>=n)return
+    const sx=cx(bi)
+    const ex=Math.min(ML+CW, cx(Math.min(n-1, bi+30)))
     if(sx>ML+CW)return
     const y=py(lvl.level)
-    // Line from break point
     ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.setLineDash([6,4])
     ctx.beginPath();ctx.moveTo(sx,y);ctx.lineTo(ex,y);ctx.stroke()
     ctx.setLineDash([])
-    // Small circle at break point
     ctx.fillStyle=color;ctx.beginPath();ctx.arc(sx,y,3,0,Math.PI*2);ctx.fill()
-    // Label pill near the end of the line
     const lw=tag.length*5.5+lvl.level.toFixed(2).length*5+14
     const lx=Math.min(ex+2, ML+CW-lw-2)
     ctx.fillStyle=color+'22';ctx.strokeStyle=color;ctx.lineWidth=1
@@ -243,73 +211,26 @@ function drawChart(canvas, state) {
   drawLvl(bosM15,   'rgba(140,140,255,.9)', bosM15?.side==='BUY'?'BOS↑ M15':'BOS↓ M15')
   drawLvl(chochM15, 'rgba(255,200,60,.8)',  chochM15?.type==='BULLISH_CHOCH'?'CHoCH↑ M15':'CHoCH↓ M15')
 
-  /* Williams Fractals — triángulos en lugar de etiquetas HH/HL/LH/LL */
+  /* Structure fractals */
   ;(structure.labels||[]).forEach(lb=>{
     const li=lb.index-visOff
     if(li<0||li>=n||!vis[li])return
     const isBull=lb.type==='HH'||lb.type==='HL'
     const x=cx(li), size=5
-    // Fractal alto (▼): triángulo hacia abajo sobre la vela
-    // Fractal bajo (▲): triángulo hacia arriba bajo la vela
     if(!isBull){
-      // Fractal ALTO (bearish fractal) — triángulo rojo hacia abajo
       const y=py(vis[li].high)-3
       const clr=lb.type==='HH'?'#ff4757':'#ff6b81'
       ctx.fillStyle=clr;ctx.globalAlpha=0.85
-      ctx.beginPath()
-      ctx.moveTo(x,y+size*1.5)
-      ctx.lineTo(x-size,y)
-      ctx.lineTo(x+size,y)
-      ctx.closePath();ctx.fill()
-      ctx.globalAlpha=1
+      ctx.beginPath();ctx.moveTo(x,y+size*1.5);ctx.lineTo(x-size,y);ctx.lineTo(x+size,y)
+      ctx.closePath();ctx.fill();ctx.globalAlpha=1
     } else {
-      // Fractal BAJO (bullish fractal) — triángulo verde hacia arriba
       const y=py(vis[li].low)+3
       const clr=lb.type==='HL'?'#2ed573':'#7bed9f'
       ctx.fillStyle=clr;ctx.globalAlpha=0.85
-      ctx.beginPath()
-      ctx.moveTo(x,y-size*1.5)
-      ctx.lineTo(x-size,y)
-      ctx.lineTo(x+size,y)
-      ctx.closePath();ctx.fill()
-      ctx.globalAlpha=1
+      ctx.beginPath();ctx.moveTo(x,y-size*1.5);ctx.lineTo(x-size,y);ctx.lineTo(x+size,y)
+      ctx.closePath();ctx.fill();ctx.globalAlpha=1
     }
   })
-
-  /* Signal lines */
-  if(lockedSignal){
-    const{action,entry,stop,tp1,tp2,tp3,tp1Hit,tp2Hit}=lockedSignal
-    const isLong=action==='LONG'||action==='BUY'
-    ;[
-      {p:tp3,tag:'TP3',col:'#00b894'},
-      {p:tp2,tag:tp2Hit?'✅TP2':'TP2',col:C.teal},
-      {p:tp1,tag:tp1Hit?'✅TP1':'TP1',col:C.green},
-      {p:entry,tag:'Entry',col:C.yellow},
-      {p:stop,tag:'SL',col:C.red}
-    ].forEach(({p,tag,col})=>{
-      if(p==null)return
-      const y=py(p)
-      if(y<MT-2||y>MT+CH+2)return
-      ctx.strokeStyle=col+'bb';ctx.lineWidth=tag==='Entry'?2:1.5;ctx.setLineDash([5,4])
-      ctx.beginPath();ctx.moveTo(ML,y);ctx.lineTo(ML+CW,y);ctx.stroke()
-      ctx.setLineDash([])
-      const lw=tag.length*7+p.toFixed(2).length*6+12
-      ctx.fillStyle=col+'22';ctx.strokeStyle=col;ctx.lineWidth=1
-      ctx.beginPath();ctx.roundRect(ML+CW+2,y-9,lw,18,4);ctx.fill();ctx.stroke()
-      ctx.fillStyle=col;ctx.font='bold 8.5px system-ui';ctx.textAlign='left'
-      ctx.fillText(`${tag}  ${p.toFixed(2)}`,ML+CW+6,y+4)
-    })
-    const ey=py(entry)
-    if(ey>=MT&&ey<=MT+CH){
-      const ex=cx(Math.max(0,n-4)), col=isLong?C.green:C.red
-      ctx.strokeStyle=col;ctx.lineWidth=3;ctx.fillStyle=col
-      ctx.beginPath();ctx.moveTo(ex,isLong?ey+34:ey-34);ctx.lineTo(ex,isLong?ey+8:ey-8);ctx.stroke()
-      ctx.beginPath()
-      if(isLong){ctx.moveTo(ex-9,ey+18);ctx.lineTo(ex,ey);ctx.lineTo(ex+9,ey+18)}
-      else{ctx.moveTo(ex-9,ey-18);ctx.lineTo(ex,ey);ctx.lineTo(ex+9,ey-18)}
-      ctx.fill()
-    }
-  }
 
   /* Candles */
   vis.forEach((c,i)=>{
@@ -334,7 +255,7 @@ function drawChart(canvas, state) {
     ctx.strokeStyle='rgba(255,255,255,.2)';ctx.lineWidth=1;ctx.setLineDash([2,3])
     ctx.beginPath();ctx.moveTo(ML,py2);ctx.lineTo(ML+CW,py2);ctx.stroke()
     ctx.setLineDash([])
-    ctx.fillStyle=C.teal;ctx.beginPath();ctx.roundRect(ML+CW-1,py2-8,58,16,3);ctx.fill()
+    ctx.fillStyle=C.teal;ctx.beginPath();ctx.roundRect(ML+CW-1,py2-8,60,16,3);ctx.fill()
     ctx.fillStyle='#000';ctx.font='bold 9px system-ui';ctx.textAlign='left'
     ctx.fillText(last.close.toFixed(2),ML+CW+3,py2+4)
   }
@@ -349,278 +270,56 @@ function drawChart(canvas, state) {
   ctx.strokeRect(ML,MT,CW,CH)
 }
 
-/* ──────────────────────────────────────────────── SIGNAL CARD (fixed) */
-// FIX: TODOS los hooks están al inicio, SIN return null antes de ellos
-function SignalCard({ signal, assetConfig, cardPos, setCardPos, cardVisible, setCardVisible, hasConflict }) {
-  /* ✅ HOOKS PRIMERO — sin condicionales antes */
-  const isDragging = useRef(false)
-  const dragStart  = useRef({ x:0, y:0, cx:0, cy:0 })
-
-  // ✅ FIX: useCallback memoiza las funciones para que removeEventListener funcione
-  const onMouseMove = useCallback(e => {
-    if (!isDragging.current) return
-    setCardPos({
-      x: dragStart.current.cx + (e.clientX - dragStart.current.x),
-      y: dragStart.current.cy + (e.clientY - dragStart.current.y)
-    })
-  }, [setCardPos])
-
-  const onMouseUp = useCallback(() => { isDragging.current = false }, [])
-
-  // ✅ FIX: dependencias correctas — solo se registra/limpia cuando cambian las funciones
-  useEffect(() => {
-    window.addEventListener('mousemove', onMouseMove)
-    window.addEventListener('mouseup',   onMouseUp)
-    return () => {
-      window.removeEventListener('mousemove', onMouseMove)
-      window.removeEventListener('mouseup',   onMouseUp)
-    }
-  }, [onMouseMove, onMouseUp])
-
-  // ✅ FIX: return null DESPUÉS de todos los hooks
-  if (!signal || !cardVisible) return null
-
-  const isLong = signal.action === 'LONG' || signal.action === 'BUY'
-  const col    = isLong ? C.teal : C.red
-
-  const onMouseDown = e => {
-    if (e.target.closest('button')) return
-    isDragging.current = true
-    dragStart.current  = { x:e.clientX, y:e.clientY, cx:cardPos.x, cy:cardPos.y }
-    e.preventDefault()
-  }
-  const onTouchStart = e => {
-    const t = e.touches[0]
-    isDragging.current = true
-    dragStart.current  = { x:t.clientX, y:t.clientY, cx:cardPos.x, cy:cardPos.y }
-  }
-  const onTouchMove = e => {
-    if (!isDragging.current) return
-    const t = e.touches[0]
-    setCardPos({
-      x: dragStart.current.cx + (t.clientX - dragStart.current.x),
-      y: dragStart.current.cy + (t.clientY - dragStart.current.y)
-    })
-  }
-
-  return (
-    <div
-      onMouseDown={onMouseDown}
-      onTouchStart={onTouchStart}
-      onTouchMove={onTouchMove}
-      onTouchEnd={() => { isDragging.current = false }}
-      style={{
-        position:'fixed', left: Math.max(0,cardPos.x), top: Math.max(48,cardPos.y),
-        width:'min(268px,90vw)',
-        background:C.bg1, border:`2px solid ${hasConflict?C.yellow:col}`,
-        borderRadius:10, padding:'10px 14px', zIndex:200,
-        cursor:'grab', userSelect:'none', touchAction:'none',
-        boxShadow:`0 4px 24px ${hasConflict?C.yellow:col}33`
-      }}>
-      {/* Header */}
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-        <div style={{display:'flex',gap:8,alignItems:'center'}}>
-          <span style={{fontSize:16}}>{assetConfig?.emoji||'📊'}</span>
-          <div>
-            <div style={{display:'flex',alignItems:'center',gap:6}}>
-              <span style={{fontSize:12,fontWeight:700,color:col}}>{isLong?'● COMPRA':'● VENTA'}</span>
-              {hasConflict && (
-                <span style={{fontSize:9,fontWeight:800,padding:'1px 5px',borderRadius:3,
-                  background:'rgba(249,202,36,.15)',color:C.yellow,border:'1px solid rgba(249,202,36,.4)'}}>
-                  ⚠️ CONFLICTO
-                </span>
-              )}
-            </div>
-            <div style={{fontSize:10,color:C.muted}}>{signal.model} · {signal.score}%</div>
-          </div>
-        </div>
-        <button
-          onClick={() => setCardVisible(false)}
-          style={{background:'none',border:`1px solid ${C.border}`,color:C.muted,
-            borderRadius:4,width:22,height:22,cursor:'pointer',fontSize:14,
-            display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
-          −
-        </button>
-      </div>
-
-      <div style={{fontSize:11,display:'grid',gridTemplateColumns:'1fr 1fr',gap:'3px 8px'}}>
-        {[['Entry',signal.entry,C.text],['SL',signal.stop,C.red],
-          ['TP1',signal.tp1,C.teal],['TP2',signal.tp2,C.teal],['TP3',signal.tp3,C.teal]
-        ].map(([k,v,c])=>(
-          <div key={k} style={{display:'flex',justifyContent:'space-between',
-            padding:'3px 0',borderBottom:`1px solid ${C.border}`}}>
-            <span style={{color:C.muted}}>{k}</span>
-            <span style={{fontWeight:700,color:c}}>{v?.toFixed(2)}</span>
-          </div>
-        ))}
-      </div>
-      <div style={{marginTop:8,fontSize:10,color:C.muted,lineHeight:1.4}}>{signal.reason}</div>
-      {signal.tp1Hit&&<div style={{marginTop:4,fontSize:10,color:C.teal,fontWeight:700}}>✅ TP1 — SL en Breakeven</div>}
-      {signal.tp2Hit&&<div style={{fontSize:10,color:C.teal,fontWeight:700}}>✅ TP2 alcanzado</div>}
-      <div style={{marginTop:6,textAlign:'center',fontSize:9,color:C.border}}>⠿ arrastra para mover</div>
-    </div>
-  )
-}
-
-/* ─────────────────────────────────────── CONFLICT ALERT PANEL (fixed) */
-function ConflictAlert({ conflictData, onDismiss }) {
-  const [expanded, setExpanded] = useState(true)
-  // ✅ FIX: return null DESPUÉS de hooks
-  if (!conflictData) return null
-
-  const { conflicts, warnings, reversal } = conflictData
-  const hasHigh = conflicts.some(c => c.sev === 'HIGH')
-  const borderCol = hasHigh ? C.yellow : '#f0883e'
-
-  return (
-    <div style={{
-      position:'fixed', right:20, top:58, width:'min(330px,90vw)',
-      background:C.bg1, border:`2px solid ${borderCol}`,
-      borderRadius:10, zIndex:250, boxShadow:`0 4px 24px ${borderCol}33`,
-      maxHeight:'80vh', display:'flex', flexDirection:'column'
-    }}>
-      <div style={{
-        background: hasHigh?'rgba(249,202,36,.07)':'rgba(240,136,62,.07)',
-        padding:'8px 12px', display:'flex', alignItems:'center', gap:8,
-        cursor:'pointer', borderBottom:`1px solid ${borderCol}44`, flexShrink:0
-      }} onClick={()=>setExpanded(e=>!e)}>
-        <span style={{fontSize:15}}>{hasHigh?'⚠️':'🔔'}</span>
-        <div style={{flex:1}}>
-          <div style={{fontSize:11,fontWeight:700,color:borderCol}}>
-            {hasHigh?'CONFLICTO CRÍTICO':'ADVERTENCIA SMC'}
-          </div>
-          <div style={{fontSize:9,color:C.muted}}>
-            {conflicts.length} conflicto{conflicts.length!==1?'s':''} · {warnings.length} aviso{warnings.length!==1?'s':''}
-          </div>
-        </div>
-        <span style={{color:C.muted,fontSize:11}}>{expanded?'▲':'▼'}</span>
-        <button onClick={e=>{e.stopPropagation();onDismiss()}} style={{
-          background:'none',border:'none',color:C.muted,cursor:'pointer',fontSize:16,padding:'0 2px'}}>✕</button>
-      </div>
-
-      {expanded && (
-        <div style={{padding:'10px 12px',display:'flex',flexDirection:'column',gap:8,overflowY:'auto'}}>
-          {conflicts.map((c,i)=>(
-            <div key={i} style={{
-              background:c.sev==='HIGH'?'rgba(249,202,36,.07)':'rgba(240,136,62,.07)',
-              border:`1px solid ${c.sev==='HIGH'?'#f9ca2444':'#f0883e44'}`,
-              borderLeft:`3px solid ${c.sev==='HIGH'?C.yellow:'#f0883e'}`,
-              borderRadius:6,padding:'8px 10px'
-            }}>
-              <div style={{fontSize:11,fontWeight:700,color:c.sev==='HIGH'?C.yellow:'#f0883e',marginBottom:4}}>
-                {c.icon} {c.title}
-              </div>
-              <div style={{fontSize:11,color:C.text,lineHeight:1.5,marginBottom:4}}>{c.msg}</div>
-              <div style={{fontSize:10,color:C.muted,lineHeight:1.4}}>
-                <span style={{color:c.sev==='HIGH'?C.yellow:'#f0883e',fontWeight:600}}>→ </span>{c.action}
-              </div>
-            </div>
-          ))}
-          {warnings.map((w,i)=>(
-            <div key={i} style={{background:'rgba(63,185,80,.07)',border:'1px solid rgba(63,185,80,.2)',
-              borderLeft:`3px solid ${C.green}`,borderRadius:6,padding:'7px 10px',
-              fontSize:11,color:C.text,lineHeight:1.5}}>{w.icon} {w.msg}</div>
-          ))}
-          {reversal&&(
-            <div style={{background:'rgba(0,212,170,.06)',border:`1px solid ${C.teal}44`,borderRadius:8,padding:'10px 12px'}}>
-              <div style={{fontSize:11,fontWeight:700,color:C.teal,marginBottom:6}}>
-                📈 Probabilidad reversión {reversal.direction}: {reversal.prob}%
-              </div>
-              <div style={{height:6,background:C.bg2,borderRadius:3,marginBottom:6,overflow:'hidden'}}>
-                <div style={{height:'100%',borderRadius:3,width:`${reversal.prob}%`,
-                  background:reversal.prob>=80?`linear-gradient(90deg,${C.yellow},${C.red})`:`linear-gradient(90deg,${C.teal},${C.green})`}}/>
-              </div>
-              <div style={{fontSize:10,color:C.muted,lineHeight:1.5,fontStyle:'italic'}}>{reversal.condition}</div>
-            </div>
-          )}
-          <div style={{background:C.bg2,borderRadius:6,padding:'8px 10px',
-            fontSize:10,color:C.muted,lineHeight:1.6}}>
-            <span style={{color:C.text,fontWeight:600}}>Recomendación: </span>
-            {hasHigh
-              ?'No abrir nuevas posiciones hasta que una vela M5 cierre fuera de la zona. Gestionar riesgo de la posición activa.'
-              :'Monitorear cierre de las próximas 2-3 velas M5 antes de tomar decisiones.'}
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
 /* ─────────────────────────────────────── CHART CONTAINER — zoom + pan */
-function ChartContainer({ children, zoom, setZoom, offsetX, setOffsetX }) {
-  const containerRef = useRef(null)
-  const isPanning    = useRef(false)
-  const panStart     = useRef({ x:0, off:0 })
-  const pinchDist    = useRef(null)
+function ChartContainer({children,zoom,setZoom,offsetX,setOffsetX}){
+  const ref=useRef(null)
+  const drag=useRef({active:false,startX:0,startOff:0})
 
-  // ✅ FIX: wheel listener con passive:false en useEffect para que preventDefault funcione
-  useEffect(() => {
-    const el = containerRef.current
-    if (!el) return
-    const onWheel = e => {
-      e.preventDefault()
-      setZoom(z => +(Math.max(.3, Math.min(8, z + (e.deltaY>0?-.12:.12)))).toFixed(2))
-    }
-    el.addEventListener('wheel', onWheel, { passive:false })
-    return () => el.removeEventListener('wheel', onWheel)
-  }, [setZoom])
+  const onWheel=useCallback(e=>{
+    e.preventDefault()
+    if(e.ctrlKey){setZoom(z=>+(Math.max(.3,Math.min(8,z-e.deltaY*.01))).toFixed(2))}
+    else{setOffsetX(o=>Math.max(0,o+e.deltaY*.3))}
+  },[setZoom,setOffsetX])
 
-  const onMouseDown = e => {
-    if (e.button !== 0) return
-    isPanning.current = true
-    panStart.current  = { x:e.clientX, off:offsetX }
-    e.currentTarget.style.cursor = 'grabbing'
-  }
-  const onMouseMove = e => {
-    if (!isPanning.current) return
-    const dx = e.clientX - panStart.current.x
-    setOffsetX(Math.max(0, panStart.current.off - dx / (7/zoom)))
-  }
-  const onMouseUp = e => { isPanning.current=false; if(e.currentTarget)e.currentTarget.style.cursor='crosshair' }
+  useEffect(()=>{
+    const el=ref.current;if(!el)return
+    el.addEventListener('wheel',onWheel,{passive:false})
+    return()=>el.removeEventListener('wheel',onWheel)
+  },[onWheel])
 
-  const onTouchStart = e => {
-    if (e.touches.length===2) {
-      pinchDist.current = Math.hypot(
-        e.touches[0].clientX-e.touches[1].clientX,
-        e.touches[0].clientY-e.touches[1].clientY
-      )
-    } else {
-      isPanning.current=true
-      panStart.current={x:e.touches[0].clientX, off:offsetX}
-    }
-  }
-  const onTouchMove = e => {
-    if (e.touches.length===2 && pinchDist.current) {
-      const d = Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY)
-      setZoom(z=>+(Math.max(.3,Math.min(8,z*(d/pinchDist.current)))).toFixed(2))
-      pinchDist.current=d
-    } else if (e.touches.length===1 && isPanning.current) {
-      setOffsetX(Math.max(0,panStart.current.off-(e.touches[0].clientX-panStart.current.x)/(7/zoom)))
-    }
-  }
-  const onTouchEnd=()=>{ isPanning.current=false; pinchDist.current=null }
+  const onMouseDown=useCallback(e=>{
+    if(e.button!==0)return
+    drag.current={active:true,startX:e.clientX,startOff:offsetX}
+  },[offsetX])
+  const onMouseMove=useCallback(e=>{
+    if(!drag.current.active)return
+    const dx=e.clientX-drag.current.startX
+    setOffsetX(Math.max(0,drag.current.startOff-dx*.3))
+  },[setOffsetX])
+  const onMouseUp=useCallback(()=>{drag.current.active=false},[])
 
-  return (
-    <div ref={containerRef} style={{flex:1,position:'relative',minHeight:0,cursor:'crosshair',touchAction:'none'}}
-      onMouseDown={onMouseDown} onMouseMove={onMouseMove}
-      onMouseUp={onMouseUp} onMouseLeave={e=>{isPanning.current=false;e.currentTarget.style.cursor='crosshair'}}
-      onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}>
+  useEffect(()=>{
+    window.addEventListener('mousemove',onMouseMove)
+    window.addEventListener('mouseup',onMouseUp)
+    return()=>{window.removeEventListener('mousemove',onMouseMove);window.removeEventListener('mouseup',onMouseUp)}
+  },[onMouseMove,onMouseUp])
+
+  const btns=[
+    {lbl:'+',fn:()=>setZoom(z=>+(Math.min(8,z+.3)).toFixed(1)),title:'Zoom in'},
+    {lbl:'−',fn:()=>setZoom(z=>+(Math.max(.3,z-.3)).toFixed(1)),title:'Zoom out'},
+    {lbl:'◉',fn:()=>{setZoom(1);setOffsetX(0)},title:'Reset'},
+  ]
+
+  return(
+    <div ref={ref} onMouseDown={onMouseDown}
+      style={{flex:1,position:'relative',borderRadius:8,overflow:'hidden',cursor:'grab',minHeight:0}}>
       {children}
-      {/* Zoom controls */}
-      <div style={{position:'absolute',bottom:8,right:72,display:'flex',gap:3,
-        background:'rgba(13,17,23,.9)',borderRadius:6,padding:'3px 5px',
-        border:`1px solid ${C.border}`,zIndex:10}}>
-        {[
-          {lbl:'+',fn:()=>setZoom(z=>+(Math.min(8,z+.2)).toFixed(1))},
-          {lbl:`${zoom.toFixed(1)}x`,fn:()=>{setZoom(1);setOffsetX(0)},title:'Reset'},
-          {lbl:'−',fn:()=>setZoom(z=>+(Math.max(.3,z-.2)).toFixed(1))},
-          {lbl:'|←',fn:()=>setOffsetX(o=>o+15),title:'Retroceder'},
-          {lbl:'→|',fn:()=>setOffsetX(0),title:'Ir al precio actual'}
-        ].map(({lbl,fn,title})=>(
+      <div style={{position:'absolute',top:6,right:6,display:'flex',gap:3,zIndex:2}}>
+        {btns.map(({lbl,fn,title})=>(
           <button key={lbl} onClick={fn} title={title}
-            style={{background:'transparent',border:'none',color:C.muted,cursor:'pointer',
-              padding:'2px 7px',fontSize:lbl.includes('x')?10:13,borderRadius:4,fontWeight:700,
-              minWidth:lbl.includes('x')?36:undefined}}>
+            style={{background:'rgba(22,27,34,.85)',border:`1px solid ${C.border}`,
+              color:C.muted,width:22,height:22,borderRadius:4,cursor:'pointer',fontSize:12,
+              display:'flex',alignItems:'center',justifyContent:'center'}}>
             {lbl}
           </button>
         ))}
@@ -629,333 +328,278 @@ function ChartContainer({ children, zoom, setZoom, offsetX, setOffsetX }) {
   )
 }
 
-/* ─────────────────────────────────────────────────── SMALL COMPONENTS */
-const Pill = ({ type, text }) => {
-  const cls = type==='BUY'||type==='LONG'?'pill pill-buy'
-            : type==='SELL'||type==='SHORT'?'pill pill-sell'
-            : type==='WAIT'?'pill pill-wait':'pill pill-load'
-  return <span className={cls}>{text}</span>
-}
-const StatCard = ({ label, value, sub, color }) => (
-  <div className="card" style={{padding:'8px 12px'}}>
-    <div style={{fontSize:9,color:C.muted,fontWeight:600,letterSpacing:'.05em',marginBottom:2}}>{label}</div>
-    <div style={{fontSize:22,fontWeight:800,color:color||C.text}}>{value}</div>
-    <div style={{fontSize:9,color:C.muted}}>{sub}</div>
-  </div>
-)
-const StructTag = ({ label, trend }) => {
-  const color=trend==='BULLISH'?C.teal:trend==='BEARISH'?C.red:C.muted
-  const bg=trend==='BULLISH'?'rgba(0,212,170,.1)':trend==='BEARISH'?'rgba(255,107,107,.1)':'rgba(255,255,255,.05)'
-  return(<span style={{fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:4,
-    border:`1px solid ${color}`,background:bg,color}}>{label}: {trend||'···'}</span>)
-}
-
-/* ─────────────────────────────────────────────── SECTION PANELS */
-function SenalesPanel({signals}){
-  if(!signals.length)return<p style={{color:C.muted,fontSize:13,padding:'20px 0'}}>Sin señales aún.</p>
-  const col=a=>a==='LONG'||a==='BUY'?C.teal:C.red
+/* ─────────────── Helper components */
+function StatCard({label,value,sub,color}){
   return(
-    <div style={{overflowX:'auto',overflowY:'auto',flex:1}}>
-      <table style={{width:'100%',borderCollapse:'collapse',fontSize:11,minWidth:680}}>
-        <thead><tr style={{background:C.bg2}}>
-          {['#','Activo','Dir','Modelo','Score','Entry','SL','TP1','Estado','Tiempo'].map(h=>(
-            <th key={h} style={{padding:'7px 10px',textAlign:'left',color:C.muted,fontWeight:600,
-              fontSize:10,borderBottom:`1px solid ${C.border}`,whiteSpace:'nowrap'}}>{h}</th>
-          ))}
-        </tr></thead>
-        <tbody>{signals.slice(0,80).map(s=>(
-          <tr key={s.id} style={{borderBottom:`1px solid ${C.border}22`}}>
-            <td style={{padding:'6px 10px',color:C.muted}}>#{s.id}</td>
-            <td style={{padding:'6px 10px',color:C.text,whiteSpace:'nowrap'}}>{s.assetName||s.symbol}</td>
-            <td style={{padding:'6px 10px'}}><span style={{color:col(s.action),fontWeight:700}}>{s.action==='LONG'?'COMPRA':'VENTA'}</span></td>
-            <td style={{padding:'6px 10px',color:C.teal,fontSize:10,whiteSpace:'nowrap'}}>{s.model}</td>
-            <td style={{padding:'6px 10px',color:s.score>=82?C.green:C.yellow,fontWeight:700}}>{s.score}%</td>
-            <td style={{padding:'6px 10px',fontVariantNumeric:'tabular-nums'}}>{s.entry?.toFixed(2)}</td>
-            <td style={{padding:'6px 10px',color:C.red}}>{s.stop?.toFixed(2)}</td>
-            <td style={{padding:'6px 10px',color:C.teal}}>{s.tp1?.toFixed(2)}</td>
-            <td style={{padding:'6px 10px'}}><span style={{color:s.status==='WIN'?C.green:s.status==='LOSS'?C.red:C.yellow,fontWeight:700}}>{s.status}</span></td>
-            <td style={{padding:'6px 10px',color:C.muted,fontSize:10,whiteSpace:'nowrap'}}>
-              {new Date(s.timestamp).toLocaleString('es-CO',{timeZone:'America/Bogota',hour12:false,month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}
-            </td>
-          </tr>
-        ))}</tbody>
-      </table>
+    <div style={{background:C.bg2,border:`1px solid ${C.border}`,borderRadius:6,padding:'6px 10px'}}>
+      <div style={{fontSize:9,color:C.muted,fontWeight:600,letterSpacing:'.06em'}}>{label}</div>
+      <div style={{fontSize:18,fontWeight:800,color:color||C.text}}>{value}</div>
+      <div style={{fontSize:9,color:C.muted}}>{sub}</div>
     </div>
   )
 }
+function StructTag({label,trend}){
+  const col=trend==='BULLISH'?C.teal:trend==='BEARISH'?C.red:C.muted
+  return(
+    <span style={{fontSize:10,fontWeight:700,color:col,background:col+'18',
+      padding:'2px 6px',borderRadius:4,border:`1px solid ${col}44`}}>
+      {label} {trend==='BULLISH'?'↑':trend==='BEARISH'?'↓':'·'}
+    </span>
+  )
+}
 
-function StatsPanel({stats,signals}){
-  const [period,setPeriod]=React.useState('week')
-  const [asset,setAsset]=React.useState('all')
-  const [pnl,setPnl]=React.useState(null)
-  const [loading,setLoading]=React.useState(false)
+/* ═══════════════════════════════════════════════════════════════
+   AI ANALYSIS PANEL — El corazón del nuevo sistema
+   ═══════════════════════════════════════════════════════════════ */
+function AIAnalysisPanel({ symbol, onZonesDetected }) {
+  const [status, setStatus] = useState('idle') // idle | loading | streaming | done | error
+  const [text, setText]     = useState('')
+  const [dots, setDots]     = useState(0)
+  const scrollRef           = useRef(null)
+  const readerRef           = useRef(null)
 
-  const PERIODS=[{v:'day',l:'Hoy'},{v:'week',l:'Semana'},{v:'month',l:'Mes'},{v:'all',l:'Todo'}]
-  const ASSETS=[{v:'all',l:'Todos'},{v:'stpRNG',l:'Step'},{v:'frxXAUUSD',l:'Oro'},{v:'1HZ100V',l:'V100'}]
+  // Animate dots during loading
+  useEffect(()=>{
+    if(status!=='loading')return
+    const id=setInterval(()=>setDots(d=>(d+1)%4),350)
+    return()=>clearInterval(id)
+  },[status])
 
-  const calcLocal=React.useCallback(()=>{
-    const now=Date.now()
-    const ms={day:86400000,week:604800000,month:2592000000,all:Infinity}
-    const cutoff=period==='all'?0:now-ms[period]
-    let sl=signals.filter(s=>(s.status==='WIN'||s.status==='LOSS')&&s.timestamp>=cutoff&&(asset==='all'||s.symbol===asset))
-    const wins=sl.filter(s=>s.status==='WIN'), losses=sl.filter(s=>s.status==='LOSS')
+  // Auto-scroll during streaming
+  useEffect(()=>{
+    if(scrollRef.current)scrollRef.current.scrollTop=scrollRef.current.scrollHeight
+  },[text])
 
-    const estPts=s=>{
-      if(s.pnlPoints!=null)return+s.pnlPoints
-      const isLong=s.action==='LONG'||s.action==='BUY'
-      if(s.status==='WIN'){
-        const cl=s.tpHit===3?s.tp3:s.tpHit===2?s.tp2:s.tp1
-        return isLong?(cl-s.entry):(s.entry-cl)
+  // Format markdown-like text
+  const renderText = (raw) => {
+    if(!raw)return null
+    return raw.split('\n').map((line,i)=>{
+      if(line.startsWith('## ')){
+        const icons = {'📊':'#60a5fa','🎯':C.teal,'📈':C.green,'💡':C.yellow,'❌':C.red,'🔍':C.purple}
+        const col = Object.keys(icons).find(k=>line.includes(k))
+        return <div key={i} style={{color:col?icons[col]:C.teal,fontWeight:700,fontSize:12,
+          marginTop:14,marginBottom:5,borderBottom:`1px solid ${col?icons[col]+'33':C.tealDark+'33'}`,
+          paddingBottom:4,letterSpacing:'.02em'}}>{line.slice(3)}</div>
       }
-      return isLong?(s.stop-s.entry):(s.entry-s.stop)
-    }
-
-    const totalWon=wins.reduce((a,s)=>a+Math.abs(estPts(s)),0)
-    const totalLost=losses.reduce((a,s)=>a+Math.abs(estPts(s)),0)
-
-    const byDay={}
-    sl.forEach(s=>{
-      const d=new Date(s.timestamp).toISOString().slice(0,10)
-      if(!byDay[d])byDay[d]={date:d,pts:0,wins:0,losses:0}
-      byDay[d].pts+=estPts(s)
-      s.status==='WIN'?byDay[d].wins++:byDay[d].losses++
+      if(line.startsWith('ZONAS_IA:'))return null
+      if(line.match(/^[•\-] /)||line.match(/^  [•\-] /)){
+        const indent = line.startsWith('  ') ? 20 : 10
+        return <div key={i} style={{color:C.text,fontSize:11,lineHeight:1.65,
+          paddingLeft:indent,position:'relative',marginTop:1}}>
+          <span style={{color:C.teal,position:'absolute',left:indent-8}}>›</span>
+          {line.replace(/^  ?[•\-] /,'')}
+        </div>
+      }
+      if(line.match(/^Escenario [12]/i)){
+        return <div key={i} style={{color:C.yellow,fontWeight:700,fontSize:11.5,marginTop:8,
+          background:'rgba(249,202,36,.06)',padding:'3px 8px',borderRadius:4,
+          borderLeft:`3px solid ${C.yellow}`}}>{line}</div>
+      }
+      if(line.startsWith('❌')){
+        return <div key={i} style={{color:C.red,fontSize:11,lineHeight:1.65,fontWeight:600,marginTop:2}}>{line}</div>
+      }
+      if(line.startsWith('✅')){
+        return <div key={i} style={{color:C.green,fontSize:11,lineHeight:1.65,fontWeight:600,marginTop:2}}>{line}</div>
+      }
+      if(line.startsWith('⚠️')){
+        return <div key={i} style={{color:C.yellow,fontSize:11,lineHeight:1.65,fontWeight:600,marginTop:2}}>{line}</div>
+      }
+      if(!line.trim())return <div key={i} style={{height:5}}/>
+      return <div key={i} style={{color:C.text,fontSize:11,lineHeight:1.65}}>{line}</div>
     })
-
-    const byModel={}
-    sl.forEach(s=>{
-      if(!byModel[s.model])byModel[s.model]={model:s.model,wins:0,losses:0,ptsWon:0,ptsLost:0}
-      const m=byModel[s.model]
-      if(s.status==='WIN'){m.wins++;m.ptsWon+=Math.abs(estPts(s))}
-      else{m.losses++;m.ptsLost+=Math.abs(estPts(s))}
-    })
-
-    const byAsset={}
-    sl.forEach(s=>{
-      if(!byAsset[s.symbol])byAsset[s.symbol]={symbol:s.symbol,name:s.assetName,wins:0,losses:0,ptsWon:0,ptsLost:0}
-      const a=byAsset[s.symbol]
-      if(s.status==='WIN'){a.wins++;a.ptsWon+=Math.abs(estPts(s))}
-      else{a.losses++;a.ptsLost+=Math.abs(estPts(s))}
-    })
-
-    const tp1s=wins.filter(s=>s.tpHit===1), tp2s=wins.filter(s=>s.tpHit===2), tp3s=wins.filter(s=>s.tpHit===3)
-
-    setPnl({
-      total:sl.length, wins:wins.length, losses:losses.length,
-      winRate:sl.length?Math.round(wins.length/sl.length*100):0,
-      totalPtsWon:+totalWon.toFixed(2), totalPtsLost:+totalLost.toFixed(2),
-      netPoints:+(totalWon-totalLost).toFixed(2),
-      avgWin:wins.length?+(totalWon/wins.length).toFixed(2):0,
-      avgLoss:losses.length?+(totalLost/losses.length).toFixed(2):0,
-      profitFactor:totalLost>0?+(totalWon/totalLost).toFixed(2):totalWon>0?99:0,
-      tpBreakdown:{tp1:tp1s.length,tp2:tp2s.length,tp3:tp3s.length},
-      tpPoints:{
-        tp1:+tp1s.reduce((a,s)=>a+Math.abs(estPts(s)),0).toFixed(2),
-        tp2:+tp2s.reduce((a,s)=>a+Math.abs(estPts(s)),0).toFixed(2),
-        tp3:+tp3s.reduce((a,s)=>a+Math.abs(estPts(s)),0).toFixed(2)
-      },
-      equity:Object.values(byDay).sort((a,b)=>a.date.localeCompare(b.date)),
-      byModel:Object.values(byModel).map(m=>({...m,
-        wr:m.wins+m.losses>0?Math.round(m.wins/(m.wins+m.losses)*100):0,
-        net:+(m.ptsWon-m.ptsLost).toFixed(2)
-      })).sort((a,b)=>b.net-a.net),
-      byAsset:Object.values(byAsset).map(a=>({...a,
-        wr:a.wins+a.losses>0?Math.round(a.wins/(a.wins+a.losses)*100):0,
-        net:+(a.ptsWon-a.ptsLost).toFixed(2)
-      }))
-    })
-  },[period,asset,signals])
-
-  React.useEffect(()=>{calcLocal()},[calcLocal])
-
-  const net=pnl?.netPoints||0
-  const netColor=net>0?C.green:net<0?C.red:C.muted
-  const pfColor=!pnl?C.muted:pnl.profitFactor>=2?C.green:pnl.profitFactor>=1?C.yellow:C.red
-
-  // Mini equity bar chart
-  const EquityChart=({equity})=>{
-    if(!equity?.length)return<div style={{height:72,display:'flex',alignItems:'center',justifyContent:'center',color:C.muted,fontSize:11}}>Sin datos</div>
-    const maxAbs=Math.max(...equity.map(d=>Math.abs(d.pts)),1)
-    return(
-      <div style={{display:'flex',alignItems:'center',gap:2,height:72,padding:'0 2px'}}>
-        {equity.map((d,i)=>{
-          const h=Math.max(4,Math.round(Math.abs(d.pts)/maxAbs*64))
-          const pos=d.pts>=0
-          return(
-            <div key={i} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center'}}
-              title={`${d.date}: ${pos?'+':''}${d.pts.toFixed(1)}pts (${d.wins}W/${d.losses}L)`}>
-              <div style={{width:'100%',maxWidth:28,minWidth:4,height:h,
-                background:pos?C.green:C.red,borderRadius:2,opacity:.9}}/>
-            </div>
-          )
-        })}
-      </div>
-    )
   }
 
-  const Btn=({v,l,cur,set})=>(
-    <button onClick={()=>set(v)} style={{
-      padding:'4px 12px',borderRadius:5,border:'none',cursor:'pointer',fontSize:11,fontWeight:600,
-      background:cur===v?C.tealDark||'#00b894':'transparent',
-      color:cur===v?'#000':C.muted
-    }}>{l}</button>
-  )
+  const activateAI = useCallback(async()=>{
+    if(status==='loading'||status==='streaming')return
+    setStatus('loading')
+    setText('')
+    onZonesDetected(null)
 
-  return(
-    <div style={{overflowY:'auto',flex:1,display:'flex',flexDirection:'column',gap:9}}>
+    try {
+      const response = await fetch(`${API_URL}/api/ai/analyze-chart`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol })
+      })
 
-      {/* Filtros */}
-      <div style={{display:'flex',gap:7,flexWrap:'wrap',alignItems:'center'}}>
-        <div style={{display:'flex',gap:2,background:C.bg2,borderRadius:7,padding:3,border:`1px solid ${C.border}`}}>
-          {PERIODS.map(p=><Btn key={p.v} v={p.v} l={p.l} cur={period} set={setPeriod}/>)}
-        </div>
-        <div style={{display:'flex',gap:2,background:C.bg2,borderRadius:7,padding:3,border:`1px solid ${C.border}`}}>
-          {ASSETS.map(a=><Btn key={a.v} v={a.v} l={a.l} cur={asset} set={setAsset}/>)}
+      if(!response.ok){
+        const err = await response.json().catch(()=>({}))
+        throw new Error(err.error || `Error ${response.status}`)
+      }
+
+      setStatus('streaming')
+      const reader = response.body.getReader()
+      readerRef.current = reader
+      const decoder = new TextDecoder()
+      let fullText = ''
+      let buf = ''
+
+      while(true){
+        const {done, value} = await reader.read()
+        if(done) break
+        buf += decoder.decode(value, {stream: true})
+        const lines = buf.split('\n')
+        buf = lines.pop() // keep incomplete line
+        for(const line of lines){
+          if(!line.startsWith('data: '))continue
+          try{
+            const ev = JSON.parse(line.slice(6))
+            if(ev.type==='text'){
+              fullText += ev.text
+              setText(fullText)
+            }
+            if(ev.type==='done'){
+              // Extract AI zones
+              const m = fullText.match(/ZONAS_IA:(\{.*?\})/s)
+              if(m){try{onZonesDetected(JSON.parse(m[1]))}catch{}}
+              setStatus('done')
+              return
+            }
+            if(ev.type==='error') throw new Error(ev.message)
+          }catch(parseErr){}
+        }
+      }
+      setStatus('done')
+
+    } catch(err){
+      setStatus('error')
+      setText(`⚠️ ${err.message}`)
+    }
+  },[symbol, status, onZonesDetected])
+
+  const stop = useCallback(()=>{
+    try{ readerRef.current?.cancel() }catch{}
+    setStatus('idle')
+  },[])
+
+  const reset = useCallback(()=>{
+    try{ readerRef.current?.cancel() }catch{}
+    setStatus('idle')
+    setText('')
+    onZonesDetected(null)
+  },[onZonesDetected])
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',height:'100%',gap:0}}>
+      {/* Header */}
+      <div style={{display:'flex',alignItems:'center',gap:8,padding:'8px 12px',
+        background:C.bg1,borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
+        <div style={{width:8,height:8,borderRadius:'50%',flexShrink:0,
+          background: status==='idle'?C.muted:status==='done'?C.green:status==='error'?C.red:C.teal,
+          boxShadow:(status==='loading'||status==='streaming')?`0 0 8px ${C.teal}`:'none',
+          transition:'all .3s'}}/>
+        <span style={{fontWeight:700,fontSize:12,color:C.text}}>🧠 IA Institucional SMC</span>
+        {status!=='idle'&&<span style={{fontSize:10,color:C.muted}}>
+          {status==='loading'?`Analizando${'.'.repeat(dots+1)}`
+           :status==='streaming'?'Escribiendo en vivo...'
+           :status==='done'?`✓ Listo`
+           :'Error'}
+        </span>}
+        <div style={{marginLeft:'auto',display:'flex',gap:6}}>
+          {(status==='loading'||status==='streaming')&&(
+            <button onClick={stop} style={{background:'rgba(255,107,107,.12)',border:`1px solid ${C.red}44`,
+              color:C.red,borderRadius:5,padding:'2px 9px',fontSize:10,fontWeight:700,cursor:'pointer'}}>
+              ■ Detener
+            </button>
+          )}
+          {(status==='done'||status==='error')&&(
+            <button onClick={reset} style={{background:C.bg3,border:`1px solid ${C.border}`,
+              color:C.muted,borderRadius:5,padding:'2px 9px',fontSize:10,cursor:'pointer'}}>
+              ↺
+            </button>
+          )}
         </div>
       </div>
 
-      {pnl&&<>
-        {/* KPIs principales */}
-        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))',gap:7}}>
-          {[
-            {l:'Puntos Netos',v:`${net>=0?'+':''}${net}`,c:netColor,big:true,sub:`${pnl.total} ops`},
-            {l:'Win Rate',v:`${pnl.winRate}%`,c:pnl.winRate>=60?C.green:pnl.winRate>=40?C.yellow:C.red,sub:`${pnl.wins}W / ${pnl.losses}L`},
-            {l:'Profit Factor',v:pnl.profitFactor,c:pfColor,sub:'Pts ganados / perdidos'},
-            {l:'Pts Ganados',v:`+${pnl.totalPtsWon}`,c:C.green,sub:`Prom: +${pnl.avgWin}/op`},
-            {l:'Pts Perdidos',v:`-${pnl.totalPtsLost}`,c:C.red,sub:`Prom: -${pnl.avgLoss}/op`},
-          ].map(({l,v,c,big,sub})=>(
-            <div key={l} className="card" style={{padding:'10px 14px'}}>
-              <div style={{fontSize:9,color:C.muted,marginBottom:3,textTransform:'uppercase',letterSpacing:'.05em'}}>{l}</div>
-              <div style={{fontSize:big?26:20,fontWeight:800,color:c||C.text}}>{v}</div>
-              {sub&&<div style={{fontSize:10,color:C.muted,marginTop:2}}>{sub}</div>}
+      {/* Content */}
+      {status==='idle'?(
+        <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',
+          justifyContent:'center',gap:20,padding:'24px 20px'}}>
+          {/* Decorative icon */}
+          <div style={{position:'relative'}}>
+            <div style={{width:64,height:64,borderRadius:'50%',
+              background:'linear-gradient(135deg,rgba(0,212,170,.15),rgba(167,139,250,.15))',
+              border:`2px solid ${C.teal}33`,
+              display:'flex',alignItems:'center',justifyContent:'center',fontSize:28}}>🧠</div>
+            <div style={{position:'absolute',inset:-4,borderRadius:'50%',
+              border:`1px solid ${C.teal}22`,animation:'pulse 2s ease-in-out infinite'}}/>
+          </div>
+          <div style={{textAlign:'center'}}>
+            <div style={{fontWeight:800,fontSize:14,color:C.text,marginBottom:8}}>
+              Análisis Institucional SMC
             </div>
-          ))}
-        </div>
-
-        {/* TP Breakdown */}
-        <div className="card" style={{padding:'11px 14px'}}>
-          <div style={{fontSize:10,fontWeight:600,color:C.muted,letterSpacing:'.05em',marginBottom:9}}>DESGLOSE POR TP</div>
-          <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:7}}>
-            {[
-              {l:'TP1',count:pnl.tpBreakdown?.tp1||0,pts:pnl.tpPoints?.tp1||0,c:C.teal},
-              {l:'TP2',count:pnl.tpBreakdown?.tp2||0,pts:pnl.tpPoints?.tp2||0,c:C.green},
-              {l:'TP3',count:pnl.tpBreakdown?.tp3||0,pts:pnl.tpPoints?.tp3||0,c:'#f0883e'}
-            ].map(tp=>(
-              <div key={tp.l} style={{background:C.bg2,borderRadius:7,padding:'9px 12px',
-                border:`1px solid ${tp.c}44`,textAlign:'center'}}>
-                <div style={{fontSize:10,color:tp.c,fontWeight:700,marginBottom:3}}>{tp.l}</div>
-                <div style={{fontSize:22,fontWeight:800,color:C.text}}>{tp.count}</div>
-                <div style={{fontSize:11,color:tp.c,marginTop:2}}>+{(+tp.pts).toFixed(1)} pts</div>
+            <div style={{fontSize:11,color:C.muted,lineHeight:1.7,maxWidth:260}}>
+              La IA lee los datos reales del mercado y analiza como un trader institucional:
+              flujo de dinero, zonas de liquidez, order blocks, FVG, escenarios y entradas.
+            </div>
+          </div>
+          <button onClick={activateAI}
+            style={{background:'linear-gradient(135deg,#0d4f3c,#1a6b52)',
+              border:`2px solid ${C.teal}`,color:C.teal,
+              borderRadius:10,padding:'13px 32px',fontSize:14,fontWeight:800,
+              cursor:'pointer',letterSpacing:'.04em',
+              boxShadow:`0 0 24px ${C.teal}22,inset 0 1px 0 rgba(255,255,255,.08)`}}>
+            ⚡ Activar IA
+          </button>
+          <div style={{display:'flex',flexDirection:'column',gap:4,width:'100%'}}>
+            {['📊 Contexto del flujo institucional',
+              '🎯 Zonas exactas que marcar',
+              '📈 Escenarios de precio',
+              '💡 Entrada inteligente SMC',
+              '❌ Errores del retail'].map(t=>(
+              <div key={t} style={{display:'flex',alignItems:'center',gap:8,
+                padding:'4px 8px',background:C.bg2,borderRadius:5,
+                border:`1px solid ${C.border}`}}>
+                <span style={{fontSize:11,color:C.muted}}>{t}</span>
               </div>
             ))}
           </div>
         </div>
-
-        {/* Curva de puntos por día */}
-        {pnl.equity?.length>0&&(
-          <div className="card" style={{padding:'11px 14px'}}>
-            <div style={{display:'flex',justifyContent:'space-between',marginBottom:8}}>
-              <div style={{fontSize:10,fontWeight:600,color:C.muted,letterSpacing:'.05em'}}>PUNTOS POR DÍA</div>
-              <div style={{fontSize:10,color:C.muted}}>{pnl.equity.length} días</div>
+      ):(
+        <div ref={scrollRef} style={{flex:1,overflowY:'auto',padding:'12px 14px',
+          scrollbarWidth:'thin',scrollbarColor:`${C.border} transparent`}}>
+          {/* Loading skeleton */}
+          {status==='loading'&&!text&&(
+            <div style={{display:'flex',flexDirection:'column',gap:10,padding:8}}>
+              {['Leyendo estructura del mercado','Detectando order blocks y FVGs','Analizando liquidez y flujo','Construyendo escenarios','Calculando entradas inteligentes'].map((t,i)=>(
+                <div key={i} style={{display:'flex',alignItems:'center',gap:10,
+                  opacity: i < dots+1 ? 1 : 0.3, transition:'opacity .3s'}}>
+                  <div style={{width:6,height:6,borderRadius:'50%',flexShrink:0,
+                    background: i < dots+1 ? C.teal : C.border,
+                    boxShadow: i < dots+1 ? `0 0 6px ${C.teal}` : 'none',
+                    transition:'all .3s'}}/>
+                  <span style={{fontSize:11,color: i < dots+1 ? C.text : C.muted}}>{t}</span>
+                </div>
+              ))}
             </div>
-            <EquityChart equity={pnl.equity}/>
-            <div style={{display:'flex',justifyContent:'space-between',marginTop:4,fontSize:10,color:C.muted}}>
-              <span>{pnl.equity[0]?.date}</span>
-              <span>{pnl.equity[pnl.equity.length-1]?.date}</span>
-            </div>
-          </div>
-        )}
+          )}
+          {/* Streamed text */}
+          {text && renderText(text)}
+          {/* Cursor */}
+          {status==='streaming'&&(
+            <span style={{display:'inline-block',width:2,height:14,background:C.teal,
+              animation:'pulse 0.7s ease-in-out infinite',marginLeft:2,verticalAlign:'middle',borderRadius:1}}/>
+          )}
+        </div>
+      )}
 
-        {/* Por modelo */}
-        {pnl.byModel?.length>0&&(
-          <div className="card" style={{padding:0,overflow:'hidden'}}>
-            <div style={{padding:'7px 13px',fontSize:10,fontWeight:600,color:C.muted,borderBottom:`1px solid ${C.border}`,letterSpacing:'.05em'}}>POR MODELO</div>
-            <div style={{overflowX:'auto'}}>
-              <table style={{width:'100%',borderCollapse:'collapse',fontSize:11,minWidth:360}}>
-                <thead><tr style={{background:C.bg2}}>
-                  {['Modelo','W','L','WR%','Pts Ganados','Pts Perdidos','Neto'].map(h=>(
-                    <th key={h} style={{padding:'6px 11px',textAlign:'left',color:C.muted,fontWeight:600,fontSize:10,borderBottom:`1px solid ${C.border}`}}>{h}</th>
-                  ))}
-                </tr></thead>
-                <tbody>{pnl.byModel.map(m=>(
-                  <tr key={m.model} style={{borderBottom:`1px solid ${C.border}22`}}>
-                    <td style={{padding:'7px 11px',color:C.teal,fontWeight:700,fontSize:10}}>{m.model}</td>
-                    <td style={{padding:'7px 11px',color:C.green,fontWeight:700}}>{m.wins}</td>
-                    <td style={{padding:'7px 11px',color:C.red}}>{m.losses}</td>
-                    <td style={{padding:'7px 11px',color:m.wr>=60?C.green:m.wr>=40?C.yellow:C.red,fontWeight:700}}>{m.wr}%</td>
-                    <td style={{padding:'7px 11px',color:C.green}}>+{(m.ptsWon||0).toFixed(1)}</td>
-                    <td style={{padding:'7px 11px',color:C.red}}>-{(m.ptsLost||0).toFixed(1)}</td>
-                    <td style={{padding:'7px 11px',color:m.net>=0?C.green:C.red,fontWeight:800}}>{m.net>=0?'+':''}{m.net}</td>
-                  </tr>
-                ))}</tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* Por activo */}
-        {pnl.byAsset?.length>0&&(
-          <div className="card" style={{padding:0,overflow:'hidden'}}>
-            <div style={{padding:'7px 13px',fontSize:10,fontWeight:600,color:C.muted,borderBottom:`1px solid ${C.border}`,letterSpacing:'.05em'}}>POR ACTIVO</div>
-            <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
-              <thead><tr style={{background:C.bg2}}>
-                {['Activo','W','L','WR%','Neto'].map(h=>(
-                  <th key={h} style={{padding:'6px 11px',textAlign:'left',color:C.muted,fontWeight:600,fontSize:10,borderBottom:`1px solid ${C.border}`}}>{h}</th>
-                ))}
-              </tr></thead>
-              <tbody>{pnl.byAsset.map(a=>(
-                <tr key={a.symbol} style={{borderBottom:`1px solid ${C.border}22`}}>
-                  <td style={{padding:'7px 11px',color:C.text,fontWeight:600}}>{a.name||a.symbol}</td>
-                  <td style={{padding:'7px 11px',color:C.green,fontWeight:700}}>{a.wins}</td>
-                  <td style={{padding:'7px 11px',color:C.red}}>{a.losses}</td>
-                  <td style={{padding:'7px 11px',color:a.wr>=60?C.green:a.wr>=40?C.yellow:C.red,fontWeight:700}}>{a.wr}%</td>
-                  <td style={{padding:'7px 11px',color:a.net>=0?C.green:C.red,fontWeight:800}}>{a.net>=0?'+':''}{a.net}</td>
-                </tr>
-              ))}</tbody>
-            </table>
-          </div>
-        )}
-      </>}
+      {/* Re-analyze button */}
+      {status==='done'&&(
+        <div style={{padding:'8px 12px',borderTop:`1px solid ${C.border}`,flexShrink:0}}>
+          <button onClick={activateAI}
+            style={{width:'100%',background:'rgba(0,212,170,.06)',
+              border:`1px solid ${C.tealDark}44`,
+              color:C.teal,borderRadius:6,padding:'8px',fontSize:11,fontWeight:700,cursor:'pointer',
+              letterSpacing:'.03em'}}>
+            🔄 Re-analizar mercado
+          </button>
+        </div>
+      )}
     </div>
   )
 }
 
-function HistorialPanel({signals}){
-  const closed=signals.filter(s=>s.status!=='PENDING')
-  if(!closed.length)return<p style={{color:C.muted,fontSize:13,padding:'20px 0'}}>Sin operaciones cerradas aún.</p>
-  return(
-    <div style={{overflowY:'auto',flex:1}}>
-      {closed.map(s=>{
-        const isWin=s.status==='WIN';const sc=isWin?C.green:C.red
-        return(
-          <div key={s.id} style={{background:isWin?'rgba(63,185,80,.07)':'rgba(255,107,107,.07)',
-            border:`1px solid ${sc}22`,borderLeft:`3px solid ${sc}`,
-            borderRadius:6,padding:'9px 13px',marginBottom:7}}>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
-              <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
-                <span style={{color:sc,fontWeight:700,fontSize:12}}>{isWin?'✅ WIN':'❌ LOSS'}</span>
-                <span style={{color:C.teal,fontSize:11,fontWeight:700}}>{s.action==='LONG'?'COMPRA':'VENTA'}</span>
-                <span style={{color:C.muted,fontSize:11}}>{s.assetName||s.symbol}</span>
-              </div>
-              <span style={{color:C.muted,fontSize:10}}>#{s.id} · {s.model}</span>
-            </div>
-            <div style={{display:'flex',gap:14,fontSize:11,flexWrap:'wrap'}}>
-              <span style={{color:C.muted}}>Entry <b style={{color:C.text}}>{s.entry?.toFixed(2)}</b></span>
-              <span style={{color:C.muted}}>SL <b style={{color:C.red}}>{s.stop?.toFixed(2)}</b></span>
-              <span style={{color:C.muted}}>TP1 <b style={{color:C.teal}}>{s.tp1?.toFixed(2)}</b></span>
-              <span style={{color:C.muted}}>Score <b style={{color:s.score>=82?C.green:C.yellow}}>{s.score}%</b></span>
-            </div>
-            <div style={{fontSize:10,color:C.muted,marginTop:3}}>
-              {new Date(s.timestamp).toLocaleString('es-CO',{timeZone:'America/Bogota',hour12:false})} · {s.reason}
-            </div>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-
-/* ─────────────────────────────────────────────────────── CONSTANTS */
+/* ─────────────────────────── CONSTANTS */
 const ASSETS={
   stpRNG:{name:'Step Index',shortName:'Step',emoji:'📊'},
   frxXAUUSD:{name:'Oro (XAU/USD)',shortName:'Oro',emoji:'🥇'},
@@ -964,47 +608,33 @@ const ASSETS={
 const TFS=['M1','M5','M15','H1']
 const NAV=[
   {icon:'⊞',label:'Dashboard',key:'dashboard'},
-  {icon:'◎',label:'Señales',key:'senales'},
-  {icon:'◇',label:'Stats',key:'stats'},
-  {icon:'≡',label:'Historial',key:'historial'},
-  {icon:'◈',label:'Modelos',key:'modelos'}
+  {icon:'◎',label:'Stats',key:'stats'},
 ]
 
 /* ═══════════════════════════════════════════════════════════════════════
-   MAIN DASHBOARD — hooks audit: todos al nivel superior, sin condicionales
+   MAIN DASHBOARD
    ═══════════════════════════════════════════════════════════════════════ */
 export default function Dashboard({user,subscription,onLogout}){
   const navigate=useNavigate()
   const canvasRef=useRef(null)
 
-  /* State — todos declarados incondicionalmente */
-  const[symbol,   setSymbol]  =useState('stpRNG')
+  const[symbol,   setSymbol]  =useState('frxXAUUSD')
   const[tf,       setTF]      =useState('M5')
   const[section,  setSection] =useState('dashboard')
   const[dash,     setDash]    =useState(null)
   const[analyze,  setAnalyze] =useState(null)
-  const[signals,  setSignals] =useState([])
   const[countdown,setCountdown]=useState(60)
-const[sidebarOpen,setSidebarOpen]=useState(true)
+  const[sidebarOpen,setSidebarOpen]=useState(true)
   const[zoom,     setZoom]    =useState(1)
   const[offsetX,  setOffsetX] =useState(0)
-  const[cardPos,  setCardPos] =useState({x:20,y:120})
-  const[cardVisible,setCardVisible]=useState(true)
-  const[conflictDismissed,setConflictDismissed]=useState(false)
-  const prevConflictKey=useRef('')
-
-  /* Reset cardVisible on new signal */
-  useEffect(()=>{setCardVisible(true)},[analyze?.lockedSignal?.id])
+  const[aiZones,  setAiZones] =useState(null) // zones detected by AI
+  const[panelW,   setPanelW]  =useState(340)  // AI panel width
 
   /* Fetch data */
   const fetchDash=useCallback(async()=>{
     try{
-      const[dRes,sRes]=await Promise.all([
-        fetch(`${API_URL}/api/dashboard/${encodeURIComponent(user.email)}`),
-        fetch(`${API_URL}/api/signals`)
-      ])
-      const d=await dRes.json();setDash(d)
-      const s=await sRes.json();setSignals(s.signals||[])
+      const r=await fetch(`${API_URL}/api/dashboard/${encodeURIComponent(user.email)}`)
+      const d=await r.json();setDash(d)
     }catch{}
   },[user.email])
 
@@ -1015,7 +645,7 @@ const[sidebarOpen,setSidebarOpen]=useState(true)
 
   useEffect(()=>{
     fetchDash();fetchAnalyze()
-    const id=setInterval(()=>{fetchDash();fetchAnalyze()},5000)
+    const id=setInterval(()=>{fetchDash();fetchAnalyze()},8000)
     return()=>clearInterval(id)
   },[fetchDash,fetchAnalyze])
 
@@ -1039,26 +669,12 @@ const[sidebarOpen,setSidebarOpen]=useState(true)
     return()=>window.removeEventListener('keydown',h)
   },[])
 
-  /* Derived data */
-  const assetData =dash?.assets?.find(a=>a.symbol===symbol)
-  const stats     =dash?.stats||{total:0,wins:0,losses:0,pending:0}
-  const wr        =stats.total>0?Math.round(stats.wins/stats.total*100):0
-  const lockedSig =analyze?.lockedSignal||assetData?.lockedSignal
-  const plan      =subscription?.plan||user?.plan||'free'
-  const planColor =plan==='elite'?C.teal:plan==='premium'?'#378ADD':plan==='basico'?C.green:C.muted
-
-  /* ✅ FIX: conflictData memoized para evitar re-renders infinitos */
-  const conflictData=useMemo(()=>detectConflict(lockedSig,analyze),[
-    lockedSig?.id, lockedSig?.action,
-    analyze?.price, analyze?.signal?.action, analyze?.signal?.score
-  ])
-
-  /* Auto-reset dismiss on new conflict */
-  useEffect(()=>{
-    if(!conflictData)return
-    const key=conflictData.conflicts.map(c=>c.type+c.title).join('|')
-    if(key!==prevConflictKey.current){prevConflictKey.current=key;setConflictDismissed(false)}
-  },[conflictData])
+  /* Derived */
+  const assetData=dash?.assets?.find(a=>a.symbol===symbol)
+  const stats=dash?.stats||{total:0,wins:0,losses:0,pending:0}
+  const wr=stats.total>0?Math.round(stats.wins/stats.total*100):0
+  const plan=subscription?.plan||user?.plan||'free'
+  const planColor=plan==='elite'?C.teal:plan==='premium'?'#378ADD':C.muted
 
   /* Chart render */
   const renderChart=useCallback(()=>{
@@ -1068,23 +684,24 @@ const[sidebarOpen,setSidebarOpen]=useState(true)
     const sKey=tf==='H1'?'supplyZonesH1':tf==='M15'?'supplyZonesM15':'supplyZones'
     const candles=analyze[cKey]
     if(!candles?.length)return
-    const ls=analyze.lockedSignal||assetData?.lockedSignal||null
     drawChart(canvasRef.current,{
       candles,
       demandZones:analyze[dKey]||[],
       supplyZones:analyze[sKey]||[],
+      fvgZones: tf==='M5'?(analyze.fvgZones||[]):[], // FVGs only on M5
+      liquidityLevels: tf==='M5'?(analyze.liquidityLevels||[]):[],
+      aiZones,
       choch:analyze.chartOverlays?.choch,
       bos:analyze.chartOverlays?.bos,
       chochM15:analyze.chartOverlays?.chochM15,
       bosM15:analyze.chartOverlays?.bosM15,
       structure:analyze.structureM5Data||{},
-      lockedSignal:ls, zoom, offsetX,
-      conflictData: section==='dashboard'?conflictData:null
+      zoom, offsetX,
+      premiumDiscount: analyze.premiumDiscount||'EQUILIBRIUM'
     })
-  },[analyze,tf,assetData,zoom,offsetX,conflictData,section])
+  },[analyze,tf,assetData,zoom,offsetX,aiZones])
 
   useEffect(()=>{renderChart()},[renderChart])
-
   useEffect(()=>{
     const obs=new ResizeObserver(()=>setTimeout(renderChart,40))
     if(canvasRef.current?.parentElement)obs.observe(canvasRef.current.parentElement)
@@ -1094,6 +711,15 @@ const[sidebarOpen,setSidebarOpen]=useState(true)
   /* ─── RENDER ─── */
   return(
     <div style={{display:'flex',flexDirection:'column',height:'100dvh',background:C.bg0,overflow:'hidden'}}>
+      <style>{`
+        @keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}
+        .btn-ghost{background:none;border:1px solid transparent;color:${C.muted};border-radius:5px;cursor:pointer;transition:all .15s}
+        .btn-ghost:hover{background:${C.bg3};border-color:${C.border};color:${C.text}}
+        .btn-ghost.active{background:${C.tealBg};border-color:${C.tealDark};color:${C.teal}}
+        ::-webkit-scrollbar{width:4px;height:4px}
+        ::-webkit-scrollbar-track{background:transparent}
+        ::-webkit-scrollbar-thumb{background:${C.border};border-radius:2px}
+      `}</style>
 
       {/* HEADER */}
       <header style={{background:C.bg1,borderBottom:`1px solid ${C.border}`,
@@ -1105,8 +731,8 @@ const[sidebarOpen,setSidebarOpen]=useState(true)
             border:`1px solid ${C.teal}`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:13}}>📊</div>
           <span style={{fontWeight:800,fontSize:13,color:C.teal}}>TradingPro</span>
         </div>
-        <span style={{background:'rgba(0,212,170,.1)',color:C.teal,fontSize:10,fontWeight:700,
-          padding:'2px 7px',borderRadius:20,border:`1px solid ${C.tealDark}`,flexShrink:0}}>6 Modelos SMC</span>
+        <span style={{background:'rgba(167,139,250,.1)',color:C.purple,fontSize:10,fontWeight:700,
+          padding:'2px 7px',borderRadius:20,border:`1px solid ${C.purple}66`,flexShrink:0}}>🧠 IA SMC</span>
         <div style={{display:'flex',gap:3,marginLeft:'auto',overflowX:'auto'}}>
           {TFS.map(t=>(
             <button key={t} className={`btn-ghost${tf===t?' active':''}`}
@@ -1117,16 +743,6 @@ const[sidebarOpen,setSidebarOpen]=useState(true)
           fontSize:11,fontWeight:800,padding:'3px 8px',border:`1px solid ${C.teal}`,borderRadius:5,flexShrink:0}}>
           ✓ {plan.toUpperCase()}
         </span>
-        {/* Mostrar señal oculta */}
-        {lockedSig&&!cardVisible&&(
-          <button onClick={()=>setCardVisible(true)} style={{
-            background:lockedSig.action==='LONG'||lockedSig.action==='BUY'?'rgba(0,212,170,.15)':'rgba(255,107,107,.15)',
-            color:lockedSig.action==='LONG'||lockedSig.action==='BUY'?C.teal:C.red,
-            border:`1px solid ${lockedSig.action==='LONG'||lockedSig.action==='BUY'?C.teal:C.red}`,
-            borderRadius:6,padding:'3px 8px',fontSize:10,fontWeight:700,cursor:'pointer',flexShrink:0}}>
-            {lockedSig.action==='LONG'||lockedSig.action==='BUY'?'📈':'📉'} Ver señal
-          </button>
-        )}
         {user.isAdmin&&(
           <button onClick={()=>navigate('/admin')} className="btn-ghost" style={{padding:'3px 9px',fontSize:11}}>Admin</button>
         )}
@@ -1146,8 +762,7 @@ const[sidebarOpen,setSidebarOpen]=useState(true)
           flexShrink:0,transition:'width .2s,min-width .2s'
         }}>
           {NAV.map(n=>(
-            <div key={n.key}
-              onClick={()=>n.key==='modelos'?navigate('/modelos'):setSection(n.key)}
+            <div key={n.key} onClick={()=>setSection(n.key)}
               style={{display:'flex',alignItems:'center',gap:8,padding:'7px 10px',
                 fontSize:12,cursor:'pointer',borderRadius:6,margin:'1px 5px',whiteSpace:'nowrap',
                 color:section===n.key?C.teal:C.muted,
@@ -1163,7 +778,7 @@ const[sidebarOpen,setSidebarOpen]=useState(true)
             const trend=ad?.structureM5||'LOADING'
             const tc=trend==='BULLISH'?C.teal:trend==='BEARISH'?C.red:C.muted
             return(
-              <div key={sym} onClick={()=>{setSymbol(sym);setSection('dashboard')}}
+              <div key={sym} onClick={()=>{setSymbol(sym);setAiZones(null)}}
                 style={{display:'flex',alignItems:'center',gap:7,padding:'7px 10px',
                   fontSize:11,cursor:'pointer',borderRadius:6,margin:'1px 5px',
                   background:isAct?C.bg3:'transparent',border:`1px solid ${isAct?C.border:'transparent'}`}}>
@@ -1173,14 +788,14 @@ const[sidebarOpen,setSidebarOpen]=useState(true)
                   <div style={{fontWeight:600,color:C.text,fontSize:11,whiteSpace:'nowrap'}}>{cfg.shortName}</div>
                   <div style={{fontSize:9,color:tc,fontWeight:700}}>{trend}</div>
                 </div>
-                {ad?.lockedSignal&&<span style={{width:7,height:7,borderRadius:'50%',background:C.teal,flexShrink:0}}/>}
               </div>
             )
           })}
         </aside>
 
-        {/* MAIN */}
+        {/* MAIN CONTENT */}
         <main style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden',minWidth:0}}>
+
           {/* Stats row */}
           <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:6,
             padding:'6px 10px',borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
@@ -1190,119 +805,103 @@ const[sidebarOpen,setSidebarOpen]=useState(true)
             <StatCard label="LOSS"     value={stats.losses||0}  sub="Pérdidas"   color={C.red}/>
           </div>
 
-          <div style={{flex:1,display:'flex',flexDirection:'column',padding:'6px 10px',gap:5,overflow:'hidden'}}>
+          {/* CHART + AI PANEL LAYOUT */}
+          <div style={{flex:1,display:'flex',overflow:'hidden'}}>
 
-            {/* DASHBOARD */}
-            {section==='dashboard'&&(
-              <>
-                <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',flexShrink:0}}>
-                  <span style={{fontSize:18}}>{ASSETS[symbol]?.emoji}</span>
-                  <span style={{fontWeight:700,fontSize:13,color:C.text}}>{ASSETS[symbol]?.name}</span>
-                  <StructTag label="M5"  trend={assetData?.structureM5}/>
-                  <StructTag label="M15" trend={assetData?.structureM15}/>
-                  <StructTag label="H1"  trend={assetData?.structureH1}/>
-                  {assetData?.mtfConfluence&&(
-                    <span style={{fontSize:10,fontWeight:700,color:C.teal,background:'rgba(0,212,170,.08)',
-                      padding:'2px 7px',borderRadius:4,border:`1px solid ${C.teal}44`}}>★ MTF</span>
-                  )}
-                  <div style={{marginLeft:'auto',textAlign:'right'}}>
-                    <div style={{fontSize:20,fontWeight:800,color:C.text,fontVariantNumeric:'tabular-nums'}}>
-                      {analyze?.price?.toFixed(2)||assetData?.price?.toFixed(2)||'···'}
-                    </div>
-                    <div style={{fontSize:9,color:C.muted}}>
-                      {tf} · {(tf==='M5'?analyze?.candles:tf==='H1'?analyze?.candlesH1:tf==='M15'?analyze?.candlesM15:analyze?.candlesM1)?.length||0} velas
-                    </div>
+            {/* LEFT: Chart area */}
+            <div style={{flex:1,display:'flex',flexDirection:'column',padding:'6px 6px 6px 10px',gap:5,overflow:'hidden',minWidth:0}}>
+
+              {/* Asset info bar */}
+              <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',flexShrink:0}}>
+                <span style={{fontSize:18}}>{ASSETS[symbol]?.emoji}</span>
+                <span style={{fontWeight:700,fontSize:13,color:C.text}}>{ASSETS[symbol]?.name}</span>
+                <StructTag label="M5"  trend={assetData?.structureM5}/>
+                <StructTag label="M15" trend={assetData?.structureM15}/>
+                <StructTag label="H1"  trend={assetData?.structureH1}/>
+                {assetData?.mtfConfluence&&(
+                  <span style={{fontSize:10,fontWeight:700,color:C.teal,background:'rgba(0,212,170,.08)',
+                    padding:'2px 7px',borderRadius:4,border:`1px solid ${C.teal}44`}}>★ MTF</span>
+                )}
+                {analyze?.premiumDiscount&&analyze.premiumDiscount!=='EQUILIBRIUM'&&(
+                  <span style={{fontSize:10,fontWeight:700,
+                    color:analyze.premiumDiscount==='PREMIUM'?C.red:C.green,
+                    background:analyze.premiumDiscount==='PREMIUM'?'rgba(255,107,107,.1)':'rgba(63,185,80,.1)',
+                    padding:'2px 7px',borderRadius:4}}>
+                    {analyze.premiumDiscount==='PREMIUM'?'⬆ PREMIUM':'⬇ DISCOUNT'}
+                  </span>
+                )}
+                {aiZones&&(
+                  <span style={{fontSize:10,fontWeight:700,color:C.purple,background:'rgba(167,139,250,.1)',
+                    padding:'2px 7px',borderRadius:4,border:`1px solid ${C.purple}44`}}>🧠 IA activa</span>
+                )}
+                <div style={{marginLeft:'auto',textAlign:'right'}}>
+                  <div style={{fontSize:20,fontWeight:800,color:C.text,fontVariantNumeric:'tabular-nums'}}>
+                    {analyze?.price?.toFixed(2)||assetData?.price?.toFixed(2)||'···'}
+                  </div>
+                  <div style={{fontSize:9,color:C.muted}}>
+                    {tf} · {(tf==='M5'?analyze?.candles:tf==='H1'?analyze?.candlesH1:tf==='M15'?analyze?.candlesM15:analyze?.candlesM1)?.length||0} velas
                   </div>
                 </div>
+              </div>
 
-                <ChartContainer zoom={zoom} setZoom={setZoom} offsetX={offsetX} setOffsetX={setOffsetX}>
-                  <canvas ref={canvasRef}
-                    style={{width:'100%',height:'100%',borderRadius:8,border:`1px solid ${C.border}`,display:'block'}}/>
-                  {!analyze&&(
-                    <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',
-                      justifyContent:'center',color:C.muted}}>
-                      <div style={{textAlign:'center'}}>
-                        <div style={{fontSize:22,marginBottom:8}}>⟳</div>
-                        <div style={{fontSize:13}}>Cargando datos del mercado...</div>
-                      </div>
+              {/* Chart */}
+              <ChartContainer zoom={zoom} setZoom={setZoom} offsetX={offsetX} setOffsetX={setOffsetX}>
+                <canvas ref={canvasRef}
+                  style={{width:'100%',height:'100%',borderRadius:8,border:`1px solid ${C.border}`,display:'block'}}/>
+                {!analyze&&(
+                  <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',
+                    justifyContent:'center',color:C.muted}}>
+                    <div style={{textAlign:'center'}}>
+                      <div style={{fontSize:22,marginBottom:8}}>⟳</div>
+                      <div style={{fontSize:13}}>Cargando datos del mercado...</div>
                     </div>
-                  )}
-                </ChartContainer>
-
-                {analyze?.signal&&(
-                  <div style={{background:C.bg2,border:`1px solid ${C.border}`,borderRadius:6,
-                    padding:'5px 10px',display:'flex',alignItems:'center',gap:8,flexShrink:0,flexWrap:'wrap'}}>
-                    <span style={{fontSize:10,color:C.muted}}>Modelo:</span>
-                    <span style={{fontSize:11,fontWeight:700,color:C.teal}}>{analyze.signal.model}</span>
-                    <span style={{fontSize:10,color:C.muted}}>Score:</span>
-                    <span style={{fontSize:11,fontWeight:700,color:analyze.signal.score>=82?C.green:C.yellow}}>{analyze.signal.score}%</span>
-                    <Pill type={analyze.signal.action} text={
-                      analyze.signal.action==='LONG'?'COMPRA':analyze.signal.action==='SHORT'?'VENTA':
-                      analyze.signal.action==='WAIT'?'ESPERAR':'CARGANDO'}/>
-                    <span style={{fontSize:10,color:C.muted,marginLeft:'auto',
-                      maxWidth:300,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-                      {analyze.signal.reason}
-                    </span>
                   </div>
                 )}
+              </ChartContainer>
 
-                {analyze?.m1Steps&&(
-                  <div style={{background:C.bg2,border:`1px solid ${C.border}`,borderRadius:6,
-                    padding:'4px 10px',display:'flex',alignItems:'center',gap:5,flexShrink:0,flexWrap:'wrap'}}>
-                    <span style={{fontSize:10,color:C.muted,fontWeight:600}}>M1 PRECISION:</span>
-                    {[['H1 ✓','h1ok'],['M15 ✓','m15ok'],['M5 ✓','m5ok'],['Zona M15','zoneok'],['Conf M1','m1conf']].map(([lbl,key])=>(
-                      <span key={key} style={{fontSize:10,fontWeight:700,padding:'1px 7px',borderRadius:4,
-                        background:analyze.m1Steps[key]?C.tealBg:C.bg3,
-                        color:analyze.m1Steps[key]?C.teal:C.muted,
-                        border:`1px solid ${analyze.m1Steps[key]?C.tealDark:C.border}`}}>{lbl}</span>
-                    ))}
-                    <span style={{marginLeft:'auto',fontSize:10,color:C.teal,fontWeight:700}}>{analyze.m1Steps.readyCount}/5</span>
+              {/* Legend row */}
+              <div style={{display:'flex',gap:8,flexShrink:0,flexWrap:'wrap',padding:'2px 0'}}>
+                {[
+                  {col:C.green,label:'OB Demanda'},
+                  {col:C.red,label:'OB Oferta'},
+                  {col:C.blue,label:'FVG Alcista'},
+                  {col:C.orange,label:'FVG Bajista'},
+                  {col:'rgba(255,107,107,.7)',label:'BSL (liquidez compra)'},
+                  {col:'rgba(63,185,80,.7)',label:'SSL (liquidez venta)'},
+                  {col:C.purple,label:'Zonas IA'},
+                ].map(({col,label})=>(
+                  <div key={label} style={{display:'flex',alignItems:'center',gap:4}}>
+                    <div style={{width:10,height:10,borderRadius:2,background:col+'44',border:`1px solid ${col}`}}/>
+                    <span style={{fontSize:9,color:C.muted}}>{label}</span>
                   </div>
-                )}
-              </>
-            )}
+                ))}
+              </div>
+            </div>
 
-            {section==='senales'&&(
-              <div style={{flex:1,overflow:'hidden',display:'flex',flexDirection:'column',gap:7}}>
-                <div style={{display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
-                  <h2 style={{fontSize:14,fontWeight:700,color:C.text,margin:0}}>◎ Señales</h2>
-                  <span style={{fontSize:11,color:C.muted}}>{signals.length} registradas</span>
-                  <button onClick={fetchDash} className="btn-ghost" style={{marginLeft:'auto',padding:'3px 10px',fontSize:11}}>↻ Actualizar</button>
-                </div>
-                <SenalesPanel signals={signals}/>
-              </div>
-            )}
-            {section==='stats'&&(
-              <div style={{flex:1,overflow:'hidden',display:'flex',flexDirection:'column',gap:7}}>
-                <h2 style={{fontSize:14,fontWeight:700,color:C.text,margin:0,flexShrink:0}}>◇ Estadísticas</h2>
-                <StatsPanel stats={stats} signals={signals}/>
-              </div>
-            )}
-            {section==='historial'&&(
-              <div style={{flex:1,overflow:'hidden',display:'flex',flexDirection:'column',gap:7}}>
-                <div style={{display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
-                  <h2 style={{fontSize:14,fontWeight:700,color:C.text,margin:0}}>≡ Historial</h2>
-                  <span style={{fontSize:11,color:C.muted}}>{signals.filter(s=>s.status!=='PENDING').length} cerradas</span>
-                </div>
-                <HistorialPanel signals={signals}/>
-              </div>
-            )}
+            {/* RIGHT: AI Analysis Panel */}
+            <div style={{
+              width:panelW,
+              minWidth:panelW,
+              maxWidth:panelW,
+              display:'flex',
+              flexDirection:'column',
+              borderLeft:`1px solid ${C.border}`,
+              background:C.bg0,
+              flexShrink:0
+            }}>
+              <AIAnalysisPanel
+                symbol={symbol}
+                onZonesDetected={setAiZones}
+              />
+            </div>
           </div>
 
-          {/* Scanner bar */}
+          {/* Bottom status bar */}
           <div style={{background:C.bg1,borderTop:`1px solid ${C.border}`,
             padding:'4px 12px',display:'flex',alignItems:'center',gap:8,flexShrink:0,flexWrap:'wrap'}}>
             <span style={{width:7,height:7,borderRadius:'50%',background:C.teal,display:'inline-block'}}/>
-            <span style={{fontSize:10,color:C.muted}}>Scanner · próx</span>
+            <span style={{fontSize:10,color:C.muted}}>Datos en vivo · actualiza cada</span>
             <span style={{fontSize:10,fontWeight:700,color:C.teal}}>{countdown}s</span>
-            <Pill type={lockedSig?lockedSig.action:analyze?.signal?.action||'LOADING'}
-              text={lockedSig?`${lockedSig.action==='LONG'||lockedSig.action==='BUY'?'COMPRA':'VENTA'} #${lockedSig.id}`:
-                analyze?.signal?.action==='LONG'?'COMPRA':analyze?.signal?.action==='SHORT'?'VENTA':'ESPERANDO'}/>
-            {conflictData&&!conflictDismissed&&(
-              <span style={{fontSize:9,fontWeight:700,color:C.yellow,
-                background:'rgba(249,202,36,.1)',padding:'1px 6px',borderRadius:4,
-                border:'1px solid rgba(249,202,36,.3)'}}>⚠️ CONFLICTO</span>
-            )}
             <span style={{fontSize:9,color:C.border,marginLeft:'auto'}}>+/− zoom · ← → pan · 0 reset</span>
             <span style={{fontSize:10,color:C.muted}}>{new Date().toLocaleTimeString('es',{hour12:false})}</span>
             <button onClick={()=>{fetchDash();fetchAnalyze()}}
@@ -1310,23 +909,6 @@ const[sidebarOpen,setSidebarOpen]=useState(true)
           </div>
         </main>
       </div>
-
-      {/* FLOATING PANELS — renderizados FUERA del layout principal */}
-
-      {/* Signal card — draggable */}
-      {lockedSig&&section==='dashboard'&&(
-        <SignalCard
-          signal={lockedSig} assetConfig={ASSETS[symbol]}
-          cardPos={cardPos} setCardPos={setCardPos}
-          cardVisible={cardVisible} setCardVisible={setCardVisible}
-          hasConflict={!!conflictData}/>
-      )}
-
-      {/* Conflict alert */}
-      {conflictData&&!conflictDismissed&&section==='dashboard'&&(
-        <ConflictAlert conflictData={conflictData} onDismiss={()=>setConflictDismissed(true)}/>
-      )}
-
     </div>
   )
 }

@@ -15,7 +15,7 @@
 // --------------------------------
 // PORT                    - Puerto del servidor (default: 3001)
 // DERIV_APP_ID           - App ID de Deriv (default: 1089)
-// OPENAI_API_KEY         - API Key de OpenAI para ELISA IA
+// ANTHROPIC_API_KEY      - API Key de Anthropic para IA SMC Institucional
 // SUPABASE_URL           - URL del proyecto Supabase
 // SUPABASE_SERVICE_ROLE_KEY - Service Role Key de Supabase
 // TELEGRAM_BOT_TOKEN     - Token del bot de Telegram
@@ -41,14 +41,14 @@ const __dirname = path.dirname(__filename);
 dotenv.config();
 
 // =============================================
-// CONFIGURACIÓN OPENAI - ELISA IA
+// CONFIGURACIÓN OPENAI - IA SMC INSTITUCIONAL
 // =============================================
 let openai = null;
-if (process.env.CLAVE_API_DE_OPENAI || process.env.OPENAI_API_KEY) {
-  openai = new OpenAI({ apiKey: process.env.CLAVE_API_DE_OPENAI || process.env.OPENAI_API_KEY });
-  console.log('✅ OpenAI conectado - ELISA IA activa');
+if (process.env.OPENAI_API_KEY) {
+  openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  console.log('✅ OpenAI conectado - IA SMC activa');
 } else {
-  console.log('⚠️ OPENAI_API_KEY no encontrada - ELISA en modo fallback');
+  console.log('⚠️ OPENAI_API_KEY no encontrada - IA en modo sin análisis');
 }
 
 // Cargar modelos SMC desde JSON
@@ -4752,111 +4752,8 @@ const Elisa = {
   // CHAT CON OPENAI - ANÁLISIS EN TIEMPO REAL
   // ═══════════════════════════════════════════
   async chatWithAI(question, symbol) {
-    const ctx = this.getContext(symbol);
-    
-    // ═══════════════════════════════════════════
-    // PRIMERO: Revisar comandos específicos de ELISA MENTOR
-    // Estos tienen respuestas predefinidas y no necesitan OpenAI
-    // ═══════════════════════════════════════════
-    const q = (question || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-    
-    // Comandos de Mentor - usar respuestas estáticas
-    if (q.includes('mentor') || q.includes('aprender') || q.includes('curso') || q.includes('enseña') ||
-        q.includes('psicotrading') || q.includes('emociones') || q.includes('psicologia') || q.includes('mentalidad') ||
-        q.includes('plan de trading') || q.includes('estrategia') || q.includes('mi plan') ||
-        q.includes('simulador') || q.includes('practica') || q.includes('demo') || q.includes('papel') ||
-        q.includes('patrones smc') || q.includes('patrones') || q.includes('setups') || q.includes('formaciones') ||
-        q.includes('control') || q.includes('operaciones diarias') || q.includes('limite') || q.includes('cuantas') ||
-        q.includes('ayuda') || q.includes('help') || q.includes('comando') ||
-        q.includes('modelos') || q.includes('stats') || q.includes('estadisticas') ||
-        q.includes('senal') || q.includes('signal') || q.includes('operacion') ||
-        q.includes('zonas') || q.includes('zones') || q.includes('precio') || q.includes('price')) {
-      // Usar respuestas estáticas del chat normal
-      return this.chat(question, symbol);
-    }
-    
-    // Si no hay OpenAI, usar respuesta estática
-    if (!openai) {
-      return this.chat(question, symbol);
-    }
-    
-    try {
-      // Construir el prompt del sistema con contexto SMC
-      const systemPrompt = `Eres ELISA (Expert Learning Intelligent Signal Analyst), una trader profesional de Smart Money Concepts.
-
-PERSONALIDAD:
-- Amigable, cercana y empática como una mentora de trading
-- Hablas natural, no robótico. Usas expresiones coloquiales pero profesionales
-- 8+ años de experiencia en trading institucional
-- Usas emojis con moderación
-- NUNCA dices que eres IA o bot. Eres ELISA, una trader profesional
-
-EXPERTISE - SOLO SMC PURO (NO usas RSI, MACD, EMA ni indicadores):
-- Market Structure (HH, HL, LH, LL)
-- Order Blocks (zonas de demanda/supply)
-- Fair Value Gaps (FVG) - desequilibrios de precio
-- Liquidity (Equal Highs/Lows, sweeps)
-- Premium/Discount (zonas de valor)
-- BOS (Break of Structure)
-- CHoCH (Change of Character)
-
-TUS 12 MODELOS SMC:
-🏆 TIER S (95pts): 1. MTF_CONFLUENCE - H1+M5 alineados + OB
-⭐ TIER A (85-92pts): 2. CHOCH_PULLBACK, 3. LIQUIDITY_GRAB, 4. OB_ENTRY, 5. FVG_ENTRY
-✅ TIER B (78-85pts): 6. BOS_CONTINUATION, 7. BREAKER_BLOCK, 8. MITIGATION_BLOCK
-📊 TIER C (72-78pts): 9. EQH_EQL, 10. SWING_FAILURE
-🚀 ESPECIALES: 11. BOOM_SPIKE, 12. CRASH_SPIKE
-
-MÓDULO MENTOR (si preguntan sobre aprender):
-- Di "mentor" para ver el menú de la academia
-- Puedo enseñar: psicotrading, plan de trading, simulador, patrones SMC, control de operaciones
-- Máximo 10 operaciones diarias para no sobreoperar
-
-REGLAS: Score mínimo 75. R:R mínimo 1:1.5. Siempre esperas confirmación.
-
-${ctx ? `
-CONTEXTO ACTUAL DEL MERCADO:
-- Activo: ${ctx.name} (${symbol})
-- Precio: ${ctx.price?.toFixed(ctx.decimals)}
-- Estructura M5: ${ctx.structureM5}
-- Estructura H1: ${ctx.structureH1}
-- MTF Confluence: ${ctx.mtfConfluence ? 'SÍ' : 'NO'}
-- Premium/Discount: ${ctx.premiumDiscount}
-- Zonas Demanda: ${ctx.demandZones?.length || 0}
-- Zonas Supply: ${ctx.supplyZones?.length || 0}
-- FVGs: ${ctx.fvgZones?.length || 0}
-- Señal activa: ${ctx.lockedSignal ? ctx.lockedSignal.action + ' @ ' + ctx.lockedSignal.entry : 'Ninguna'}
-` : ''}
-
-ESTADÍSTICAS: Win Rate: ${stats.total > 0 ? (stats.wins/stats.total*100).toFixed(1) : 0}% | Trades: ${stats.total}
-
-Responde conciso (máx 200 palabras). Explica el "por qué" SMC de tu análisis.`;
-
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: question }
-        ],
-        temperature: 0.7,
-        max_tokens: 500
-      });
-
-      const aiResponse = completion.choices[0]?.message?.content;
-      
-      if (aiResponse) {
-        return { 
-          answer: aiResponse, 
-          type: 'ai',
-          model: 'gpt-4o-mini',
-          tokens: completion.usage?.total_tokens
-        };
-      }
-    } catch (error) {
-      console.log('⚠️ Error OpenAI:', error.message);
-    }
-    
-    // Fallback a respuesta estática si falla OpenAI
+    // Legacy: now just uses static fallback
+    // Real AI analysis is handled by /api/ai/analyze-chart endpoint
     return this.chat(question, symbol);
   }
 };
@@ -5993,7 +5890,10 @@ app.get('/api/analyze/:symbol', (req, res) => {
     m15Loaded: data.m15Loaded,
     m1Loaded:  data.m1Loaded,
     mtfConfluence:  data.mtfConfluence,
-    premiumDiscount: data.premiumDiscount
+    premiumDiscount: data.premiumDiscount,
+    // SMC zones for AI analysis and chart drawing
+    fvgZones:        data.fvgZones        || [],
+    liquidityLevels: data.liquidityLevels || [],
   });
 });
 
@@ -6265,13 +6165,161 @@ app.post('/api/reports/trade', async (req, res) => {
 app.post('/api/ai/chat', async (req, res) => {
   const { question, symbol } = req.body;
   try {
-    // Usar chat con IA si OpenAI está disponible
     const response = await Elisa.chatWithAI(question || '', symbol || 'stpRNG');
     res.json(response);
   } catch (error) {
     console.log('⚠️ Error en chat:', error.message);
-    // Fallback a respuesta estática
     res.json(Elisa.chat(question || '', symbol || 'stpRNG'));
+  }
+});
+
+// =============================================
+// IA SMC INSTITUCIONAL — ANÁLISIS DEL GRÁFICO
+// Claude analiza el mercado con contexto real y
+// transmite el análisis en streaming al frontend
+// =============================================
+app.post('/api/ai/analyze-chart', async (req, res) => {
+  const { symbol } = req.body;
+
+  if (!openai) {
+    return res.status(503).json({ error: 'OPENAI_API_KEY no configurada en Railway.' });
+  }
+
+  const data = assetData[symbol];
+  const config = ASSETS[symbol];
+  if (!data || !config) {
+    return res.status(404).json({ error: 'Activo no encontrado.' });
+  }
+
+  // ── Construir contexto SMC real del mercado ──
+  const dec = config.decimals || 2;
+  const price = data.price;
+
+  const candles5 = (data.candles || []).slice(-5).map(c => ({
+    o: c.open?.toFixed(dec), h: c.high?.toFixed(dec),
+    l: c.low?.toFixed(dec),  c: c.close?.toFixed(dec)
+  }));
+
+  const demandActivas = (data.demandZones || []).filter(z => !z.mitigated).slice(0, 4);
+  const supplyActivas = (data.supplyZones || []).filter(z => !z.mitigated).slice(0, 4);
+  const fvgs = (data.fvgZones || []).slice(-5);
+  const liquidity = (data.liquidityLevels || []);
+  const swings = (data.swings || []);
+
+  const swingHighs = swings.filter(s => s.type === 'high').slice(-4).map(s => s.price?.toFixed(dec));
+  const swingLows  = swings.filter(s => s.type === 'low').slice(-4).map(s => s.price?.toFixed(dec));
+
+  // OTE Fibonacci del último impulso
+  const lastHigh = swingHighs.length ? parseFloat(swingHighs[swingHighs.length - 1]) : null;
+  const lastLow  = swingLows.length  ? parseFloat(swingLows[swingLows.length - 1])  : null;
+  const impulseRange = lastHigh && lastLow ? Math.abs(lastHigh - lastLow) : null;
+  const structUp = data.structure?.trend === 'BULLISH';
+  const fib618 = impulseRange ? (structUp ? lastHigh - impulseRange * 0.618 : lastLow + impulseRange * 0.618).toFixed(dec) : null;
+  const fib705 = impulseRange ? (structUp ? lastHigh - impulseRange * 0.705 : lastLow + impulseRange * 0.705).toFixed(dec) : null;
+  const fib786 = impulseRange ? (structUp ? lastHigh - impulseRange * 0.786 : lastLow + impulseRange * 0.786).toFixed(dec) : null;
+
+  const choch = data.choch;
+  const bos   = data.bos;
+  const pd    = data.premiumDiscount || 'EQUILIBRIUM';
+
+  const systemPrompt = `Eres un trader institucional experto en Smart Money Concepts (SMC). 
+Operas y enseñas con datos reales del mercado. NUNCA usas indicadores (sin RSI, MACD, EMA, Bollinger, Stoch).
+Solo usas: precio puro, estructura, liquidez, order blocks, FVG, premium/discount, BOS, CHoCH.
+
+Cuando analizas, escribes como un trader institucional de verdad hablándole a un estudiante:
+- Específico con precios exactos (los que te dan en el contexto)
+- Explicas el POR QUÉ institucional de cada zona
+- Dices qué está haciendo el dinero inteligente y qué hace el retail (para que el estudiante entienda la diferencia)
+- Tono directo, profesional, sin rodeos
+
+Tu análisis SIEMPRE tiene estas secciones con estos títulos EXACTOS:
+
+## 📊 CONTEXTO DEL FLUJO INSTITUCIONAL
+## 🎯 ZONAS QUE DEBES MARCAR
+## 📈 ESCENARIOS DE PRECIO
+## 💡 ENTRADA INTELIGENTE
+## ❌ ERRORES DEL RETAIL
+## 🔍 LECTURA DEL FLUJO AHORA`;
+
+  const userMsg = `Analiza este mercado AHORA en tiempo real:
+
+ACTIVO: ${config.name} (${symbol})
+PRECIO ACTUAL: ${price?.toFixed(dec)}
+
+ESTRUCTURA DE MERCADO:
+- M5: ${data.structure?.trend || 'NEUTRAL'} (fuerza: ${data.structure?.strength || 0}%)
+- M15: ${data.structureM15?.trend || 'CARGANDO'}
+- H1: ${data.structureH1?.trend || 'CARGANDO'}
+- Confluencia Multi-Timeframe: ${data.mtfConfluence ? 'SÍ ✅' : 'NO ❌'}
+- Zona actual: ${pd}
+
+ORDER BLOCKS ACTIVOS (sin mitigar):
+DEMANDA (compras institucionales):
+${demandActivas.length ? demandActivas.map(z => `  • [${z.low?.toFixed(dec)} — ${z.high?.toFixed(dec)}]${z.isStructureOB ? ' ★ ESTRUCTURAL (máxima importancia)' : ''}`).join('\n') : '  • Ninguno detectado'}
+
+OFERTA (ventas institucionales):
+${supplyActivas.length ? supplyActivas.map(z => `  • [${z.low?.toFixed(dec)} — ${z.high?.toFixed(dec)}]${z.isStructureOB ? ' ★ ESTRUCTURAL (máxima importancia)' : ''}`).join('\n') : '  • Ninguno detectado'}
+
+FAIR VALUE GAPS (desequilibrios / imanes de precio):
+${fvgs.length ? fvgs.map(f => `  • ${f.side === 'BUY' ? 'Alcista' : 'Bajista'} [${f.low?.toFixed(dec)} — ${f.high?.toFixed(dec)}]`).join('\n') : '  • Ninguno reciente'}
+
+LIQUIDEZ EXTERNA (donde están los stops):
+Buy Side Liquidity (stops de vendedores): ${swingHighs.slice(-2).join(', ') || 'N/A'}
+Sell Side Liquidity (stops de compradores): ${swingLows.slice(-2).join(', ') || 'N/A'}
+${liquidity.length ? liquidity.map(l => `  • ${l.type === 'EQUAL_HIGHS' ? 'Equal Highs (BSL)' : 'Equal Lows (SSL)'}: ${l.price?.toFixed(dec)} (${l.touches}x tocado)`).join('\n') : ''}
+
+CAMBIOS DE ESTRUCTURA DETECTADOS:
+CHoCH: ${choch ? `${choch.type === 'BULLISH_CHOCH' ? '↑ Alcista' : '↓ Bajista'} en ${choch.level?.toFixed(dec)}` : 'No detectado'}
+BOS: ${bos ? `${bos.side === 'BUY' ? '↑ Alcista' : '↓ Bajista'} en ${bos.level?.toFixed(dec)}` : 'No detectado'}
+
+OTE — FIBONACCI DEL IMPULSO (zona óptima de entrada):
+61.8%: ${fib618 || 'N/A'}
+70.5%: ${fib705 || 'N/A'}
+78.6%: ${fib786 || 'N/A'}
+
+ÚLTIMAS 5 VELAS M5:
+${candles5.map((c, i) => `  Vela ${i + 1}: O:${c.o} H:${c.h} L:${c.l} C:${c.c}`).join('\n')}
+
+Con TODOS estos datos reales, dame el análisis SMC institucional completo. 
+Sé específico con los precios. Explica qué está haciendo el institucional, qué zonas marcar, los escenarios probables y la entrada inteligente.
+Al final incluye exactamente esta línea con los 3-6 niveles clave más importantes (precios numéricos reales):
+ZONAS_IA:{"keyLevels":[{"price":NUMERO,"type":"resistance","label":"TEXTO"},{"price":NUMERO,"type":"support","label":"TEXTO"}]}`;
+
+  // ── Streaming con Server-Sent Events ──
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+
+  try {
+    console.log(`🧠 [IA] Analizando ${config.name} @ ${price?.toFixed(dec)}`);
+
+    const stream = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      max_tokens: 1800,
+      stream: true,
+      temperature: 0.4,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user',   content: userMsg }
+      ]
+    });
+
+    for await (const chunk of stream) {
+      const delta = chunk.choices[0]?.delta?.content;
+      if (delta) {
+        res.write(`data: ${JSON.stringify({ type: 'text', text: delta })}\n\n`);
+      }
+      if (chunk.choices[0]?.finish_reason === 'stop') {
+        res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+      }
+    }
+
+  } catch (err) {
+    console.error('⚠️ [IA] Error OpenAI:', err.message);
+    res.write(`data: ${JSON.stringify({ type: 'error', message: err.message })}\n\n`);
+  } finally {
+    res.end();
   }
 });
 
