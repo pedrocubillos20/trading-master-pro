@@ -1,3 +1,6 @@
+// Trading Master Pro v25.0 — IA SMC Institucional
+// Señales automáticas ELIMINADAS — la IA analiza y el humano decide
+
 // =============================================
 // TRADING MASTER PRO v16.0 - PLATAFORMA COMPLETA
 // Motor SMC + ELISA IA + Telegram + Supabase + Admin
@@ -32,15 +35,20 @@ import OpenAI from 'openai';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import ReportsManager from './reports-manager.js';
-import PushNotificationManager from './push-notifications.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
-dotenv.config();
+const PORT = process.env.PORT || 3001;
+
+app.use(cors());
+app.use(express.json());
 
 // =============================================
+// CONFIGURACIÓN TELEGRAM
+// =============================================
+const TELEGRAM_BOT_TOKEN = process.env.TOKEN_BOT_DE_TELEGRAM || process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_CHAT_ID = process.env.ID_DE_CHAT_DE_TELEGRAM || process.env.TELEGRAM_CHAT_ID;
+
+
 // CONFIGURACIÓN OPENAI - IA SMC INSTITUCIONAL
 // =============================================
 let openai = null;
@@ -63,724 +71,25 @@ try {
   console.log('⚠️ Error cargando smc-models.json:', e.message);
 }
 
-// =============================================
-// SISTEMA DE APRENDIZAJE AUTOMÁTICO
-// =============================================
-const LearningSystem = {
-  // Historial de trades para aprendizaje
-  tradeHistory: [],
-  maxHistorySize: 1000,
-  
-  // Registrar resultado de trade
-  recordTrade(trade) {
-    this.tradeHistory.push({
-      ...trade,
-      timestamp: Date.now()
-    });
-    
-    // Mantener tamaño máximo
-    if (this.tradeHistory.length > this.maxHistorySize) {
-      this.tradeHistory.shift();
-    }
-    
-    // Actualizar ajustes de score
-    this.updateScoreAdjustments(trade);
-    
-    console.log(`📚 Trade registrado: ${trade.model} - ${trade.result} (${trade.asset})`);
-  },
-  
-  // Actualizar ajustes de score basados en resultados
-  updateScoreAdjustments(trade) {
-    const { model, result, asset } = trade;
-    
-    // Ajuste por modelo
-    if (!stats.learning.scoreAdjustments[model]) {
-      stats.learning.scoreAdjustments[model] = 0;
-    }
-    
-    if (result === 'WIN') {
-      // Win: +2 puntos (máx +10)
-      stats.learning.scoreAdjustments[model] = Math.min(10, stats.learning.scoreAdjustments[model] + 2);
-    } else {
-      // Loss: -3 puntos (máx -15)
-      stats.learning.scoreAdjustments[model] = Math.max(-5, stats.learning.scoreAdjustments[model] - 3);
-    }
-    
-    // Ajuste por asset-modelo
-    const assetModelKey = `${asset}_${model}`;
-    if (!stats.learning.scoreAdjustments[assetModelKey]) {
-      stats.learning.scoreAdjustments[assetModelKey] = 0;
-    }
-    
-    if (result === 'WIN') {
-      stats.learning.scoreAdjustments[assetModelKey] = Math.min(5, stats.learning.scoreAdjustments[assetModelKey] + 1);
-    } else {
-      stats.learning.scoreAdjustments[assetModelKey] = Math.max(-3, stats.learning.scoreAdjustments[assetModelKey] - 2);
-    }
-  },
-  
-  // Obtener ajuste de score para un modelo
-  getScoreAdjustment(model, asset = null) {
-    let adjustment = stats.learning.scoreAdjustments[model] || 0;
-    
-    if (asset) {
-      const assetModelKey = `${asset}_${model}`;
-      adjustment += stats.learning.scoreAdjustments[assetModelKey] || 0;
-    }
-    
-    // BUG FIX: cap total en -5 (era -25: -15 modelo + -10 asset = bloqueaba todo)
-    return Math.max(-5, Math.min(10, adjustment));
-  },
-  
-  // Analizar patrones de pérdida para evitarlos
-  analyzeLossPatterns() {
-    const losses = this.tradeHistory.filter(t => t.result === 'LOSS');
-    const patterns = {};
-    
-    for (const loss of losses) {
-      // Patrón por modelo
-      if (!patterns[loss.model]) {
-        patterns[loss.model] = { count: 0, conditions: [] };
-      }
-      patterns[loss.model].count++;
-      
-      // Registrar condiciones de la pérdida
-      if (loss.conditions) {
-        patterns[loss.model].conditions.push(loss.conditions);
-      }
-    }
-    
-    return patterns;
-  },
-  
-  // Obtener estadísticas de aprendizaje
-  getStats() {
-    const wins = this.tradeHistory.filter(t => t.result === 'WIN').length;
-    const losses = this.tradeHistory.filter(t => t.result === 'LOSS').length;
-    const total = wins + losses;
-    
-    const byModel = {};
-    for (const trade of this.tradeHistory) {
-      if (!byModel[trade.model]) {
-        byModel[trade.model] = { wins: 0, losses: 0 };
-      }
-      if (trade.result === 'WIN') byModel[trade.model].wins++;
-      else byModel[trade.model].losses++;
-    }
-    
-    return {
-      totalTrades: total,
-      wins,
-      losses,
-      winRate: total > 0 ? (wins / total * 100).toFixed(1) : 0,
-      byModel,
-      scoreAdjustments: stats.learning.scoreAdjustments,
-      lossPatterns: this.analyzeLossPatterns()
-    };
-  }
-};
 
 // =============================================
-// CONFIGURACIÓN DE FILTROS v24.0
-// CALIDAD SOBRE CANTIDAD - Menos señales, mejor win rate
+// SUPABASE — Solo para usuarios y suscripciones
 // =============================================
-const SIGNAL_CONFIG = {
-  // Score mínimo para generar señal
-  MIN_SCORE: 85, // v25: Base — el minScore per-signal lo ajusta según tendenciana entradas débiles
-  // BUG FIX: 82 era demasiado bajo — permite modelos INDUCEMENT y LG sin H1 firme
-  
-  // Score mínimo específico para Boom/Crash (más estricto)
-  MIN_SCORE_BOOM_CRASH: 80, // v24: Ajustado
-  
-  // Cooldown entre análisis del mismo activo
-  ANALYSIS_COOLDOWN: 6000,  // FIX: 6s — era 4s, demasiado agresivo causaba CPU spikes en Railway
-  
-  // Cooldown después de cerrar una señal antes de abrir otra
-  // 5 min = permite 2-3 operaciones por activo en una sesión de 8h
-  // sin abrir operaciones basura consecutivas
-  POST_SIGNAL_COOLDOWN: 300000, // 5 minutos
-
-  // Boom/Crash: más tiempo porque los spikes son menos frecuentes
-  POST_SIGNAL_COOLDOWN_BOOM_CRASH: 600000, // 10 minutos
-  
-  // ═══════════════════════════════════════════════════════════════
-  // MTF CONFLUENCE - AHORA REQUERIDO PARA CALIDAD
-  // true = H1 y M5 deben estar alineados (menos señales, mejor calidad)
-  // ═══════════════════════════════════════════════════════════════
-  REQUIRE_MTF_CONFLUENCE: false,
-
-  // Modelos habilitados/deshabilitados según rendimiento real
-  // LIQUIDITY_GRAB: alta tasa de pérdida (ruido excesivo) → deshabilitado
-  // M1_PRECISION: raramente activa → deshabilitado
-  // Deshabilitados basado en 200 ops reales:
-  // M1_PRECISION: 0% WR (5 ops, -34pts)
-  // LIQUIDITY_GRAB: 0% WR (2 ops, -9pts)
-  // CHOCH_PULLBACK: 20% WR (5 ops, -18pts) — señales falsas frecuentes
-  DISABLED_MODELS: ['M1_PRECISION', 'LIQUIDITY_GRAB', 'CHOCH_PULLBACK'], // H1+M15 already enforced by marketReady — no double block
-  
-  // Modelos que SIEMPRE pueden operar sin MTF (tienen su propia lógica H1)
-  MODELS_WITHOUT_MTF: [
-    'MTF_CONFLUENCE',    // Ya incluye MTF
-    'BREAKER_BLOCK',    // Institucional — tiene su propia lógica
-    'JUDAS_SWING',      // Institucional — trampa de liquidez
-    'PROPULSION_BLOCK', // Institucional — FVG post-CHoCH
-    'KILL_ZONE_OB',
-    'BOOM_SPIKE',        // Tiene lógica H1 propia
-    'CRASH_SPIKE'        // Tiene lógica H1 propia
-  ],
-  
-  // Máximo de señales pendientes simultáneas totales
-  MAX_PENDING_TOTAL: 3,       // 1 por par × 3 pares = máximo 3 abiertas
-  MAX_PENDING_PER_ASSET: 1,   // Máximo 1 señal abierta por par (Step, Oro, V100 son independientes)
-
-  // Horas de operación en UTC (Colombia = UTC-5)
-  // Sesión diurna:  7:00 AM - 1:00 PM Colombia = 12:00 - 18:00 UTC
-  // Sesión nocturna: 8:30 PM - 1:00 AM Colombia = 01:30 - 06:00 UTC
-  TRADING_HOURS: {
-    base: {
-      start: 12,    // 12:00 UTC (7:00 AM Colombia)
-      end: 18       // 18:00 UTC (1:00 PM Colombia)
-    },
-    night: {
-      start: 1.5,   // 01:30 UTC (8:30 PM Colombia)
-      end: 6        // 06:00 UTC (1:00 AM Colombia)
-    }
-  },
-  // Límite diario de señales por activo (0 = sin límite)
-  MAX_DAILY_SIGNALS_PER_ASSET: 0
-};
-
-// Función para verificar si estamos en horario de trading
-// Sesión diurna:   7:00 AM - 1:00 PM Colombia (12:00-18:00 UTC)
-// Sesión nocturna: 8:30 PM - 1:00 AM Colombia (01:30-06:00 UTC)
-function isInTradingHours(plan = 'free') {
-  const now = new Date();
-  const utcHour = now.getUTCHours() + now.getUTCMinutes() / 60;
-  const { base, night } = SIGNAL_CONFIG.TRADING_HOURS;
-
-  const inDaytime = utcHour >= base.start && utcHour < base.end;
-  const inNight   = utcHour >= night.start && utcHour < night.end;
-
-  return inDaytime || inNight;
-}
-
-// ══════════════════════════════════════════════════════════════════════
-// PLAN DE TRADING INSTITUCIONAL — Trading Master Pro v25
-// ══════════════════════════════════════════════════════════════════════
-// Reglas que el sistema sigue al pie de la letra para ser rentable
-// ══════════════════════════════════════════════════════════════════════
-
-const TRADING_PLAN = {
-  // ── GESTIÓN DE RIESGO ──
-  MAX_RISK_PER_TRADE_PCT: 1.0,   // Máximo 1% del capital por operación
-  MAX_DAILY_LOSS_PCT:     3.0,   // Si se pierde 3% en el día → STOP total
-  MAX_WEEKLY_LOSS_PCT:    6.0,   // Si se pierde 6% en la semana → pausa 48h
-  MIN_RR:                 1.5,   // R:R mínimo aceptable
-  TARGET_RR:              2.0,   // R:R objetivo
-  MAX_CONCURRENT:         1,     // Máximo 1 operación por activo
-
-  // ── SESIONES PERMITIDAS (kill zones institucionales) ──
-  PREFERRED_SESSIONS: ['NY_OPEN', 'LONDON_OPEN', 'LONDON_CLOSE'],
-  AVOID_SESSIONS: ['ASIA_OPEN'],  // Oro: evitar apertura Asia (spread alto)
-
-  // ── CONDICIONES OBLIGATORIAS PARA OPERAR ──
-  REQUIRED: {
-    H1_ALIGNED: true,            // H1 debe confirmar la dirección
-    OB_MUST_BE_FRESH: true,      // OB creado en las últimas 60 velas
-    MIN_SCORE: 88,               // Score mínimo para activar
-    ZONE_ALIGNMENT: true,        // DISCOUNT para BUY, PREMIUM para SELL
-  },
-
-  // ── REGLAS DE SALIDA ──
-  EXIT: {
-    MOVE_SL_TO_BE_AT_TP1: true,  // Al tocar TP1 → SL a breakeven
-    PARTIAL_CLOSE_AT_TP1: 0.33,  // Cerrar 33% en TP1
-    PARTIAL_CLOSE_AT_TP2: 0.33,  // Cerrar 33% en TP2
-    RUN_BALANCE_TO_TP3: true,    // Dejar correr el 34% hasta TP3
-    MAX_HOLD_HOURS: 24,          // Máximo 24h en posición
-  },
-
-  // ── ACTIVOS PREFERIDOS POR SESIÓN ──
-  ASSET_SESSION_MAP: {
-    stpRNG:    ['NY_OPEN', 'LONDON_OPEN', 'LONDON_CLOSE', 'NIGHT'], // 24h sintético
-    '1HZ100V': ['NY_OPEN', 'LONDON_OPEN', 'LONDON_CLOSE', 'NIGHT'], // 24h sintético
-    frxXAUUSD: ['LONDON_OPEN', 'NY_OPEN'],  // Oro: solo London+NY (mayor volumen)
-  },
-
-  // ── FILTROS ANTI-REVENGE TRADING ──
-  ANTI_REVENGE: {
-    PAUSE_AFTER_CONSECUTIVE_LOSSES: 2,   // Pausar tras 2 pérdidas seguidas
-    PAUSE_DURATION_MIN: 60,              // Pausa de 60 minutos
-    REDUCE_SIZE_AFTER_LOSS: true,        // Reducir tamaño tras pérdida
-  }
-};
-
-// ══════════════════════════════════════════════════════════════════════
-// BITÁCORA DE TRADING — Registro detallado de cada operación
-// ══════════════════════════════════════════════════════════════════════
-const TradingJournal = {
-  entries: [],
-
-  // Registrar apertura de operación
-  logOpen(signal) {
-    const utcH = new Date().getUTCHours() + new Date().getUTCMinutes()/60;
-    const session = utcH >= 12 && utcH < 15 ? 'NY_OPEN'
-                  : utcH >= 7  && utcH < 10 ? 'LONDON_OPEN'
-                  : utcH >= 15 && utcH < 17 ? 'LONDON_CLOSE'
-                  : utcH >= 1  && utcH < 6  ? 'NIGHT'
-                  : 'OFF_SESSION';
-
-    const entry = {
-      id:         signal.id,
-      symbol:     signal.symbol,
-      asset:      signal.assetName,
-      action:     signal.action,
-      model:      signal.model,
-      session,
-      score:      signal.score,
-      aiConf:     signal.aiConfidence,
-      aiReason:   signal.aiReason,
-      entry:      signal.entry,
-      stop:       signal.stop,
-      tp1:        signal.tp1, tp2: signal.tp2, tp3: signal.tp3,
-      risk:       Math.abs(signal.entry - signal.stop),
-      rrTP1:      +(Math.abs(signal.tp1 - signal.entry) / Math.abs(signal.entry - signal.stop)).toFixed(2),
-      rrTP2:      +(Math.abs(signal.tp2 - signal.entry) / Math.abs(signal.entry - signal.stop)).toFixed(2),
-      h1Trend:    signal.structureH1,
-      premDisc:   signal.premiumDiscount,
-      openTime:   new Date().toISOString(),
-      closeTime:  null,
-      result:     null,   // WIN/LOSS/BE
-      tpHit:      null,   // 1/2/3
-      pnlPts:     null,
-      mfe:        null,   // Maximum Favorable Excursion
-      mae:        null,   // Maximum Adverse Excursion
-      notes:      '',
-      planCheck: {        // Verificación contra el plan
-        h1Aligned:    signal.structureH1 === (signal.action === 'LONG' ? 'BULLISH' : 'BEARISH'),
-        inSession:    TRADING_PLAN.PREFERRED_SESSIONS.includes(session),
-        zoneOk:       (signal.action==='LONG' && signal.premiumDiscount!=='PREMIUM') ||
-                      (signal.action==='SHORT' && signal.premiumDiscount!=='DISCOUNT'),
-        rrOk:         Math.abs(signal.tp1-signal.entry)/Math.abs(signal.entry-signal.stop) >= TRADING_PLAN.MIN_RR,
-        scoreOk:      signal.score >= TRADING_PLAN.REQUIRED.MIN_SCORE,
-      }
-    };
-
-    this.entries.unshift(entry);
-    if (this.entries.length > 500) this.entries = this.entries.slice(0, 500);
-
-    console.log(`📓 [BITÁCORA] #${signal.id} ABIERTA | ${session} | ${signal.model} | Score:${signal.score}% | R:R ${entry.rrTP1} | ${signal.premiumDiscount}`);
-    return entry;
-  },
-
-  // Registrar cierre de operación
-  logClose(signalId, result, tpHit, pnlPts, closePrice) {
-    const entry = this.entries.find(e => e.id === signalId);
-    if (!entry) return;
-
-    entry.closeTime = new Date().toISOString();
-    entry.result    = result;
-    entry.tpHit     = tpHit;
-    entry.pnlPts    = pnlPts;
-
-    const durationMin = Math.round((new Date(entry.closeTime) - new Date(entry.openTime)) / 60000);
-    console.log(`📓 [BITÁCORA] #${signalId} CERRADA | ${result} TP${tpHit||'SL'} | ${pnlPts>=0?'+':''}${pnlPts}pts | ${durationMin}min | ${entry.session}`);
-    return entry;
-  },
-
-  // Calcular estadísticas del plan
-  getStats(period = 'all') {
-    const now = Date.now();
-    const cutoff = {
-      day:   now - 86400000,
-      week:  now - 604800000,
-      month: now - 2592000000,
-      all:   0
-    }[period] || 0;
-
-    const closed = this.entries.filter(e =>
-      e.result && new Date(e.openTime).getTime() >= cutoff
-    );
-
-    const wins   = closed.filter(e => e.result === 'WIN');
-    const losses = closed.filter(e => e.result === 'LOSS');
-    const be     = closed.filter(e => e.result === 'BE');
-
-    const bySession = {};
-    closed.forEach(e => {
-      if (!bySession[e.session]) bySession[e.session] = { wins:0, losses:0, pts:0 };
-      bySession[e.session][e.result==='WIN'?'wins':'losses']++;
-      bySession[e.session].pts += e.pnlPts || 0;
-    });
-
-    const byModel = {};
-    closed.forEach(e => {
-      if (!byModel[e.model]) byModel[e.model] = { wins:0, losses:0, pts:0 };
-      byModel[e.model][e.result==='WIN'?'wins':'losses']++;
-      byModel[e.model].pts += e.pnlPts || 0;
-    });
-
-    // Verificar reglas del plan
-    const planViolations = this.entries.slice(0,20).filter(e =>
-      e.planCheck && Object.values(e.planCheck).some(v => !v)
-    ).length;
-
-    // Detectar revenge trading (2 pérdidas consecutivas recientes)
-    let consecLosses = 0;
-    for (const e of this.entries.slice(0,10)) {
-      if (!e.result) continue;
-      if (e.result === 'LOSS') consecLosses++;
-      else break;
-    }
-    const revengeAlert = consecLosses >= TRADING_PLAN.ANTI_REVENGE.PAUSE_AFTER_CONSECUTIVE_LOSSES;
-
-    return {
-      period, total: closed.length,
-      wins: wins.length, losses: losses.length, be: be.length,
-      wr: closed.length ? Math.round(wins.length/closed.length*100) : 0,
-      netPts: +closed.reduce((a,e)=>a+(e.pnlPts||0),0).toFixed(2),
-      avgRR: wins.length ? +(wins.reduce((a,e)=>a+(e.rrTP1||0),0)/wins.length).toFixed(2) : 0,
-      profitFactor: losses.reduce((a,e)=>a+Math.abs(e.pnlPts||0),0) > 0
-        ? +(wins.reduce((a,e)=>a+(e.pnlPts||0),0) / losses.reduce((a,e)=>a+Math.abs(e.pnlPts||0),0)).toFixed(2)
-        : wins.length > 0 ? 99 : 0,
-      bySession: Object.entries(bySession).map(([s,d])=>({session:s,...d,wr:d.wins+d.losses>0?Math.round(d.wins/(d.wins+d.losses)*100):0})),
-      byModel:   Object.entries(byModel).map(([m,d])=>({model:m,...d,wr:d.wins+d.losses>0?Math.round(d.wins/(d.wins+d.losses)*100):0})),
-      revengeAlert, consecLosses, planViolations,
-      topSession: Object.entries(bySession).sort((a,b)=>b[1].pts-a[1].pts)[0]?.[0] || 'N/A',
-    };
-  },
-
-  // Verificar si el plan permite operar ahora
-  checkPlanAllowed(symbol) {
-    // Consecutive losses check
-    let consecLosses = 0;
-    for (const e of this.entries.slice(0,5)) {
-      if (!e.result || e.symbol !== symbol) continue;
-      if (e.result === 'LOSS') consecLosses++;
-      else break;
-    }
-    if (consecLosses >= TRADING_PLAN.ANTI_REVENGE.PAUSE_AFTER_CONSECUTIVE_LOSSES) {
-      const lastLoss = this.entries.find(e => e.symbol === symbol && e.result === 'LOSS');
-      if (lastLoss) {
-        const minsSinceLoss = (Date.now() - new Date(lastLoss.closeTime).getTime()) / 60000;
-        if (minsSinceLoss < TRADING_PLAN.ANTI_REVENGE.PAUSE_DURATION_MIN) {
-          return { allowed: false, reason: `Anti-revenge: ${Math.round(TRADING_PLAN.ANTI_REVENGE.PAUSE_DURATION_MIN - minsSinceLoss)}min de pausa` };
-        }
-      }
-    }
-    return { allowed: true };
-  }
-};
-
-
-const app = express();
-const PORT = process.env.PORT || 3001;
-
-app.use(cors());
-app.use(express.json());
-
-// =============================================
-// CONFIGURACIÓN TELEGRAM
-// =============================================
-const TELEGRAM_BOT_TOKEN = process.env.TOKEN_BOT_DE_TELEGRAM || process.env.TELEGRAM_BOT_TOKEN;
-const TELEGRAM_CHAT_ID = process.env.ID_DE_CHAT_DE_TELEGRAM || process.env.TELEGRAM_CHAT_ID;
-
-async function sendTelegramSignal(signal) {
-  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
-    console.log('⚠️ Telegram: No configurado (falta TOKEN o CHAT_ID)');
-    return;
-  }
-  
-  try {
-    const isLong = signal.action === 'LONG';
-    const emoji = isLong ? '🟢' : '🔴';
-    const actionText = isLong ? 'COMPRA (LONG)' : 'VENTA (SHORT)';
-    
-    // Escapar caracteres especiales de Markdown en el reason
-    const safeReason = (signal.reason || '')
-      .replace(/_/g, '\\_')
-      .replace(/\*/g, '\\*')
-      .replace(/\[/g, '\\[')
-      .replace(/\]/g, '\\]')
-      .replace(/\(/g, '\\(')
-      .replace(/\)/g, '\\)')
-      .replace(/~/g, '\\~')
-      .replace(/`/g, '\\`')
-      .replace(/>/g, '\\>')
-      .replace(/#/g, '\\#')
-      .replace(/\+/g, '\\+')
-      .replace(/-/g, '\\-')
-      .replace(/=/g, '\\=')
-      .replace(/\|/g, '\\|')
-      .replace(/\{/g, '\\{')
-      .replace(/\}/g, '\\}')
-      .replace(/\./g, '\\.')
-      .replace(/!/g, '\\!');
-    
-    const message = `
-${emoji} *SEÑAL #${signal.id}* ${emoji}
-
-📊 *Activo:* ${signal.assetName}
-📈 *Dirección:* ${actionText}
-🎯 *Modelo:* ${signal.model}
-💯 *Score:* ${signal.score}%
-
-💰 *Entry:* ${signal.entry}
-🛑 *Stop Loss:* ${signal.stop}
-
-✅ *TP1:* ${signal.tp1}
-✅ *TP2:* ${signal.tp2}
-✅ *TP3:* ${signal.tp3}
-
-📝 ${safeReason}
-⏰ ${new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })}
-`;
-
-    const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text: message, parse_mode: 'MarkdownV2' })
-    });
-    
-    const result = await response.json();
-    
-    if (result.ok) {
-      console.log(`📱 Telegram: Señal #${signal.id} enviada correctamente ✅`);
-    } else {
-      console.log(`⚠️ Telegram ERROR: ${result.description || 'Error desconocido'}`);
-      // Intentar sin formato Markdown si falla
-      try {
-        const plainMessage = `
-🔔 SEÑAL #${signal.id}
-
-📊 Activo: ${signal.assetName}
-📈 Dirección: ${actionText}
-🎯 Modelo: ${signal.model}
-💯 Score: ${signal.score}%
-
-💰 Entry: ${signal.entry}
-🛑 Stop Loss: ${signal.stop}
-
-✅ TP1: ${signal.tp1}
-✅ TP2: ${signal.tp2}
-✅ TP3: ${signal.tp3}
-
-📝 ${signal.reason}
-`;
-        await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text: plainMessage })
-        });
-        console.log(`📱 Telegram: Señal #${signal.id} enviada (sin formato)`);
-      } catch (e2) {
-        console.log(`⚠️ Telegram fallback error:`, e2.message);
-      }
-    }
-  } catch (e) {
-    console.log('⚠️ Telegram error de conexión:', e.message);
-  }
-}
-
-// Cola de mensajes de Telegram para evitar rate limiting
-const telegramQueue = [];
-let telegramProcessing = false;
-
-async function processTelegramQueue() {
-  if (telegramProcessing || telegramQueue.length === 0) return;
-  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
-  
-  telegramProcessing = true;
-  
-  while (telegramQueue.length > 0) {
-    const message = telegramQueue.shift();
-    try {
-      const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text: message, parse_mode: 'Markdown' })
-      });
-      const result = await response.json();
-      if (!result.ok) {
-        console.log(`⚠️ Telegram Queue ERROR: ${result.description}`);
-      }
-      // Esperar 1 segundo entre mensajes para evitar rate limiting
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    } catch (e) {
-      console.log('⚠️ Telegram queue error:', e.message);
-    }
-  }
-  
-  telegramProcessing = false;
-}
-
-// Enviar mensaje a cola de Telegram
-function queueTelegramMessage(message) {
-  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
-  telegramQueue.push(message);
-  processTelegramQueue();
-}
-
-// Notificar TP alcanzado
-async function sendTelegramTP(signal, tpLevel, price) {
-  const emoji = tpLevel === 'TP1' ? '🎯' : tpLevel === 'TP2' ? '🎯🎯' : '🎯🎯🎯';
-  const message = `
-${emoji} *${tpLevel} ALCANZADO* ${emoji}
-
-📊 *Señal #${signal.id}* - ${signal.assetName}
-💰 *Precio:* ${price}
-📈 *Dirección:* ${signal.action}
-
-${tpLevel === 'TP1' ? '✅ SL movido a Breakeven' : ''}
-${tpLevel === 'TP2' ? '✅ SL movido a TP1' : ''}
-${tpLevel === 'TP3' ? '🏆 ¡Objetivo máximo alcanzado!' : ''}
-
-⏰ ${new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })}
-`;
-  queueTelegramMessage(message);
-  console.log(`📱 Telegram: ${tpLevel} Señal #${signal.id}`);
-}
-
-// Notificar SL tocado
-async function sendTelegramSL(signal, price, wasPartialWin = false) {
-  const emoji = wasPartialWin ? '⚠️' : '❌';
-  const status = wasPartialWin ? 'CERRADA EN BREAKEVEN' : 'STOP LOSS';
-  const message = `
-${emoji} *${status}* ${emoji}
-
-📊 *Señal #${signal.id}* - ${signal.assetName}
-💰 *Precio cierre:* ${price}
-📈 *Dirección:* ${signal.action}
-${wasPartialWin ? '✅ TP1 fue alcanzado previamente' : '❌ Sin TP alcanzado'}
-
-📝 Resultado: ${wasPartialWin ? 'WIN PARCIAL' : 'LOSS'}
-⏰ ${new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })}
-`;
-  queueTelegramMessage(message);
-  console.log(`📱 Telegram: ${status} Señal #${signal.id}`);
-}
-
-// Notificar trailing stop activado
-async function sendTelegramTrailing(signal, newSL, reason) {
-  const message = `
-🔄 *TRAILING STOP ACTIVADO*
-
-📊 *Señal #${signal.id}* - ${signal.assetName}
-🛑 *Nuevo SL:* ${newSL}
-📝 *Razón:* ${reason}
-
-⏰ ${new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })}
-`;
-  queueTelegramMessage(message);
-}
-
-// Alerta de cambio de dirección - cerrar antes del SL
-async function sendTelegramDirectionChange(signal, currentPrice, recommendation) {
-  const message = `
-⚠️ *ALERTA: CAMBIO DE DIRECCIÓN* ⚠️
-
-📊 *Señal #${signal.id}* - ${signal.assetName}
-💰 *Precio actual:* ${currentPrice}
-📈 *Dirección original:* ${signal.action}
-
-🔄 *La estructura del mercado está cambiando*
-💡 *Recomendación:* ${recommendation}
-
-⚠️ Considera cerrar manualmente para reducir pérdidas
-
-⏰ ${new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' })}
-`;
-  queueTelegramMessage(message);
-  console.log(`📱 Telegram: Alerta cambio dirección Señal #${signal.id}`);
-}
-
-// =============================================
-// CONFIGURACIÓN SUPABASE
-// =============================================
-const SUPABASE_URL = process.env.SUPABASE_URL || '';
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY || '';
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 let supabase = null;
-
 if (SUPABASE_URL && SUPABASE_SERVICE_KEY) {
   supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
   console.log('✅ Supabase conectado');
 } else {
-  console.log('⚠️ Supabase no configurado - usando memoria local');
-  console.log('   SUPABASE_URL:', SUPABASE_URL ? 'OK' : 'MISSING');
-  console.log('   SUPABASE_SERVICE_ROLE_KEY:', SUPABASE_SERVICE_KEY ? 'OK' : 'MISSING');
+  console.log('⚠️ Supabase no configurado - modo local');
 }
 
-// Inicializar módulo de reportes
-let reportsManager = null;
-if (supabase) {
-  reportsManager = new ReportsManager(supabase);
-  console.log('✅ Módulo de Reportes activado');
-}
+// Almacenamiento en memoria fallback
+const memoryStore = { subscriptions: new Map() };
 
-// Inicializar módulo de push notifications
-let pushManager = null;
-if (supabase && process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
-  pushManager = new PushNotificationManager(supabase);
-  console.log('✅ Módulo de Push Notifications activado');
-} else {
-  console.log('⚠️ Push Notifications deshabilitadas (faltan VAPID keys o Supabase)');
-}
 
-// Almacenamiento en memoria (fallback cuando no hay Supabase)
-const memoryStore = {
-  subscriptions: new Map()
-};
-
-// =============================================
-// FUNCIONES DE SUSCRIPCIÓN - ESTRUCTURA NUEVA
-// Columnas: id, email, plan, estado, periodo, created_at, updated_at, trial_ends_at, subscription_ends_at
-// =============================================
-
-// Días por periodo
-const PERIOD_DAYS = {
-  mensual: 30,
-  semestral: 180,
-  anual: 365
-};
-
-// Función para calcular días restantes de cualquier suscripción
-function calculateDaysLeft(subscriptionEndsAt, trialEndsAt, estado, periodo) {
-  const now = new Date();
-  
-  // Si es trial, usar trial_ends_at
-  if (estado === 'trial' && trialEndsAt) {
-    const ends = new Date(trialEndsAt);
-    const diffDays = Math.ceil((ends - now) / (1000 * 60 * 60 * 24));
-    return Math.max(0, diffDays);
-  }
-  
-  // Si tiene fecha de vencimiento de suscripción
-  if (subscriptionEndsAt) {
-    const ends = new Date(subscriptionEndsAt);
-    const diffDays = Math.ceil((ends - now) / (1000 * 60 * 60 * 24));
-    return Math.max(0, diffDays);
-  }
-  
-  return 0;
-}
-
-// Función para verificar si la suscripción está activa
-function isSubscriptionActive(estado, daysLeft) {
-  if (estado === 'expired') return false;
-  if (daysLeft <= 0) return false;
-  return true;
-}
-
-// Función para calcular fecha de vencimiento al activar plan
-function calculateExpirationDate(periodo) {
-  const days = PERIOD_DAYS[periodo] || 30;
-  const expirationDate = new Date();
-  expirationDate.setDate(expirationDate.getDate() + days);
-  return expirationDate.toISOString();
-}
-
-// Activos operados — definido aquí para uso en toda la app
-const MY_ASSETS = ['stpRNG', 'frxXAUUSD', '1HZ100V'];
+const PERIOD_DAYS = { mensual: 30, semestral: 180, anual: 365 };
 
 async function getSubscription(userId) {
   if (supabase) {
@@ -936,6 +245,7 @@ async function deleteSubscription(userId) {
   return { error: null };
 }
 
+
 // =============================================
 // CONFIGURACIÓN DE ACTIVOS Y PLANES
 // =============================================
@@ -1038,351 +348,51 @@ const BOOM_CRASH_RULES = {
 };
 
 // =============================================
-// ESTADO GLOBAL
+
 // =============================================
-let derivWs = null;
-let isConnected = false;
-let reconnectAttempts = 0;
-
-// Sistema de seguimiento de mercados activos
-const marketStatus = {};
-for (const symbol of MY_ASSETS) {
-  marketStatus[symbol] = {
-    lastDataReceived: 0,
-    isActive: false,
-    subscriptionAttempts: 0,
-    lastSubscriptionAttempt: 0
-  };
-}
-
-// Función para detectar si un mercado de Forex/Metales debería estar abierto
-function isMarketOpenNow(symbol) {
-  const config = ASSETS[symbol];
-  if (!config) return true;
-  
-  // Los sintéticos operan 24/7
-  if (['sinteticos', 'boom', 'crash'].includes(config.category)) {
-    return true;
-  }
-  
-  // Forex y Metales: cerrados de viernes 17:00 EST a domingo 17:00 EST
-  const now = new Date();
-  const utcDay = now.getUTCDay();
-  const utcHour = now.getUTCHours();
-  
-  // Convertir a EST (UTC-5)
-  const estHour = (utcHour - 5 + 24) % 24;
-  
-  // Sábado completo = cerrado
-  if (utcDay === 6) return false;
-  
-  // Domingo antes de las 17:00 EST (22:00 UTC) = cerrado
-  if (utcDay === 0 && utcHour < 22) return false;
-  
-  // Viernes después de las 17:00 EST (22:00 UTC) = cerrado
-  if (utcDay === 5 && utcHour >= 22) return false;
-  
-  return true;
-}
-
-// Función para resubscribir a un activo específico
-// FIX: flag para evitar resuscripciones duplicadas durante el arranque
-let initialSubscriptionDone = false;
-const subscriptionCooldown  = {};  // symbol → timestamp de última sub
-
-function resubscribeToAsset(symbol) {
-  if (!derivWs || derivWs.readyState !== WebSocket.OPEN) return;
-  // FIX "Already subscribed": si la última suscripción fue hace <45s, omitir
-  const lastSub = subscriptionCooldown[symbol] || 0;
-  if (Date.now() - lastSub < 45000) {
-    console.log(`⏳ [${ASSETS[symbol]?.shortName}] Resuscripción omitida (cooldown 45s)`);
-    return;
-  }
-  subscriptionCooldown[symbol] = Date.now();
-  console.log(`🔄 [${ASSETS[symbol]?.shortName}] Resubscribiendo...`);
-  marketStatus[symbol].lastSubscriptionAttempt = Date.now();
-  marketStatus[symbol].subscriptionAttempts++;
-  
-  derivWs.send(JSON.stringify({
-    ticks_history: symbol,
-    adjust_start_time: 1,
-    count: 500,
-    end: 'latest',
-    granularity: 300,
-    style: 'candles',
-    subscribe: 1
-  }));
-  
-  requestH1(symbol);
-  requestM15(symbol);
-  requestM1(symbol);
-  derivWs.send(JSON.stringify({ ticks: symbol, subscribe: 1 }));
-}
-
-// Verificar mercados inactivos y resubscribir
-function checkAndResubscribeMarkets() {
-  if (!isConnected) return;
-  // FIX: no resubscribir durante los primeros 60s del arranque — evita "already subscribed"
-  if (!initialSubscriptionDone) return;
-  
-  const now = Date.now();
-  const inactivityThreshold = 60000; // 1 minuto sin datos = inactivo
-  
-  for (const symbol of MY_ASSETS) {
-    const status = marketStatus[symbol];
-    const config = ASSETS[symbol];
-    const shouldBeOpen = isMarketOpenNow(symbol);
-    
-    // Si el mercado debería estar abierto pero no recibimos datos
-    if (shouldBeOpen) {
-      const timeSinceLastData = now - status.lastDataReceived;
-      const timeSinceLastAttempt = now - status.lastSubscriptionAttempt;
-      
-      // Si no hay datos recientes y no intentamos recientemente (cada 30 segundos)
-      if (timeSinceLastData > inactivityThreshold && timeSinceLastAttempt > 30000) {
-        console.log(`⚠️ [${config?.shortName}] Sin datos por ${Math.round(timeSinceLastData/1000)}s - resubscribiendo`);
-        resubscribeToAsset(symbol);
-      }
-    }
-  }
-}
-
-// Iniciar verificación periódica de mercados
-// FIX: guardar TODOS los IDs de intervalos para poder limpiarlos en reconexión
-let marketCheckInterval = null;
-let m15RefreshInterval  = null;
-let h1RefreshInterval   = null;
-let pingWatchdogInterval = null;
-
-function clearAllMonitorIntervals() {
-  if (marketCheckInterval)  { clearInterval(marketCheckInterval);  marketCheckInterval  = null; }
-  if (m15RefreshInterval)   { clearInterval(m15RefreshInterval);   m15RefreshInterval   = null; }
-  if (h1RefreshInterval)    { clearInterval(h1RefreshInterval);    h1RefreshInterval    = null; }
-  if (pingWatchdogInterval) { clearInterval(pingWatchdogInterval); pingWatchdogInterval = null; }
-}
-
-function startMarketMonitoring() {
-  // FIX: limpiar todos los intervalos previos antes de crear nuevos
-  // Sin esto, cada reconexión acumula 3-4 intervalos → el scanner se degrada
-  clearAllMonitorIntervals();
-
-  // Verificar mercados cada 30 segundos
-  marketCheckInterval = setInterval(checkAndResubscribeMarkets, 30000);
-  console.log('✅ Monitor de mercados iniciado (verificación cada 30s)');
-
-  // Refrescar M15 + M1 cada 60 segundos
-  m15RefreshInterval = setInterval(() => {
-    if (derivWs?.readyState !== WebSocket.OPEN) return;
-    for (const symbol of MY_ASSETS) {
-      try { requestM15(symbol); } catch(e) {}
-      try { requestM1(symbol);  } catch(e) {}
-    }
-  }, 60 * 1000);
-
-  // Refrescar H1 cada 5 minutos
-  h1RefreshInterval = setInterval(() => {
-    if (derivWs?.readyState !== WebSocket.OPEN) return;
-    for (const symbol of MY_ASSETS) {
-      try { requestH1(symbol); } catch(e) {}
-    }
-  }, 5 * 60 * 1000);
-
-  // Ping + Watchdog cada 25 segundos
-  // Si no llegan datos en 90s → forzar reconexión (conexión zombie)
-  pingWatchdogInterval = setInterval(() => {
-    if (derivWs?.readyState !== WebSocket.OPEN) return;
-    try { derivWs.send(JSON.stringify({ ping: 1 })); } catch(e) {}
-    const maxSilence = 90000;
-    const anyData = MY_ASSETS.some(s =>
-      Date.now() - (marketStatus[s]?.lastDataReceived || 0) < maxSilence
-    );
-    if (!anyData) {
-      console.log('🔁 Watchdog: sin datos en 90s — terminando conexión zombie');
-      try { derivWs.terminate(); } catch(e) {}
-    }
-  }, 25000);
-}
-
-const assetData = {};
-for (const symbol of MY_ASSETS) {
+// ESTADO EN MEMORIA — Datos de mercado en vivo
+// =============================================
+let assetData = {};
+for (const [symbol, config] of Object.entries(ASSETS)) {
   assetData[symbol] = {
-    candles: [],       // M5
-    candlesH1: [],     // H1 — tendencia mayor
-    candlesM15: [],    // M15 — tendencia intermedia (NUEVA)
-    candlesM1: [],     // M1 — entrada precisa (NUEVA)
-    price: null,
-    signal: null,
-    lockedSignal: null,
+    candles:    [],
+    candlesH1:  [],
+    candlesM15: [],
+    candlesM1:  [],
+    price:      null,
     lastAnalysis: 0,
-    demandZones: [],
-    supplyZones: [],
-    fvgZones: [],
-    liquidityLevels: [],
-    swings: [],
-    structure: { trend: 'NEUTRAL', strength: 0 },
-    choch: null,
-    bos: null,
-    orderFlow: { momentum: 'NEUTRAL', strength: 0 },
-    structureH1: { trend: 'LOADING', strength: 0 },
-    structureM15: { trend: 'LOADING', strength: 0 },
-    demandZonesH1: [],
-    supplyZonesH1: [],
+    // SMC zones (updated by analyzeAsset)
+    structure:      null,
+    structureH1:    null,
+    structureM15:   null,
+    demandZones:    [],
+    supplyZones:    [],
+    demandZonesH1:  [],
+    supplyZonesH1:  [],
     demandZonesM15: [],
     supplyZonesM15: [],
+    fvgZones:        [],
+    liquidityLevels: [],
+    swings:          [],
+    swingsM15:       [],
+    choch:      null,
+    bos:        null,
+    chochM15:   null,
+    bosM15:     null,
     premiumDiscount: 'EQUILIBRIUM',
-    h1Loaded: false,
-    m15Loaded: false,
-    m1Loaded: false,
-    lastSignalClosed: 0,
-    lastSignalTime: 0,
-    mtfConfluence: false
+    mtfConfluence:   false,
+    h1Loaded:   false,
+    m15Loaded:  false,
+    m1Loaded:   false,
+    m1Steps:    null,
+    orderFlow:  null,
+    pullback:   null,
+    chartOverlays: {},
+    // No señales — la IA las sugiere, el humano las toma
   };
 }
 
-let signalHistory = [];
-let signalIdCounter = 1;
 
-const stats = {
-  total: 0, wins: 0, losses: 0, pending: 0,
-  tp1Hits: 0, tp2Hits: 0, tp3Hits: 0,
-  byModel: {}, byAsset: {},
-  learning: { scoreAdjustments: {} }
-};
-
-for (const symbol of MY_ASSETS) {
-  stats.byAsset[symbol] = { wins: 0, losses: 0, total: 0 };
-}
-
-// ════════════════════════════════════════════════════════════════════
-// PERSISTENCIA SUPABASE — carga historial al arrancar, guarda en tiempo real
-// Tabla requerida: trading_signals (ver README.md para SQL)
-// ════════════════════════════════════════════════════════════════════
-// ════════════════════════════════════════════════════════════════════
-// LIMPIEZA DE SEÑALES HUÉRFANAS al cargar historial
-// Una señal "huérfana" es PENDING en Supabase pero el servidor no la tiene en memoria
-// Esto causa el bug: "ACTIVAS: 1 pero no se ve en el gráfico"
-// ════════════════════════════════════════════════════════════════════
-async function loadHistoryFromSupabase() {
-  if (!supabase) return;
-  try {
-    const { data, error } = await supabase
-      .from('trading_signals')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(200);
-    if (error) { console.log('⚠️ No se pudo cargar historial:', error.message); return; }
-    if (!data?.length) { console.log('ℹ️ Sin historial previo en Supabase'); return; }
-
-    signalHistory = data.map(r => ({
-      id:          r.signal_id,
-      symbol:      r.symbol,
-      assetName:   r.asset_name,
-      action:      r.action,
-      model:       r.model,
-      score:       r.score,
-      entry:       r.entry_price,
-      stop:        r.stop_loss,
-      tp1:         r.tp1,
-      tp2:         r.tp2,
-      tp3:         r.tp3,
-      status:      r.status,
-      closePrice:  r.close_price,
-      tpHit:       r.tp_hit,
-      tp1Hit:      r.tp_hit >= 1,
-      tp2Hit:      r.tp_hit >= 2,
-      reason:      r.reason,
-      timestamp:   new Date(r.signal_time).getTime(),
-      createdAt:   r.created_at
-    }));
-
-    // Reconstruir stats desde historial cargado
-    stats.total   = signalHistory.filter(s => s.status !== 'PENDING').length;
-    stats.wins    = signalHistory.filter(s => s.status === 'WIN').length;
-    stats.losses  = signalHistory.filter(s => s.status === 'LOSS').length;
-    stats.pending = signalHistory.filter(s => s.status === 'PENDING').length;
-    stats.tp1Hits = signalHistory.filter(s => s.tp1Hit).length;
-    stats.tp2Hits = signalHistory.filter(s => s.tp2Hit).length;
-
-    // Reconstruir scoreAdjustments del learning system
-    signalHistory.filter(s => s.status !== 'PENDING').forEach(s => {
-      if (!stats.learning.scoreAdjustments[s.model]) stats.learning.scoreAdjustments[s.model] = 0;
-      stats.learning.scoreAdjustments[s.model] += s.status === 'WIN' ? 2 : -3;
-      stats.learning.scoreAdjustments[s.model] = Math.max(-15, Math.min(10, stats.learning.scoreAdjustments[s.model]));
-    });
-
-    // Actualizar ID counter
-    const maxId = Math.max(...signalHistory.map(s => parseInt(s.id)||0), 0);
-    signalIdCounter = maxId + 1;
-
-    // FIX "señal abierta pero no activa": restaurar lockedSignal en cada asset
-    // Al reiniciar, assetData está vacío pero signalHistory tiene las PENDING
-    // Sin esto: stats dice "ACTIVAS: 1" pero el gráfico no muestra nada
-    const pendingSignals = signalHistory.filter(s => s.status === 'PENDING');
-    const maxAge = 4 * 60 * 60 * 1000; // 4 horas máximo
-    pendingSignals.forEach(s => {
-      const age = Date.now() - s.timestamp;
-      if (age > maxAge) {
-        // Señal muy vieja → expirar (el mercado ya la cerró)
-        s.status = 'EXPIRED';
-        updateSignalStatusInSupabase(s.id, 'EXPIRED', null, 0).catch(() => {});
-        stats.pending = Math.max(0, stats.pending - 1);
-        console.log(`⏰ Señal #${s.id} expirada (${Math.round(age/60000)}min sin cerrar)`);
-      } else if (assetData[s.symbol]) {
-        // Restaurar en el asset para que el gráfico la muestre
-        assetData[s.symbol].lockedSignal = { ...s };
-        console.log(`🔄 Señal #${s.id} restaurada en ${s.symbol} (${s.action} @ ${s.entry})`);
-      }
-    });
-
-    console.log(`✅ Historial cargado: ${signalHistory.length} señales | Wins: ${stats.wins} | Losses: ${stats.losses} | WR: ${stats.total > 0 ? Math.round(stats.wins/stats.total*100) : 0}%`);
-  } catch(e) {
-    console.log('⚠️ Error cargando historial:', e.message);
-  }
-}
-
-async function saveSignalToSupabase(signal) {
-  if (!supabase) return;
-  try {
-    await supabase.from('trading_signals').upsert({
-      signal_id:   signal.id,
-      symbol:      signal.symbol,
-      asset_name:  signal.assetName,
-      action:      signal.action,
-      model:       signal.model,
-      score:       signal.score,
-      entry_price: signal.entry,
-      stop_loss:   signal.stop,
-      tp1:         signal.tp1,
-      tp2:         signal.tp2,
-      tp3:         signal.tp3,
-      status:      signal.status || 'PENDING',
-      close_price: signal.closePrice || null,
-      tp_hit:      signal.tpHit || 0,
-      reason:      signal.reason,
-      signal_time: new Date(signal.timestamp).toISOString(),
-      structure_m5: signal.structureM5,
-      structure_h1: signal.structureH1,
-      premium_discount: signal.premiumDiscount
-    }, { onConflict: 'signal_id' });
-  } catch(e) {
-    console.log('⚠️ Error guardando señal en Supabase:', e.message);
-  }
-}
-
-async function updateSignalStatusInSupabase(signalId, status, closePrice, tpHit, pnlPoints = 0) {
-  if (!supabase) return;
-  try {
-    await supabase.from('trading_signals')
-      .update({ status, close_price: closePrice, tp_hit: tpHit, pnl_points: pnlPoints, updated_at: new Date().toISOString() })
-      .eq('signal_id', signalId);
-  } catch(e) {
-    console.log('⚠️ Error actualizando señal:', e.message);
-  }
-}
-
-// =============================================
-// MOTOR SMC v13.0
-// =============================================
 const SMC = {
   
   getAvgRange(candles, period = 14) {
@@ -3210,7 +2220,7 @@ const SMC = {
       ? 88   // con tendencia H1 pura
       : isCounterTrend
         ? (m15m5BosAligned ? 90 : m15m5MomentumAligned ? 91 : 92)
-        : Math.max(SIGNAL_CONFIG.MIN_SCORE, 85);
+        : Math.max(88, 85);
 
     if (!marketReady && !m5ChochReversal) {
       return {
@@ -4094,7 +3104,7 @@ const SMC = {
     
     // Log cuando SÍ hay señales potenciales
     // Filtrar modelos deshabilitados
-    const enabledSignals = signals.filter(s => !(SIGNAL_CONFIG.DISABLED_MODELS||[]).includes(s.model));
+    const enabledSignals = signals.filter(s => !([]).includes(s.model));
     if (enabledSignals.length !== signals.length) console.log(`🚫 [${config.shortName}] ${signals.length - enabledSignals.length} modelos deshabilitados filtrados`);
     signals.length = 0; enabledSignals.forEach(s => signals.push(s));
     console.log(`✨ [${config.shortName}] ${signals.length} candidatas: ${signals.map(s=>s.model+'('+s.baseScore+')').join(', ')}`);
@@ -4133,7 +3143,7 @@ const SMC = {
     // AJUSTE DE SCORE CON SISTEMA DE APRENDIZAJE
     // ═══════════════════════════════════════════
     // Nota: Usamos config.shortName en lugar de symbol (que no existe en este contexto)
-    const learningAdj = LearningSystem.getScoreAdjustment(best.model, config.shortName);
+    const learningAdj = 0; // learning system removed
     const finalScore  = Math.min(100, Math.max(0, best.baseScore + learningAdj));
 
     console.log(`📊 [${config.shortName}] Score Final: ${finalScore} vs Min: ${effectiveMinScore} → ${finalScore >= effectiveMinScore ? '✅ PASA' : '❌ NO PASA'} | Modelo: ${best.model}`);
@@ -4179,851 +3189,134 @@ const SMC = {
   } // close analyze()
 }; // close SMC
 
-// =============================================
-// ELISA IA - ASISTENTE EXPRESIVA
-// =============================================
-const Elisa = {
-  getContext(symbol) {
-    const data = assetData[symbol];
+// Verificar mercados inactivos y resubscribir
+function checkAndResubscribeMarkets() {
+  if (!isConnected) return;
+  // FIX: no resubscribir durante los primeros 60s del arranque — evita "already subscribed"
+  if (!initialSubscriptionDone) return;
+  
+  const now = Date.now();
+  const inactivityThreshold = 60000; // 1 minuto sin datos = inactivo
+  
+  for (const symbol of MY_ASSETS) {
+    const status = marketStatus[symbol];
     const config = ASSETS[symbol];
-    if (!data || !config) return null;
+    const shouldBeOpen = isMarketOpenNow(symbol);
     
-    const lastCandles = data.candles.slice(-5);
-    const priceChange = lastCandles.length >= 2 
-      ? ((lastCandles[lastCandles.length - 1]?.close - lastCandles[0]?.close) / lastCandles[0]?.close * 100).toFixed(2)
-      : 0;
-    
-    return {
-      symbol,
-      name: config.name,
-      shortName: config.shortName,
-      emoji: config.emoji,
-      price: data.price,
-      decimals: config.decimals,
-      priceChange,
-      structureM5:  data.structure?.trend   || 'LOADING',
-      structureM15: data.structureM15?.trend || 'LOADING',
-      structureH1:  data.structureH1?.trend  || 'LOADING',
-      h1Loaded: data.h1Loaded,
-      mtfConfluence: data.mtfConfluence,
-      premiumDiscount: data.premiumDiscount,
-      orderFlow: data.orderFlow,
-      demandZones: data.demandZones || [],
-      supplyZones: data.supplyZones || [],
-      fvgZones: data.fvgZones || [],
-      liquidityLevels: data.liquidityLevels || [],
-      choch: data.choch,
-      bos: data.bos,
-      lockedSignal: data.lockedSignal,
-      signal: data.signal,
-      candles: data.candles.slice(-10),
-      swings: data.swings || []
-    };
-  },
-
-  getGreeting() {
-    const hour = new Date().getHours();
-    if (hour < 12) return '¡Buenos días!';
-    if (hour < 18) return '¡Buenas tardes!';
-    return '¡Buenas noches!';
-  },
-
-  getRandomPhrase(phrases) {
-    return phrases[Math.floor(Math.random() * phrases.length)];
-  },
-
-  chat(question, symbol) {
-    const ctx = this.getContext(symbol);
-    if (!ctx) return { answer: "⏳ Dame un momento, estoy conectándome al mercado...", type: 'loading' };
-    
-    const q = (question || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-    
-    // ═══════════════════════════════════════════
-    // SALUDO
-    // ═══════════════════════════════════════════
-    if (!q || q === 'hola' || q === 'hey' || q === 'hi' || q === 'ey') {
-      const greetings = [
-        `${this.getGreeting()} 💜 Soy Elisa, tu asistente de trading.\n\n`,
-        `¡Hola! 👋 Qué gusto verte por aquí.\n\n`,
-        `${this.getGreeting()} ¿Listo para analizar el mercado juntos?\n\n`
-      ];
+    // Si el mercado debería estar abierto pero no recibimos datos
+    if (shouldBeOpen) {
+      const timeSinceLastData = now - status.lastDataReceived;
+      const timeSinceLastAttempt = now - status.lastSubscriptionAttempt;
       
-      let r = this.getRandomPhrase(greetings);
-      r += `Estoy viendo **${ctx.emoji} ${ctx.name}** ahora mismo.\n\n`;
-      r += `💵 Precio actual: **${ctx.price?.toFixed(ctx.decimals) || '---'}**\n`;
-      
-      if (ctx.priceChange != 0) {
-        const direction = ctx.priceChange > 0 ? '📈 Subiendo' : '📉 Bajando';
-        r += `${direction} ${Math.abs(ctx.priceChange)}% en las últimas velas\n\n`;
-      }
-      
-      r += `¿Qué quieres saber? Puedo contarte sobre:\n`;
-      r += `• El análisis actual del gráfico\n`;
-      r += `• Las zonas de entrada\n`;
-      r += `• Qué operación buscar\n`;
-      r += `• O pregúntame lo que quieras 😊`;
-      
-      return { answer: r, type: 'greeting' };
-    }
-
-    // ═══════════════════════════════════════════
-    // ANÁLISIS COMPLETO
-    // ═══════════════════════════════════════════
-    if (q.includes('analisis') || q.includes('analiza') || q.includes('que ves') || q.includes('grafico') || q.includes('chart')) {
-      let r = `📊 **Análisis de ${ctx.name}**\n\n`;
-      r += `Déjame contarte lo que veo en el gráfico...\n\n`;
-      
-      // Precio y movimiento
-      r += `💵 **Precio:** ${ctx.price?.toFixed(ctx.decimals)}\n`;
-      if (ctx.priceChange != 0) {
-        const emoji = ctx.priceChange > 0 ? '🟢' : '🔴';
-        r += `${emoji} Movimiento reciente: ${ctx.priceChange > 0 ? '+' : ''}${ctx.priceChange}%\n\n`;
-      }
-      
-      // Estructura
-      r += `**📈 ESTRUCTURA:**\n`;
-      if (ctx.structureM5 === 'BULLISH') {
-        r += `• M5 está **ALCISTA** - Veo máximos y mínimos más altos. Los compradores tienen el control.\n`;
-      } else if (ctx.structureM5 === 'BEARISH') {
-        r += `• M5 está **BAJISTA** - Veo máximos y mínimos más bajos. Los vendedores dominan.\n`;
-      } else {
-        r += `• M5 está **NEUTRAL** - No hay una dirección clara, el mercado está consolidando.\n`;
-      }
-      
-      if (ctx.h1Loaded) {
-        if (ctx.structureH1 === 'BULLISH') {
-          r += `• H1 está **ALCISTA** - La tendencia mayor es de compra.\n`;
-        } else if (ctx.structureH1 === 'BEARISH') {
-          r += `• H1 está **BAJISTA** - La tendencia mayor es de venta.\n`;
-        } else {
-          r += `• H1 está **NEUTRAL** - Sin tendencia clara en temporalidad mayor.\n`;
-        }
-        
-        if (ctx.mtfConfluence) {
-          r += `\n✨ **¡HAY CONFLUENCIA MTF!** Ambas temporalidades apuntan en la misma dirección. Esto es muy bueno para operar.\n`;
-        }
-      } else {
-        r += `• H1: Cargando datos...\n`;
-      }
-      
-      // Premium/Discount
-      r += `\n**💰 CONTEXTO DE PRECIO:**\n`;
-      if (ctx.premiumDiscount === 'PREMIUM') {
-        r += `El precio está en zona **PREMIUM** (caro). Es mejor buscar VENTAS aquí.\n`;
-      } else if (ctx.premiumDiscount === 'DISCOUNT') {
-        r += `El precio está en zona **DISCOUNT** (barato). Es mejor buscar COMPRAS aquí.\n`;
-      } else {
-        r += `El precio está en **EQUILIBRIO**. Podría ir para cualquier lado.\n`;
-      }
-      
-      // Zonas
-      r += `\n**📦 ZONAS DETECTADAS:**\n`;
-      r += `• ${ctx.demandZones.length} zonas de demanda (compra)\n`;
-      r += `• ${ctx.supplyZones.length} zonas de oferta (venta)\n`;
-      
-      if (ctx.fvgZones.length > 0) {
-        r += `• ${ctx.fvgZones.length} FVG (gaps de precio)\n`;
-      }
-      
-      // CHoCH / BOS
-      if (ctx.choch) {
-        r += `\n⚡ **ALERTA:** Detecté un ${ctx.choch.type === 'BULLISH_CHOCH' ? 'cambio alcista' : 'cambio bajista'} en la estructura (CHoCH).\n`;
-      }
-      if (ctx.bos) {
-        r += `📈 **BOS detectado:** ${ctx.bos.type === 'BULLISH_BOS' ? 'Ruptura alcista' : 'Ruptura bajista'} confirmada.\n`;
-      }
-      
-      // Recomendación
-      r += `\n**🎯 MI OPINIÓN:**\n`;
-      if (ctx.lockedSignal) {
-        r += `Tenemos una señal **${ctx.lockedSignal.action}** activa con score de ${ctx.lockedSignal.score}%. ¡Ya estamos en el mercado!`;
-      } else if (ctx.mtfConfluence) {
-        const side = ctx.structureH1 === 'BULLISH' ? 'COMPRAS' : 'VENTAS';
-        r += `Con la confluencia MTF, me gusta buscar **${side}**. Solo falta esperar un buen pullback a zona.`;
-      } else {
-        r += `Ahora mismo no veo un setup claro. Te recomiendo esperar a que el mercado defina mejor su dirección.`;
-      }
-      
-      return { answer: r, type: 'analysis' };
-    }
-
-    // ═══════════════════════════════════════════
-    // SEÑAL ACTIVA
-    // ═══════════════════════════════════════════
-    if (q.includes('senal') || q.includes('signal') || q.includes('operacion') || q.includes('trade') || q.includes('entrada')) {
-      if (ctx.lockedSignal) {
-        const s = ctx.lockedSignal;
-        let r = `🎯 **¡Tenemos una operación activa!**\n\n`;
-        r += `${s.action === 'LONG' ? '🟢 COMPRA' : '🔴 VENTA'} en **${ctx.name}**\n\n`;
-        r += `📊 Modelo: **${s.model}**\n`;
-        r += `💪 Score: **${s.score}%**\n\n`;
-        r += `**Niveles:**\n`;
-        r += `• Entry: ${s.entry}\n`;
-        r += `• Stop Loss: ${s.stop} ${s.trailingActive ? '(🔄 Trailing activo)' : ''}\n`;
-        r += `• TP1: ${s.tp1} ${s.tp1Hit ? '✅ ¡Alcanzado!' : ''}\n`;
-        r += `• TP2: ${s.tp2} ${s.tp2Hit ? '✅ ¡Alcanzado!' : ''}\n`;
-        r += `• TP3: ${s.tp3} ${s.tp3Hit ? '✅ ¡Alcanzado!' : ''}\n\n`;
-        
-        const currentPrice = ctx.price;
-        const entry = s.entry;
-        const pips = s.action === 'LONG' ? currentPrice - entry : entry - currentPrice;
-        
-        if (pips > 0) {
-          r += `💚 Estamos en **profit** ahora mismo (+${pips.toFixed(ctx.decimals)})`;
-        } else if (pips < 0) {
-          r += `💛 Estamos en **pérdida temporal** (${pips.toFixed(ctx.decimals)})`;
-        } else {
-          r += `⚪ Estamos en **breakeven**`;
-        }
-        
-        return { answer: r, type: 'signal' };
-      }
-      
-      let r = `⏳ **No hay señal activa ahora mismo**\n\n`;
-      r += `Score actual: ${ctx.signal?.score || 0}%\n`;
-      r += `Estado: ${ctx.signal?.reason || 'Esperando setup'}\n\n`;
-      
-      if (ctx.signal?.score >= 50) {
-        r += `💡 Estamos cerca de una señal. Solo falta que se cumplan algunas condiciones más.`;
-      } else {
-        r += `El mercado no me está mostrando una oportunidad clara. Paciencia, las mejores operaciones requieren esperar el momento correcto.`;
-      }
-      
-      return { answer: r, type: 'waiting' };
-    }
-
-    // ═══════════════════════════════════════════
-    // PLAN / QUÉ BUSCAR
-    // ═══════════════════════════════════════════
-    if (q.includes('plan') || q.includes('buscar') || q.includes('hacer') || q.includes('estrategia') || q.includes('idea')) {
-      let r = `🎯 **Plan de Trading para ${ctx.name}**\n\n`;
-      
-      if (ctx.mtfConfluence) {
-        if (ctx.structureH1 === 'BULLISH') {
-          r += `✅ **BUSCAR COMPRAS**\n\n`;
-          r += `Tenemos confluencia MTF alcista, esto es ideal.\n\n`;
-          r += `**¿Cómo entrar?**\n`;
-          r += `1. Esperar que el precio baje a una zona de demanda\n`;
-          r += `2. Ver una vela de rechazo (mecha inferior larga)\n`;
-          r += `3. Entrar en la siguiente vela alcista\n\n`;
-          
-          if (ctx.premiumDiscount === 'DISCOUNT') {
-            r += `💎 **¡BONUS!** El precio está en DISCOUNT. Es el mejor momento para buscar compras.\n`;
-          } else if (ctx.premiumDiscount === 'PREMIUM') {
-            r += `⚠️ El precio está en PREMIUM. Esperaría un retroceso antes de comprar.\n`;
-          }
-          
-          if (ctx.demandZones.length > 0) {
-            const bestZone = ctx.demandZones[ctx.demandZones.length - 1];
-            r += `\n📍 Zona de demanda más cercana: ${bestZone.low.toFixed(ctx.decimals)} - ${bestZone.high.toFixed(ctx.decimals)}`;
-          }
-          
-        } else {
-          r += `✅ **BUSCAR VENTAS**\n\n`;
-          r += `Tenemos confluencia MTF bajista, esto es ideal.\n\n`;
-          r += `**¿Cómo entrar?**\n`;
-          r += `1. Esperar que el precio suba a una zona de oferta\n`;
-          r += `2. Ver una vela de rechazo (mecha superior larga)\n`;
-          r += `3. Entrar en la siguiente vela bajista\n\n`;
-          
-          if (ctx.premiumDiscount === 'PREMIUM') {
-            r += `💎 **¡BONUS!** El precio está en PREMIUM. Es el mejor momento para buscar ventas.\n`;
-          } else if (ctx.premiumDiscount === 'DISCOUNT') {
-            r += `⚠️ El precio está en DISCOUNT. Esperaría un rebote antes de vender.\n`;
-          }
-          
-          if (ctx.supplyZones.length > 0) {
-            const bestZone = ctx.supplyZones[ctx.supplyZones.length - 1];
-            r += `\n📍 Zona de oferta más cercana: ${bestZone.low.toFixed(ctx.decimals)} - ${bestZone.high.toFixed(ctx.decimals)}`;
-          }
-        }
-      } else {
-        r += `⚠️ **ESPERAR CONFLUENCIA**\n\n`;
-        r += `Ahora mismo M5 dice "${ctx.structureM5}" y H1 dice "${ctx.structureH1}".\n\n`;
-        r += `No están de acuerdo, así que es mejor no operar.\n\n`;
-        r += `**¿Qué hacer?**\n`;
-        r += `• Esperar a que ambas temporalidades se alineen\n`;
-        r += `• O buscar otro activo con mejor setup\n\n`;
-        r += `Recuerda: No operar también es una decisión inteligente 🧠`;
-      }
-      
-      return { answer: r, type: 'plan' };
-    }
-
-    // ═══════════════════════════════════════════
-    // ZONAS
-    // ═══════════════════════════════════════════
-    if (q.includes('zona') || q.includes('demanda') || q.includes('oferta') || q.includes('soporte') || q.includes('resistencia')) {
-      let r = `📦 **Zonas en ${ctx.name}**\n\n`;
-      
-      r += `**🟢 ZONAS DE DEMANDA (Compra):**\n`;
-      if (ctx.demandZones.length > 0) {
-        ctx.demandZones.forEach((z, i) => {
-          r += `${i + 1}. ${z.low.toFixed(ctx.decimals)} - ${z.high.toFixed(ctx.decimals)} `;
-          r += z.strength === 'STRONG' ? '💪 Fuerte\n' : '👍 Normal\n';
-        });
-      } else {
-        r += `No veo zonas de demanda activas\n`;
-      }
-      
-      r += `\n**🔴 ZONAS DE OFERTA (Venta):**\n`;
-      if (ctx.supplyZones.length > 0) {
-        ctx.supplyZones.forEach((z, i) => {
-          r += `${i + 1}. ${z.low.toFixed(ctx.decimals)} - ${z.high.toFixed(ctx.decimals)} `;
-          r += z.strength === 'STRONG' ? '💪 Fuerte\n' : '👍 Normal\n';
-        });
-      } else {
-        r += `No veo zonas de oferta activas\n`;
-      }
-      
-      if (ctx.fvgZones.length > 0) {
-        r += `\n**📊 FVG (Fair Value Gaps):**\n`;
-        ctx.fvgZones.forEach((f, i) => {
-          r += `${i + 1}. ${f.type === 'BULLISH_FVG' ? '🟢' : '🔴'} ${f.low.toFixed(ctx.decimals)} - ${f.high.toFixed(ctx.decimals)}\n`;
-        });
-      }
-      
-      return { answer: r, type: 'zones' };
-    }
-
-    // ═══════════════════════════════════════════
-    // STATS
-    // ═══════════════════════════════════════════
-    if (q.includes('stat') || q.includes('resultado') || q.includes('rendimiento') || q.includes('win')) {
-      const wr = stats.wins + stats.losses > 0 ? Math.round(stats.wins / (stats.wins + stats.losses) * 100) : 0;
-      
-      let r = `📈 **Estadísticas de Trading**\n\n`;
-      r += `**Win Rate:** ${wr}%\n`;
-      r += `**Operaciones:** ${stats.total} total\n`;
-      r += `• ✅ Wins: ${stats.wins}\n`;
-      r += `• ❌ Losses: ${stats.losses}\n`;
-      r += `• ⏳ Pendientes: ${stats.pending}\n\n`;
-      r += `**TPs Alcanzados:**\n`;
-      r += `• TP1: ${stats.tp1Hits}\n`;
-      r += `• TP2: ${stats.tp2Hits}\n`;
-      r += `• TP3: ${stats.tp3Hits} 💎\n\n`;
-      
-      if (wr >= 60) {
-        r += `🎉 ¡Excelente rendimiento! Sigue así.`;
-      } else if (wr >= 40) {
-        r += `👍 Buen trabajo. Hay espacio para mejorar.`;
-      } else if (stats.total > 5) {
-        r += `💪 Los resultados mejorarán con práctica y paciencia.`;
-      }
-      
-      return { answer: r, type: 'stats' };
-    }
-
-    // ═══════════════════════════════════════════
-    // PRECIO
-    // ═══════════════════════════════════════════
-    if (q.includes('precio') || q.includes('cuanto') || q.includes('cotiza') || q.includes('vale')) {
-      let r = `💵 **${ctx.name}** está en **${ctx.price?.toFixed(ctx.decimals)}**\n\n`;
-      
-      if (ctx.priceChange != 0) {
-        const emoji = ctx.priceChange > 0 ? '📈' : '📉';
-        const direction = ctx.priceChange > 0 ? 'subiendo' : 'bajando';
-        r += `${emoji} Está ${direction} ${Math.abs(ctx.priceChange)}% en las últimas velas.\n`;
-      }
-      
-      if (ctx.premiumDiscount === 'PREMIUM') {
-        r += `\n⚠️ El precio está en zona PREMIUM (caro).`;
-      } else if (ctx.premiumDiscount === 'DISCOUNT') {
-        r += `\n💎 El precio está en zona DISCOUNT (barato).`;
-      }
-      
-      return { answer: r, type: 'price' };
-    }
-
-    // ═══════════════════════════════════════════
-    // MODELOS / COMO FUNCIONA
-    // ═══════════════════════════════════════════
-    if (q.includes('modelo') || q.includes('como funciona') || q.includes('explicar') || q.includes('que es')) {
-      let r = `🧠 **Mis 6 Modelos de Análisis**\n\n`;
-      r += `Uso conceptos de Smart Money (SMC) para encontrar las mejores entradas:\n\n`;
-      r += `**1. MTF_CONFLUENCE (95pts)** ⭐\n`;
-      r += `Cuando H1 y M5 van en la misma dirección + hay pullback. Es mi favorito.\n\n`;
-      r += `**2. CHOCH_PULLBACK (90pts)**\n`;
-      r += `Cuando el mercado cambia de dirección y luego hace pullback.\n\n`;
-      r += `**3. LIQUIDITY_SWEEP (85pts)**\n`;
-      r += `Cuando el precio "caza" stops y luego revierte.\n\n`;
-      r += `**4. BOS_CONTINUATION (80pts)**\n`;
-      r += `Cuando hay ruptura de estructura con pullback.\n\n`;
-      r += `**5. FVG_ENTRY (75pts)**\n`;
-      r += `Entrada en un gap de precio (Fair Value Gap).\n\n`;
-      r += `**6. ORDER_FLOW (70pts)**\n`;
-      r += `Entrada basada en momentum fuerte.\n\n`;
-      r += `¿Quieres que te explique alguno en detalle? 😊`;
-      
-      return { answer: r, type: 'models' };
-    }
-
-    // ═══════════════════════════════════════════
-    // ELISA MENTOR - Solo Premium y Elite
-    // Psicotrading, Plan de Trading, Simulador, Patrones SMC
-    // ═══════════════════════════════════════════
-    
-    if (q.includes('mentor') || q.includes('aprender') || q.includes('curso') || q.includes('enseña')) {
-      let r = `🎓 **ELISA MENTOR** - Tu Academia de Trading\n\n`;
-      r += `¡Bienvenido al módulo de formación! 📚\n\n`;
-      r += `Aquí puedo enseñarte:\n\n`;
-      r += `🧠 **"Psicotrading"** - Control emocional y mentalidad ganadora\n`;
-      r += `📋 **"Plan de trading"** - Cómo crear tu estrategia personal\n`;
-      r += `🎮 **"Simulador"** - Practica sin arriesgar dinero real\n`;
-      r += `📊 **"Patrones SMC"** - Los 12 modelos que uso para operar\n`;
-      r += `📝 **"Control operaciones"** - Gestión de riesgo diario\n\n`;
-      r += `💡 *Recuerda: Máximo 10 operaciones diarias para no sobreoperar.*\n\n`;
-      r += `¿Qué tema te gustaría aprender hoy? 🎯`;
-      
-      return { answer: r, type: 'mentor', requiresPremium: true };
-    }
-    
-    if (q.includes('psicotrading') || q.includes('emociones') || q.includes('psicologia') || q.includes('mentalidad')) {
-      let r = `🧠 **PSICOTRADING** - Mentalidad Ganadora\n\n`;
-      r += `El 80% del éxito en trading es mental. Te comparto mis reglas:\n\n`;
-      r += `**1. Control Emocional:**\n`;
-      r += `• Nunca operes con rabia o frustración después de una pérdida\n`;
-      r += `• Si pierdes 3 trades seguidos, PARA y descansa\n`;
-      r += `• La venganza contra el mercado siempre sale mal\n\n`;
-      r += `**2. Disciplina:**\n`;
-      r += `• Sigue tu plan, no tus emociones\n`;
-      r += `• No muevas el SL para "darle más espacio"\n`;
-      r += `• Acepta que algunas operaciones serán pérdidas\n\n`;
-      r += `**3. Paciencia:**\n`;
-      r += `• Espera los setups de calidad (score 75+)\n`;
-      r += `• No fuerces entradas por aburrimiento\n`;
-      r += `• El mercado siempre dará otra oportunidad\n\n`;
-      r += `**4. Mentalidad de Proceso:**\n`;
-      r += `• Enfócate en ejecutar bien, no en el dinero\n`;
-      r += `• Una pérdida no te hace mal trader\n`;
-      r += `• Una ganancia no te hace invencible\n\n`;
-      r += `💡 *"El trader rentable no es el que nunca pierde, sino el que sabe manejar sus pérdidas"*`;
-      
-      return { answer: r, type: 'mentor_psicotrading', requiresPremium: true };
-    }
-    
-    if (q.includes('plan de trading') || q.includes('estrategia') || q.includes('mi plan')) {
-      let r = `📋 **PLAN DE TRADING** - Tu Hoja de Ruta\n\n`;
-      r += `Un plan de trading es OBLIGATORIO. Aquí te ayudo a crear el tuyo:\n\n`;
-      r += `**1. CAPITAL Y RIESGO:**\n`;
-      r += `• Capital inicial: $ ____\n`;
-      r += `• Riesgo por operación: 1-2% máximo\n`;
-      r += `• Pérdida máxima diaria: 5%\n`;
-      r += `• Meta mensual realista: 5-10%\n\n`;
-      r += `**2. HORARIO DE OPERACIÓN:**\n`;
-      r += `• Sesión principal: 6AM - 2PM (Colombia)\n`;
-      r += `• Sesión nocturna (Premium/Elite): 8:30PM - 1AM\n`;
-      r += `• NO operes fuera de horario\n\n`;
-      r += `**3. REGLAS DE ENTRADA:**\n`;
-      r += `• Solo señales con score 75+\n`;
-      r += `• Máximo 10 operaciones por día\n`;
-      r += `• Requiere confluencia MTF (H1 + M5)\n`;
-      r += `• Siempre usar Stop Loss\n\n`;
-      r += `**4. GESTIÓN DE POSICIONES:**\n`;
-      r += `• TP1: Asegurar breakeven\n`;
-      r += `• TP2: Parcial 50%\n`;
-      r += `• TP3: Dejar correr el resto\n\n`;
-      r += `**5. REVISIÓN:**\n`;
-      r += `• Journaling diario de operaciones\n`;
-      r += `• Revisión semanal de resultados\n`;
-      r += `• Ajustes mensuales de estrategia\n\n`;
-      r += `💡 *"Plan your trade, trade your plan"*`;
-      
-      return { answer: r, type: 'mentor_plan', requiresPremium: true };
-    }
-    
-    if (q.includes('simulador') || q.includes('practica') || q.includes('demo') || q.includes('papel')) {
-      let r = `🎮 **SIMULADOR** - Practica Sin Riesgo\n\n`;
-      r += `Antes de arriesgar dinero real, practica así:\n\n`;
-      r += `**EJERCICIO 1: Identificar Estructura**\n`;
-      r += `1. Abre cualquier gráfico en M5\n`;
-      r += `2. Marca los últimos 5 swings (altos y bajos)\n`;
-      r += `3. Determina: ¿BULLISH, BEARISH o NEUTRAL?\n`;
-      r += `4. Repite en H1 y compara\n\n`;
-      r += `**EJERCICIO 2: Encontrar Zonas**\n`;
-      r += `1. Busca la última vela roja antes de un impulso alcista = Demand\n`;
-      r += `2. Busca la última vela verde antes de un impulso bajista = Supply\n`;
-      r += `3. Marca las zonas en tu gráfico\n\n`;
-      r += `**EJERCICIO 3: Paper Trading**\n`;
-      r += `1. Cuando veas una señal mía, anótala en papel\n`;
-      r += `2. NO operes con dinero real\n`;
-      r += `3. Sigue la operación y anota el resultado\n`;
-      r += `4. Haz esto por 2 semanas mínimo\n\n`;
-      r += `**EJERCICIO 4: Backtesting**\n`;
-      r += `1. Ve al pasado del gráfico\n`;
-      r += `2. Busca setups de MTF Confluence\n`;
-      r += `3. ¿Habrían funcionado? Anota\n\n`;
-      r += `💡 *"Los traders exitosos practican más de lo que operan"*`;
-      
-      return { answer: r, type: 'mentor_simulador', requiresPremium: true };
-    }
-    
-    if (q.includes('patrones smc') || q.includes('patrones') || q.includes('setups') || q.includes('formaciones')) {
-      let r = `📊 **PATRONES SMC** - Los 6 Modelos\n\n`;
-      r += `Estos son los patrones que uso para generar señales:\n\n`;
-      r += `**🎯 1. MTF CONFLUENCE (95pts)** ⭐\n`;
-      r += `El más poderoso. H1 y M5 alineados + pullback a zona.\n`;
-      r += `Win Rate: ~78%\n\n`;
-      r += `**🔄 2. CHOCH PULLBACK (85-90pts)**\n`;
-      r += `Cambio de carácter + retroceso a la zona del cambio.\n`;
-      r += `Win Rate: ~75%\n\n`;
-      r += `**💧 3. LIQUIDITY SWEEP (82pts)**\n`;
-      r += `Barrido de stops + reversión inmediata.\n`;
-      r += `Win Rate: ~73%\n\n`;
-      r += `**📈 4. BOS CONTINUATION (80pts)**\n`;
-      r += `Ruptura de estructura + pullback para continuación.\n`;
-      r += `Win Rate: ~72%\n\n`;
-      r += `**🎯 5. ZONE TOUCH (78pts)**\n`;
-      r += `Toque de Order Block con rechazo fuerte.\n`;
-      r += `Win Rate: ~70%\n\n`;
-      r += `**⚡ 6. FVG ENTRY (77pts)**\n`;
-      r += `Entrada en Fair Value Gap durante pullback.\n`;
-      r += `Win Rate: ~68%\n\n`;
-      r += `💡 *Solo opero cuando el score es 75+. Calidad sobre cantidad.*`;
-      
-      return { answer: r, type: 'mentor_patrones', requiresPremium: true };
-    }
-    
-    if (q.includes('control') || q.includes('operaciones diarias') || q.includes('limite') || q.includes('cuantas')) {
-      let r = `📝 **CONTROL DE OPERACIONES** - Gestión Diaria\n\n`;
-      r += `La sobreoperación es el ENEMIGO #1 del trader. Mis reglas:\n\n`;
-      r += `**LÍMITES DIARIOS:**\n`;
-      r += `• Máximo **10 operaciones por día**\n`;
-      r += `• Máximo **5 operaciones simultáneas**\n`;
-      r += `• Máximo **3 pérdidas consecutivas** (después, STOP)\n`;
-      r += `• Pérdida máxima diaria: **5% del capital**\n\n`;
-      r += `**REGISTRO OBLIGATORIO:**\n`;
-      r += `Anota cada operación:\n`;
-      r += `1. Fecha y hora\n`;
-      r += `2. Activo y dirección\n`;
-      r += `3. Modelo usado (MTF, CHOCH, etc.)\n`;
-      r += `4. Score de la señal\n`;
-      r += `5. Entry, SL, TP\n`;
-      r += `6. Resultado final\n`;
-      r += `7. ¿Seguiste tu plan? Sí/No\n`;
-      r += `8. Emociones durante la operación\n\n`;
-      r += `**SEÑALES DE SOBREOPERACIÓN:**\n`;
-      r += `❌ Entrar sin señal clara por aburrimiento\n`;
-      r += `❌ Aumentar lotaje después de pérdidas\n`;
-      r += `❌ Operar fuera de horario\n`;
-      r += `❌ Ignorar el límite de 10 operaciones\n\n`;
-      r += `**BENEFICIOS DEL CONTROL:**\n`;
-      r += `✅ Preservas capital para otro día\n`;
-      r += `✅ Reduces errores emocionales\n`;
-      r += `✅ Mantienes rentabilidad constante\n`;
-      r += `✅ Construyes disciplina\n\n`;
-      r += `💡 *"Es mejor hacer 5 operaciones buenas que 20 mediocres"*`;
-      
-      return { answer: r, type: 'mentor_control', requiresPremium: true };
-    }
-
-    // ═══════════════════════════════════════════
-    // AYUDA
-    // ═══════════════════════════════════════════
-    if (q.includes('ayuda') || q.includes('help') || q.includes('comando')) {
-      let r = `💜 **¿En qué te puedo ayudar?**\n\n`;
-      r += `Puedes preguntarme:\n\n`;
-      r += `📊 **"Análisis"** - Te cuento todo lo que veo en el gráfico\n`;
-      r += `🎯 **"Plan"** - Te digo qué operación buscar\n`;
-      r += `📦 **"Zonas"** - Te muestro las zonas de entrada\n`;
-      r += `💵 **"Precio"** - Te digo el precio actual\n`;
-      r += `🎯 **"Señal"** - Te muestro la operación activa\n`;
-      r += `📈 **"Stats"** - Nuestros resultados\n`;
-      r += `🧠 **"Modelos"** - Cómo funcionan mis análisis\n`;
-      r += `🎓 **"Mentor"** - Academia de trading (Premium/Elite)\n\n`;
-      r += `O simplemente pregúntame lo que quieras sobre el mercado 😊`;
-      
-      return { answer: r, type: 'help' };
-    }
-
-    // ═══════════════════════════════════════════
-    // RESPUESTA DEFAULT - MÁS CONVERSACIONAL
-    // ═══════════════════════════════════════════
-    let r = `Hmm, déjame pensar sobre "${question}"...\n\n`;
-    r += `${ctx.emoji} **${ctx.name}** @ ${ctx.price?.toFixed(ctx.decimals)}\n\n`;
-    r += `📊 M5: ${ctx.structureM5} | H1: ${ctx.structureH1}\n`;
-    if (ctx.mtfConfluence) r += `✨ Confluencia MTF activa\n`;
-    r += `\n¿Quieres que te haga un análisis completo? Solo dime "análisis" 😊`;
-    
-    return { answer: r, type: 'default' };
-  },
-
-  // ═══════════════════════════════════════════
-  // CHAT CON OPENAI - ANÁLISIS EN TIEMPO REAL
-  // ═══════════════════════════════════════════
-  async chatWithAI(question, symbol) {
-    // Legacy: now just uses static fallback
-    // Real AI analysis is handled by /api/ai/analyze-chart endpoint
-    return this.chat(question, symbol);
-  }
-};
-
-// =============================================
-// AUTO-TRACKING CON TRAILING STOP
-// =============================================
-function checkSignalHits() {
-  for (const [symbol, data] of Object.entries(assetData)) {
-    const locked = data.lockedSignal;
-    if (!locked || !data.price) continue;
-    
-    const price = data.price;
-    const isLong = locked.action === 'LONG';
-    const signal = signalHistory.find(s => s.id === locked.id);
-    if (!signal || signal.status !== 'PENDING') continue;
-    
-    const config = ASSETS[symbol];
-    
-    // ═══════════════════════════════════════════
-    // DETECCIÓN DE CAMBIO DE ESTRUCTURA M5 + M15
-    // Si M5 o M15 cambian contra la posición → alerta inmediata
-    // Si AMBOS cambian → alerta crítica de cierre urgente
-    // ═══════════════════════════════════════════
-    const trendM5  = data.structure?.trend;
-    const trendM15 = data.structureM15?.trend;
-    const oppositeDir = isLong ? 'BEARISH' : 'BULLISH';
-
-    const m5Against  = trendM5  === oppositeDir;
-    const m15Against = trendM15 === oppositeDir;
-    const bothAgainst = m5Against && m15Against;
-    const oneAgainst  = m5Against || m15Against;
-
-    // Calcular distancia al SL y posición actual
-    const slLevel      = signal.stop;
-    const slDistance   = Math.abs(signal.entry - slLevel);
-    const currentDist  = isLong ? signal.entry - price : price - signal.entry;
-    const pnlPct       = (currentDist / signal.entry * 100).toFixed(2);
-    const isInLoss     = currentDist > 0;
-    const lossUsed     = slDistance > 0 ? (currentDist / slDistance * 100).toFixed(0) : 0;
-
-    // --- ALERTA CRÍTICA: ambos timeframes en contra ---
-    if (bothAgainst && !signal.criticalAlertSent) {
-      signal.criticalAlertSent = true;
-      signal.structureAlert = {
-        level: 'CRITICAL',
-        msg: `⛔ M5 + M15 ambos en ${oppositeDir} — Cierre recomendado`,
-        m5: trendM5, m15: trendM15,
-        pnlPct, lossUsed,
-        ts: Date.now()
-      };
-      // Reflejar en lockedSignal para el frontend
-      if (data.lockedSignal) data.lockedSignal.structureAlert = signal.structureAlert;
-
-      const rec = isInLoss
-        ? `🚨 Cerrar ahora: evitas usar ${lossUsed}% del SL restante`
-        : `💡 Estás en ganancia (${Math.abs(pnlPct)}%) — considera asegurar parcial`;
-      sendTelegramDirectionChange(signal, price,
-        `🔴 CRÍTICO: M5 Y M15 cambiaron a ${oppositeDir}\n${rec}`);
-      console.log(`🚨 [${config.shortName}] ALERTA CRÍTICA #${signal.id}: M5+M15 vs ${signal.action}`);
-    }
-    // --- ALERTA MODERADA: solo un timeframe en contra ---
-    else if (oneAgainst && !bothAgainst && !signal.moderateAlertSent && !signal.criticalAlertSent) {
-      const whichTf = m5Against ? 'M5' : 'M15';
-      signal.moderateAlertSent = true;
-      signal.structureAlert = {
-        level: 'WARNING',
-        msg: `⚠️ ${whichTf} cambió a ${oppositeDir} — Mantener vigilancia`,
-        m5: trendM5, m15: trendM15,
-        pnlPct, lossUsed,
-        ts: Date.now()
-      };
-      if (data.lockedSignal) data.lockedSignal.structureAlert = signal.structureAlert;
-
-      sendTelegramDirectionChange(signal, price,
-        `⚠️ ${whichTf} cambió a ${oppositeDir}. Vigilar cierre si M15 también confirma.`);
-      console.log(`⚠️ [${config.shortName}] Alerta moderada #${signal.id}: ${whichTf} vs ${signal.action}`);
-    }
-    // --- Resetear alertas si la estructura vuelve a alinearse ---
-    else if (!oneAgainst && (signal.moderateAlertSent || signal.criticalAlertSent)) {
-      signal.moderateAlertSent = false;
-      signal.criticalAlertSent = false;
-      signal.directionAlertSent = false;
-      signal.structureAlert = null;
-      if (data.lockedSignal) data.lockedSignal.structureAlert = null;
-      console.log(`✅ [${config.shortName}] Estructura recuperada — alertas reseteadas #${signal.id}`);
-    }
-    
-    // ═══════════════════════════════════════════
-    // TRAILING STOP LOGIC
-    // ═══════════════════════════════════════════
-    
-    // Después de TP1: Mover SL a Entry (breakeven)
-    if (signal.tp1Hit && !signal.trailingTP1) {
-      signal.trailingTP1 = true;
-      signal.originalStop = signal.stop;
-      signal.stop = signal.entry;
-      locked.stop = signal.entry;
-      locked.trailingActive = true;
-      console.log(`🔄 TRAILING #${signal.id}: SL movido a Breakeven (${signal.entry})`);
-      sendTelegramTrailing(signal, signal.entry, 'TP1 alcanzado - SL movido a Breakeven');
-    }
-    
-    // Después de TP2: Mover SL a TP1
-    if (signal.tp2Hit && !signal.trailingTP2) {
-      signal.trailingTP2 = true;
-      signal.stop = signal.tp1;
-      locked.stop = signal.tp1;
-      console.log(`🔄 TRAILING #${signal.id}: SL movido a TP1 (${signal.tp1})`);
-      sendTelegramTrailing(signal, signal.tp1, 'TP2 alcanzado - SL movido a TP1');
-    }
-    
-    // ═══════════════════════════════════════════
-    // CHECK SL (con trailing)
-    // ═══════════════════════════════════════════
-    const currentSL = signal.stop;
-    
-    if ((isLong && price <= currentSL) || (!isLong && price >= currentSL)) {
-      // Si ya tocó TP1, es WIN parcial, no LOSS
-      if (signal.tp1Hit) {
-        // Detectar cuál TP se alcanzó para cierre correcto
-        const trailTP = signal.tp2Hit ? 2 : 1;
-        closeSignal(signal.id, 'WIN', symbol, trailTP);
-        sendTelegramSL(signal, price, true);
-        console.log(`✅ #${signal.id} cerrado TRAILING STOP TP${trailTP} (WIN)`);
-      } else {
-        closeSignal(signal.id, 'LOSS', symbol);
-        sendTelegramSL(signal, price, false); // LOSS
-      }
-      continue;
-    }
-    
-    // ═══════════════════════════════════════════
-    // CHECK TPs con notificaciones Telegram
-    // ═══════════════════════════════════════════
-    if (isLong) {
-      if (price >= locked.tp1 && !signal.tp1Hit) { 
-        signal.tp1Hit = locked.tp1Hit = true; 
-        stats.tp1Hits++; 
-        console.log(`🎯 TP1 HIT #${signal.id} - Activando trailing stop`);
-        sendTelegramTP(signal, 'TP1', price);
-      }
-      if (price >= locked.tp2 && !signal.tp2Hit) { 
-        signal.tp2Hit = locked.tp2Hit = true; 
-        stats.tp2Hits++; 
-        console.log(`🎯 TP2 HIT #${signal.id}`);
-        sendTelegramTP(signal, 'TP2', price);
-      }
-      if (price >= locked.tp3 && !signal.tp3Hit) { 
-        signal.tp3Hit = locked.tp3Hit = true; 
-        stats.tp3Hits++; 
-        sendTelegramTP(signal, 'TP3', price);
-        closeSignal(signal.id, 'WIN', symbol, 3); 
-        console.log(`💎 TP3 HIT #${signal.id} - TRADE COMPLETO`);
-      }
-    } else {
-      if (price <= locked.tp1 && !signal.tp1Hit) { 
-        signal.tp1Hit = locked.tp1Hit = true; 
-        stats.tp1Hits++; 
-        console.log(`🎯 TP1 HIT #${signal.id} - Activando trailing stop`);
-        sendTelegramTP(signal, 'TP1', price);
-      }
-      if (price <= locked.tp2 && !signal.tp2Hit) { 
-        signal.tp2Hit = locked.tp2Hit = true; 
-        stats.tp2Hits++; 
-        console.log(`🎯 TP2 HIT #${signal.id}`);
-        sendTelegramTP(signal, 'TP2', price);
-      }
-      if (price <= locked.tp3 && !signal.tp3Hit) { 
-        signal.tp3Hit = locked.tp3Hit = true; 
-        stats.tp3Hits++; 
-        sendTelegramTP(signal, 'TP3', price);
-        closeSignal(signal.id, 'WIN', symbol, 3); 
-        console.log(`💎 TP3 HIT #${signal.id} - TRADE COMPLETO`);
+      // Si no hay datos recientes y no intentamos recientemente (cada 30 segundos)
+      if (timeSinceLastData > inactivityThreshold && timeSinceLastAttempt > 30000) {
+        console.log(`⚠️ [${config?.shortName}] Sin datos por ${Math.round(timeSinceLastData/1000)}s - resubscribiendo`);
+        resubscribeToAsset(symbol);
       }
     }
   }
 }
 
-function closeSignal(id, status, symbol, tpHit = null) {
-  const signal = signalHistory.find(s => s.id === id);
-  if (!signal || signal.status !== 'PENDING') return;
+// Iniciar verificación periódica de mercados
+// FIX: guardar TODOS los IDs de intervalos para poder limpiarlos en reconexión
+let marketCheckInterval = null;
+let m15RefreshInterval  = null;
+let h1RefreshInterval   = null;
+let pingWatchdogInterval = null;
 
-  signal.status   = status;
-  signal.closedAt = new Date().toISOString();
-
-  // BUG FIX: detectar cuál TP se alcanzó si no se pasó explícitamente
-  // TP3 y TP2 eran siempre contados como TP1 porque tpHit llegaba null
-  const detectedTP = tpHit !== null ? tpHit
-    : signal.tp3Hit ? 3
-    : signal.tp2Hit ? 2
-    : signal.tp1Hit ? 1
-    : 1; // fallback
-  signal.tpHit    = status === 'WIN' ? detectedTP : null;
-  signal.closePrice = status === 'WIN'
-    ? (detectedTP===3 ? signal.tp3 : detectedTP===2 ? signal.tp2 : signal.tp1)
-    : signal.stop;
-
-  // ── PUNTOS GANADOS/PERDIDOS (P&L real en puntos del activo) ──
-  if (status === 'WIN') {
-    const isLong = signal.action === 'LONG' || signal.action === 'BUY';
-    signal.pnlPoints = isLong
-      ? +(signal.closePrice - signal.entry).toFixed(2)
-      : +(signal.entry - signal.closePrice).toFixed(2);
-  } else {
-    const isLong = signal.action === 'LONG' || signal.action === 'BUY';
-    signal.pnlPoints = isLong
-      ? +(signal.stop - signal.entry).toFixed(2)   // negativo
-      : +(signal.entry - signal.stop).toFixed(2);  // negativo
-  }
-
-  if (symbol && assetData[symbol]) {
-    assetData[symbol].lockedSignal = null;
-    assetData[symbol].lastSignalClosed = Date.now();
-  }
-
-  // PERSISTENCIA: actualizar estado en Supabase (incluyendo pnlPoints)
-  updateSignalStatusInSupabase(signal.id, status, signal.closePrice, signal.tpHit || 0, signal.pnlPoints || 0).catch(() => {});
-  TradingJournal.logClose(signal.id, status, signal.tpHit, signal.pnlPoints, signal.closePrice);
-  
-  stats.byModel[signal.model] = stats.byModel[signal.model] || { wins: 0, losses: 0 };
-  stats.byAsset[signal.symbol] = stats.byAsset[signal.symbol] || { wins: 0, losses: 0, total: 0 };
-  
-  if (status === 'WIN') {
-    stats.wins++;
-    stats.byModel[signal.model].wins++;
-    stats.byAsset[signal.symbol].wins++;
-    
-    // Contabilizar TP alcanzado — usando detectedTP (corregido)
-    if (detectedTP === 1) stats.tp1Hits++;
-    else if (detectedTP === 2) stats.tp2Hits++;
-    else if (detectedTP === 3) stats.tp3Hits++;
-  } else if (status === 'LOSS') {
-    stats.losses++;
-    stats.byModel[signal.model].losses++;
-    stats.byAsset[signal.symbol].losses++;
-  }
-  
-  // ═══════════════════════════════════════════
-  // SISTEMA DE APRENDIZAJE AUTOMÁTICO
-  // ═══════════════════════════════════════════
-  LearningSystem.recordTrade({
-    id: signal.id,
-    model: signal.model,
-    asset: signal.symbol,
-    result: status,
-    entry: signal.entry,
-    exit: assetData[symbol]?.price,
-    tp1Hit: signal.tp1Hit,
-    tp2Hit: signal.tp2Hit,
-    tp3Hit: signal.tp3Hit,
-    score: signal.score,
-    conditions: {
-      structureM5: assetData[symbol]?.structure?.trend,
-      structureH1: assetData[symbol]?.structureH1?.trend,
-      mtfConfluence: assetData[symbol]?.mtfConfluence,
-      premiumDiscount: assetData[symbol]?.premiumDiscount
-    }
-  });
-  
-  stats.pending = signalHistory.filter(s => s.status === 'PENDING').length;
-  
-  // Log del aprendizaje
-  const learningStats = LearningSystem.getStats();
-  console.log(`📚 Aprendizaje: ${signal.model} ajuste = ${stats.learning.scoreAdjustments[signal.model] || 0} | WinRate: ${learningStats.winRate}%`);
+function clearAllMonitorIntervals() {
+  if (marketCheckInterval)  { clearInterval(marketCheckInterval);  marketCheckInterval  = null; }
+  if (m15RefreshInterval)   { clearInterval(m15RefreshInterval);   m15RefreshInterval   = null; }
+  if (h1RefreshInterval)    { clearInterval(h1RefreshInterval);    h1RefreshInterval    = null; }
+  if (pingWatchdogInterval) { clearInterval(pingWatchdogInterval); pingWatchdogInterval = null; }
 }
 
+function startMarketMonitoring() {
+  // FIX: limpiar todos los intervalos previos antes de crear nuevos
+  // Sin esto, cada reconexión acumula 3-4 intervalos → el scanner se degrada
+  clearAllMonitorIntervals();
+
+  // Verificar mercados cada 30 segundos
+  marketCheckInterval = setInterval(checkAndResubscribeMarkets, 30000);
+  console.log('✅ Monitor de mercados iniciado (verificación cada 30s)');
+
+  // Refrescar M15 + M1 cada 60 segundos
+  m15RefreshInterval = setInterval(() => {
+    if (derivWs?.readyState !== WebSocket.OPEN) return;
+    for (const symbol of MY_ASSETS) {
+      try { requestM15(symbol); } catch(e) {}
+      try { requestM1(symbol);  } catch(e) {}
+    }
+  }, 60 * 1000);
+
+  // Refrescar H1 cada 5 minutos
+  h1RefreshInterval = setInterval(() => {
+    if (derivWs?.readyState !== WebSocket.OPEN) return;
+    for (const symbol of MY_ASSETS) {
+      try { requestH1(symbol); } catch(e) {}
+    }
+  }, 5 * 60 * 1000);
+
+  // Ping + Watchdog cada 25 segundos
+  // Si no llegan datos en 90s → forzar reconexión (conexión zombie)
+  pingWatchdogInterval = setInterval(() => {
+    if (derivWs?.readyState !== WebSocket.OPEN) return;
+    try { derivWs.send(JSON.stringify({ ping: 1 })); } catch(e) {}
+    const maxSilence = 90000;
+    const anyData = MY_ASSETS.some(s =>
+      Date.now() - (marketStatus[s]?.lastDataReceived || 0) < maxSilence
+    );
+    if (!anyData) {
+      console.log('🔁 Watchdog: sin datos en 90s — terminando conexión zombie');
+      try { derivWs.terminate(); } catch(e) {}
+    }
+  }, 25000);
+}
+
+
 // =============================================
-// CONEXIÓN DERIV
+// INTERVALOS — Actualizaciones periódicas de mercado
 // =============================================
+let marketCheckInterval   = null;
+let m15RefreshInterval    = null;
+let h1RefreshInterval     = null;
+let pingWatchdogInterval  = null;
+
+function startMarketMonitoring() {
+  // Resubscribir activos inactivos cada 30s
+  marketCheckInterval = setInterval(checkAndResubscribeMarkets, 30000);
+  console.log('✅ Monitor de mercados iniciado (verificación cada 30s)');
+
+  // Refrescar M15 manualmente si hay gaps (cada 60s)
+  m15RefreshInterval = setInterval(() => {
+    for (const symbol of Object.keys(ASSETS)) {
+      const d = assetData[symbol];
+      if (!d) continue;
+      const m15 = d.candlesM15 || [];
+      if (m15.length > 0 && (Date.now()/1000 - m15[m15.length-1].time) > 900) {
+        console.log(`⚠️ [${symbol}] M15 stale — re-requesting`);
+      }
+    }
+  }, 60000);
+
+  // Ping watchdog — detectar desconexión
+  pingWatchdogInterval = setInterval(() => {
+    for (const symbol of Object.keys(ASSETS)) {
+      const d = assetData[symbol];
+      if (!d || !d.price) continue;
+      const m5 = d.candles || [];
+      if (m5.length > 0) {
+        const lastCandleAge = (Date.now()/1000) - (m5[m5.length-1]?.time || 0);
+        if (lastCandleAge > 600) {
+          console.log(`⚠️ [${symbol}] Sin datos M5 por ${Math.round(lastCandleAge/60)}min — reconectando`);
+          connectDeriv();
+        }
+      }
+    }
+  }, 120000);
+}
+
+
 function connectDeriv() {
   const appId = process.env.DERIV_APP_ID || '1089';
   
@@ -5191,7 +3484,7 @@ function connectDeriv() {
           // Actualizar estado del mercado
           marketStatus[symbol].lastDataReceived = Date.now();
           marketStatus[symbol].isActive = true;
-          checkSignalHits();
+    // [REMOVED] checkSignalHits — signal engine disabled
         }
       }
       
@@ -5202,7 +3495,7 @@ function connectDeriv() {
           // Actualizar estado del mercado
           marketStatus[symbol].lastDataReceived = Date.now();
           marketStatus[symbol].isActive = true;
-          checkSignalHits();
+    // [REMOVED] checkSignalHits — signal engine disabled
         }
       }
       
@@ -5234,555 +3527,34 @@ function connectDeriv() {
   });
 }
 
-function requestH1(symbol) {
-  if (derivWs?.readyState === WebSocket.OPEN) {
-    derivWs.send(JSON.stringify({
-      ticks_history: symbol,
-      adjust_start_time: 1,
-      count: 120,
-      end: 'latest',
-      granularity: 3600,
-      style: 'candles'
-    }));
-  }
-}
-
-function requestM15(symbol) {
-  if (derivWs?.readyState === WebSocket.OPEN) {
-    derivWs.send(JSON.stringify({
-      ticks_history: symbol,
-      adjust_start_time: 1,
-      count: 300,
-      end: 'latest',
-      granularity: 900,   // 15 min
-      style: 'candles'
-    }));
-  }
-}
-
-function requestM1(symbol) {
-  if (derivWs?.readyState === WebSocket.OPEN) {
-    derivWs.send(JSON.stringify({
-      ticks_history: symbol,
-      adjust_start_time: 1,
-      count: 120,
-      end: 'latest',
-      granularity: 60,
-      style: 'candles'
-      // FIX: sin subscribe:1 — los refreshes de M1 son solo histórico
-      // La suscripción en tiempo real va en el OHLC stream del M5 (granularity 300)
-    }));
-  }
-}
-
 // =============================================
-// ANÁLISIS DE ACTIVOS v13.2 (con filtros mejorados)
+// ANÁLISIS SMC — Solo detección de zonas para la IA
+// Sin señales automáticas, sin Telegram, sin guardado
 // =============================================
 async function analyzeAsset(symbol) {
   const data = assetData[symbol];
   const config = ASSETS[symbol];
-  
   if (!data || !config || data.candles.length < 30) return;
-  
+
   const now = Date.now();
-  
-  // ═══════════════════════════════════════════
-  // FILTRO 1: Cooldown de análisis (30 segundos)
-  // ═══════════════════════════════════════════
-  if (now - data.lastAnalysis < SIGNAL_CONFIG.ANALYSIS_COOLDOWN) return;
+  // Cooldown de 30s para no sobrecargar el análisis
+  if (now - data.lastAnalysis < 30000) return;
   data.lastAnalysis = now;
 
-  // ── Professional SMC Analysis Log ──
+  // ── Log estructural en consola ──
   const logStruct = (tf, s) => s?.trend ? `${tf}:${s.trend.slice(0,4)}(${s.strength||0}%)` : `${tf}:---`;
-  const logOBs = (d, s) => `D${(d||[]).filter(z=>!z.mitigated).length}/S${(s||[]).filter(z=>!z.mitigated).length}`;
-  const chochStr = data.choch ? `CHoCH${data.choch.side==='BUY'?'↑':'↓'}` : '---';
-  const bosStr   = data.bos   ? `BOS${data.bos.side==='BUY'?'↑':'↓'}` : '---';
   console.log(
     `📈 [${config.shortName}] ${logStruct('H1',data.structureH1)} | ${logStruct('M15',data.structureM15)} | ${logStruct('M5',data.structure)}` +
-    ` | OBs:${logOBs(data.demandZones,data.supplyZones)} | ${chochStr} ${bosStr}` +
-    ` | Price:${(data.price||0).toFixed(config.decimals)}` +
-    ` | ${data.premiumDiscount||'EQ'}`
+    ` | OBs:D${(data.demandZones||[]).filter(z=>!z.mitigated).length}/S${(data.supplyZones||[]).filter(z=>!z.mitigated).length}` +
+    ` | Price:${(data.price||0).toFixed(config.decimals)} | ${data.premiumDiscount||'EQ'}`
   );
-  
-  // V100 ha mostrado 27% WR en 200 ops — requiere score más alto
-  const assetMinScoreOverride = symbol === '1HZ100V' ? 92 : null;
 
-  // ═══════════════════════════════════════════
-  // FILTRO 2: Verificar horas de trading
-  // Sesión diurna:   7:00 AM - 1:00 PM Colombia
-  // Sesión nocturna: 8:30 PM - 1:00 AM Colombia
-  // ═══════════════════════════════════════════
-  if (!isInTradingHours()) {
-    // Fuera de horario — analizar sin generar señales
-    const signal = await SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
-    data.signal = signal;
-    return;
-  }
-  
-  // ═══════════════════════════════════════════
-  // FILTRO 3: Cooldown post-señal (3-5 minutos según activo)
-  // ═══════════════════════════════════════════
-  const isBoomCrash = config.type === 'boom' || config.type === 'crash';
-  const cooldownTime = isBoomCrash 
-    ? SIGNAL_CONFIG.POST_SIGNAL_COOLDOWN_BOOM_CRASH 
-    : SIGNAL_CONFIG.POST_SIGNAL_COOLDOWN;
-  
-  // BUG 2 FIX: usar max(lastSignalClosed, lastSignalTime) para cooldown
-  // El bug: solo miraba lastSignalClosed (=0 mientras señal abierta)
-  // lastSignalTime se setea al EMITIR → cooldown correcto
-  const lastEmission = Math.max(data.lastSignalClosed || 0, data.lastSignalTime || 0);
-  if (lastEmission && now - lastEmission < cooldownTime) {
-    const signal = await SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
-    data.signal = { ...signal, action: 'WAIT', model: 'COOLDOWN',
-      reason: `Cooldown (${Math.ceil((cooldownTime-(now-lastEmission))/60000)}min restantes)` };
-    return;
-  }
-  
-  // ═══════════════════════════════════════════
-  // FILTRO 4: Máximo de señales pendientes
-  // FIX: verificar ANTES del análisis SMC para no desperdiciar CPU
-  // FIX: añadir límite por par (1 señal por activo)
-  // ═══════════════════════════════════════════
-  const totalPending    = signalHistory.filter(s => s.status === 'PENDING').length;
-  const pendingThisAsset = signalHistory.filter(s => s.status === 'PENDING' && s.symbol === symbol).length;
-
-  // Bloquear si hay señal abierta en ESTE par
-  if (pendingThisAsset >= SIGNAL_CONFIG.MAX_PENDING_PER_ASSET) {
-    console.log(`⏸️ [${config.shortName}] Ya tiene señal abierta (${pendingThisAsset}/${SIGNAL_CONFIG.MAX_PENDING_PER_ASSET})`);
-    // Aún analizar para mantener estructura y zonas frescas en el frontend
-    const signal = await SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
-    data.signal = signal;
-    return;
-  }
-
-  // Bloquear si se alcanzó el límite global
-  if (totalPending >= SIGNAL_CONFIG.MAX_PENDING_TOTAL) {
-    console.log(`⏸️ [${config.shortName}] Límite global alcanzado (${totalPending}/${SIGNAL_CONFIG.MAX_PENDING_TOTAL})`);
-    const signal = await SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
-    data.signal = signal;
-    return;
-  }
-  
-  // Ejecutar análisis SMC (ASYNC para validación IA)
-  const signal = await SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
-  data.signal = signal;
-
-  // Filtro de score mínimo por activo (basado en datos reales de 200 ops)
-  // V100: 27% WR histórico → solo señales de máxima calidad (92%)
-  if (signal && signal.action !== 'WAIT') {
-    const assetMin = symbol === '1HZ100V' ? 92 : (SIGNAL_CONFIG.MIN_SCORE || 88);
-    if (signal.score < assetMin) {
-      console.log(`📉 [${config.shortName}] Score ${signal.score}% < ${assetMin}% (filtro activo) → WAIT`);
-      data.signal = { ...signal, action: 'WAIT', reason: `Score ${signal.score}% insuficiente` };
-    }
-  }
-
-  // ── Calcular pasos de M1_PRECISION para visualización en tiempo real ──
-  // Esto muestra en el gráfico M1 qué condiciones están cumplidas ahora mismo
-  {
-    const tH1  = data.structureH1?.trend;
-    const tM15 = data.structureM15?.trend;
-    const tM5  = data.structure?.trend;
-    const h1ok  = tH1  !== 'NEUTRAL' && tH1  !== 'LOADING';
-    const m15ok = tM15 !== 'NEUTRAL' && tM15 !== 'LOADING' && tM15 === tH1;
-    const m5ok  = tM5  !== 'NEUTRAL' && tM5  !== 'LOADING' && tM5  === tH1;
-    // Zona M15: hay demand/supply zones presentes
-    const zoneok = (data.demandZones?.length > 0 || data.supplyZones?.length > 0);
-    // M1 confirmación: última vela M1 muestra patrón de entrada
-    let m1conf = false;
-    const m1 = data.candlesM1 || [];
-    if (m1.length >= 3) {
-      const last  = m1[m1.length-1];
-      const prev  = m1[m1.length-2];
-      const prev2 = m1[m1.length-3];
-      const isBuy = tH1 === 'BULLISH';
-      const engulfBull = isBuy  && prev2.close < prev2.open && prev.close > prev.open && prev.close > prev2.open;
-      const engulfBear = !isBuy && prev2.close > prev2.open && prev.close < prev.open && prev.close < prev2.open;
-      const avgM1 = SMC.getAvgRange(m1.slice(-20));
-      const wickBull = isBuy  && (last.low < Math.min(last.open,last.close) - avgM1*0.5) && last.close > last.open;
-      const wickBear = !isBuy && (last.high > Math.max(last.open,last.close) + avgM1*0.5) && last.close < last.open;
-      m1conf = engulfBull || engulfBear || wickBull || wickBear;
-    }
-    data.m1Steps = { h1ok, m15ok, m5ok, zoneok, m1conf,
-      direction: tH1, readyCount: [h1ok,m15ok,m5ok,zoneok,m1conf].filter(Boolean).length };
-  }
-  
-  // 🔍 LOG SIEMPRE - Ver qué devuelve el análisis
-  console.log(`🔎 [${config.shortName}] Resultado: ${signal.action} | ${signal.model} | Score: ${signal.score}`);
-  
-  // Ya tiene señal activa?
-  // Anti-revenge trading check
-  const planCheck = TradingJournal.checkPlanAllowed(symbol);
-  if (!planCheck.allowed) {
-    console.log(`🛑 [${config.shortName}] PLAN: ${planCheck.reason}`);
-    return;
-  }
-
-  if (data.lockedSignal) {
-    console.log(`🔒 [${config.shortName}] Bloqueado: Ya tiene señal activa #${data.lockedSignal.id}`);
-    return;
-  }
-  
-  // ═══════════════════════════════════════════
-  // FILTRO 5: Score mínimo
-  // ═══════════════════════════════════════════
-  if (signal.action === 'WAIT' || signal.action === 'LOADING') {
-    // No loguear WAIT porque sería spam
-    return;
-  }
-  
-  console.log(`📈 [${config.shortName}] Señal activa detectada: ${signal.action} ${signal.model} (${signal.score}pts)`);
-  
-  // ═══════════════════════════════════════════
-  // FILTRO 5: Score mínimo (más estricto para Boom/Crash)
-  // ═══════════════════════════════════════════
-  const isBoomCrashAsset = config.type === 'boom' || config.type === 'crash';
-  const minScoreRequired = isBoomCrashAsset 
-    ? SIGNAL_CONFIG.MIN_SCORE_BOOM_CRASH 
-    : SIGNAL_CONFIG.MIN_SCORE;
-  
-  if (signal.score < minScoreRequired) {
-    console.log(`⚠️ [${config.shortName}] RECHAZADA: Score ${signal.score} < ${minScoreRequired} mínimo${isBoomCrashAsset ? ' (Boom/Crash requiere H1+OB)' : ''}`);
-    return;
-  }
-  
-  console.log(`✅ [${config.shortName}] Pasó filtro de score: ${signal.score} >= ${minScoreRequired}`);
-  
-  // ═══════════════════════════════════════════
-  // FILTRO 6: Requiere MTF Confluence (excepto modelos específicos)
-  // ═══════════════════════════════════════════
-  if (SIGNAL_CONFIG.REQUIRE_MTF_CONFLUENCE) {
-    const requiresMTF = !SIGNAL_CONFIG.MODELS_WITHOUT_MTF.includes(signal.model);
-    if (requiresMTF && !data.mtfConfluence) {
-      console.log(`⚠️ [${config.shortName}] Señal ${signal.model} rechazada - Requiere MTF (M5=${data.structure?.trend} H1=${data.structureH1?.trend})`);
-      return;
-    }
-  }
-  
-  // ═══════════════════════════════════════════
-  // FILTRO 7: Verificar que no haya señal pendiente
-  // ═══════════════════════════════════════════
-  const hasPending = signalHistory.some(s => s.symbol === symbol && s.status === 'PENDING');
-  if (hasPending) {
-    console.log(`⚠️ [${config.shortName}] Señal ${signal.model} rechazada - Ya hay señal pendiente`);
-    return;
-  }
-
-  // ── LÍMITE DIARIO (informativo, sin bloqueo) ──
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-  const todaySignals = signalHistory.filter(s =>
-    s.symbol === symbol &&
-    new Date(s.timestamp) >= todayStart
-  ).length;
-  const maxDaily = SIGNAL_CONFIG.MAX_DAILY_SIGNALS_PER_ASSET;
-  if (maxDaily > 0 && todaySignals >= maxDaily) {
-    console.log(`⏸️ [${config.shortName}] Límite diario alcanzado (${todaySignals}/${maxDaily}) — No más señales hoy`);
-    return;
-  }
-  if (todaySignals > 0) {
-    console.log(`📊 [${config.shortName}] Señales hoy: ${todaySignals} (sin límite activo)`);
-  }
-  
-  // ═══════════════════════════════════════════════════════════════
-  // FILTRO CRÍTICO: Validar que el precio sigue cerca de la entrada
-  // Si el precio ya se movió más de 0.5 riesgo desde la entrada → RECHAZAR
-  // Esto evita entrar en señales "vencidas" donde el movimiento ya ocurrió
-  // ═══════════════════════════════════════════════════════════════
-  const currentPrice = data.price;
-  const signalEntry  = signal.entry;
-  const signalRisk   = Math.abs(signalEntry - signal.stop);
-  const priceDistance = Math.abs(currentPrice - signalEntry);
-
-  // ── Minimum R:R check: TP1 must be at least 1.5x the risk ──
-  const tp1Distance = Math.abs(signal.tp1 - signalEntry);
-  if (signalRisk > 0 && tp1Distance < signalRisk * 1.4) {
-    console.log(`⛔ [${config.shortName}] R:R insuficiente: TP1=${tp1Distance.toFixed(config.decimals)} < 1.4 × SL=${signalRisk.toFixed(config.decimals)}`);
-    return;
-  }
-
-  if (signalRisk > 0 && priceDistance > signalRisk * 0.6) {
-    const direction = signal.action === 'LONG'
-      ? (currentPrice > signalEntry ? 'precio ya subió past entry' : 'precio cayó demasiado')
-      : (currentPrice < signalEntry ? 'precio ya bajó past entry' : 'precio subió demasiado');
-    console.log(`⛔ [${config.shortName}] SEÑAL VENCIDA — ${direction}: price=${currentPrice.toFixed(config.decimals)} entry=${signalEntry} dist=${priceDistance.toFixed(config.decimals)} > ${(signalRisk*0.6).toFixed(config.decimals)}`);
-    return;
-  }
-
-  // ═══════════════════════════════════════════
-  // GENERAR SEÑAL (pasó todos los filtros)
-  // ═══════════════════════════════════════════
-  const newSignal = {
-    id: signalIdCounter++,
-    symbol,
-    assetName: config.name,
-    emoji: config.emoji,
-    action: signal.action,
-    model: signal.model,
-    score: signal.score,
-    entry: signal.entry,
-    stop: signal.stop,
-    tp1: signal.tp1,
-    tp2: signal.tp2,
-    tp3: signal.tp3,
-    tp1Hit: false,
-    tp2Hit: false,
-    tp3Hit: false,
-    trailingTP1: false,
-    trailingTP2: false,
-    trailingActive: false,
-    originalStop: signal.stop,
-    status: 'PENDING',
-    timestamp: new Date().toISOString(),
-    reason: signal.reason,
-    // Alertas de estructura
-    structureAlert: null,
-    moderateAlertSent: false,
-    criticalAlertSent: false,
-    directionAlertSent: false,
-    // Campos de contexto v13.2
-    mtfConfluence: data.mtfConfluence,
-    structureH1: data.structureH1?.trend,
-    structureM5: data.structure?.trend,
-    premiumDiscount: data.premiumDiscount
-  };
-  
-  signalHistory.unshift(newSignal);
-  data.lockedSignal = { ...newSignal };
-  data.lastSignalTime = now;
-  TradingJournal.logOpen(newSignal); // Registrar en bitácora
-  stats.total++;
-  stats.pending++;
-
-  // PERSISTENCIA: guardar señal nueva en Supabase inmediatamente
-  saveSignalToSupabase(newSignal).catch(() => {});
-
-  // FIX: límite de señales en memoria + limpiar huérfanas (PENDING > 4h = cerradas sin notificar)
-  const fourHours = 4 * 60 * 60 * 1000;
-  signalHistory = signalHistory.map(s => {
-    if (s.status === 'PENDING' && Date.now() - s.timestamp > fourHours) {
-      return { ...s, status: 'EXPIRED', closeReason: 'Auto-cerrada por timeout' };
-    }
-    return s;
-  });
-  if (signalHistory.length > 200) signalHistory = signalHistory.slice(0, 200);
-  
-  console.log(`💎 SEÑAL #${newSignal.id} | ${config.shortName} | ${signal.action} | ${signal.model} | ${signal.score}%`);
-  console.log(`   H1: ${data.structureH1?.trend} | M15: ${data.structureM15?.trend} | M5: ${data.structure?.trend} | PD: ${data.premiumDiscount}`);
-  console.log(`   Escenario: ${signal.reason}`);
-  
-  // Enviar a Telegram
-  sendTelegramSignal(newSignal);
-  
-  // Enviar Push Notifications a usuarios según su plan
-  if (pushManager) {
-    pushManager.broadcastSignal(newSignal).catch(err => {
-      console.error('Error en push broadcast:', err);
-    });
-  }
+  // ── Análisis SMC puro: estructura + zonas ──
+  // Solo llama al motor para detectar OBs, FVGs, liquidez, CHoCH, BOS
+  // No genera señales, no guarda en BD, no envía Telegram
+  await SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
 }
 
-// =============================================
-// API ENDPOINTS - BÁSICOS
-// =============================================
-app.get('/', (req, res) => res.json({ 
-  name: 'Trading Master Pro', 
-  version: '14.0', 
-  connected: isConnected,
-  supabase: !!supabase,
-  filters: {
-    minScore: SIGNAL_CONFIG.MIN_SCORE,
-    analysisCooldown: SIGNAL_CONFIG.ANALYSIS_COOLDOWN,
-    postSignalCooldown: SIGNAL_CONFIG.POST_SIGNAL_COOLDOWN,
-    requireMTF: SIGNAL_CONFIG.REQUIRE_MTF_CONFLUENCE,
-    modelsWithoutMTF: SIGNAL_CONFIG.MODELS_WITHOUT_MTF,
-    maxPending: SIGNAL_CONFIG.MAX_PENDING_TOTAL,
-    tradingHours: SIGNAL_CONFIG.TRADING_HOURS
-  },
-  features: {
-    mtfOptional: true,
-    newModels: ['OB_ENTRY', 'STRUCTURE_BREAK', 'REVERSAL_PATTERN', 'PREMIUM_DISCOUNT'],
-    boomCrashModels: ['BOOM_SPIKE', 'CRASH_SPIKE']
-  }
-}));
-
-// Endpoint para cambiar configuración de MTF dinámicamente
-app.post('/api/config/mtf', (req, res) => {
-  const { requireMTF } = req.body;
-  if (typeof requireMTF === 'boolean') {
-    SIGNAL_CONFIG.REQUIRE_MTF_CONFLUENCE = requireMTF;
-    console.log(`⚙️ Configuración MTF cambiada a: ${requireMTF ? 'OBLIGATORIO' : 'OPCIONAL'}`);
-    res.json({ 
-      success: true, 
-      requireMTF: SIGNAL_CONFIG.REQUIRE_MTF_CONFLUENCE,
-      message: `MTF ahora es ${requireMTF ? 'obligatorio' : 'opcional'}`
-    });
-  } else {
-    res.status(400).json({ error: 'Parámetro requireMTF debe ser boolean' });
-  }
-});
-
-// Endpoint para obtener configuración actual
-app.get('/api/config', (req, res) => {
-  res.json({
-    version: '14.0',
-    signalConfig: {
-      minScore: SIGNAL_CONFIG.MIN_SCORE,
-      analysisCooldown: SIGNAL_CONFIG.ANALYSIS_COOLDOWN,
-      postSignalCooldown: SIGNAL_CONFIG.POST_SIGNAL_COOLDOWN,
-      requireMTFConfluence: SIGNAL_CONFIG.REQUIRE_MTF_CONFLUENCE,
-      modelsWithoutMTF: SIGNAL_CONFIG.MODELS_WITHOUT_MTF,
-      maxPendingTotal: SIGNAL_CONFIG.MAX_PENDING_TOTAL,
-      tradingHours: SIGNAL_CONFIG.TRADING_HOURS
-    },
-    smcModels: SMC_MODELS_DATA.models ? Object.keys(SMC_MODELS_DATA.models) : [],
-    learningStats: LearningSystem.getStats()
-  });
-});
-
-app.get('/api/dashboard', (req, res) => {
-  res.json({
-    connected: isConnected,
-    timestamp: Date.now(),
-    assets: Object.entries(assetData).map(([symbol, data]) => ({
-      symbol,
-      ...ASSETS[symbol],
-      price: data.price,
-      signal: data.signal,
-      lockedSignal: data.lockedSignal,
-      structureM5: data.structure?.trend || 'LOADING',
-      structureH1: data.structureH1?.trend || 'LOADING',
-      h1Loaded: data.h1Loaded || false,
-      mtfConfluence: data.mtfConfluence || false,
-      premiumDiscount: data.premiumDiscount || 'EQUILIBRIUM',
-      demandZones: data.demandZones?.length || 0,
-      supplyZones: data.supplyZones?.length || 0,
-      fvgZones: data.fvgZones?.length || 0
-    })),
-    recentSignals: signalHistory.slice(0, 30),
-    stats,
-    plans: PLANS
-  });
-});
-
-// =============================================
-// DASHBOARD PERSONALIZADO POR USUARIO
-// =============================================
-app.get('/api/dashboard/:userId', async (req, res) => {
-  const { userId } = req.params;
-  
-  try {
-    // Obtener suscripción del usuario
-    const sub = await getSubscription(userId);
-    
-    // Procesar la suscripción
-    let subscription = null;
-    if (sub) {
-      const planKey = sub.plan || 'free';
-      const plan = PLANS[planKey] || PLANS.free;
-      subscription = {
-        plan: planKey,
-        plan_name: plan.name,
-        status: sub.estado || 'trial',
-        days_left: sub.days_left || sub.trial_days_left || 5,
-        hasNightAccess: planKey === 'premium' || planKey === 'elite'
-      };
-    } else {
-      subscription = {
-        plan: 'free',
-        plan_name: 'Free Trial',
-        status: 'trial',
-        days_left: 5,
-        hasNightAccess: false
-      };
-    }
-    
-    const userPlan = subscription.plan;
-    const planConfig = PLANS[userPlan] || PLANS.free;
-    // Usar sub.assets si está disponible (ya filtrado por getSubscription), sino MY_ASSETS
-    const allowedAssets = (sub?.assets?.length > 0 ? sub.assets : planConfig.assets) || MY_ASSETS;
-    
-    // Filtrar activos según el plan del usuario
-    const userAssets = Object.entries(assetData)
-      .filter(([symbol]) => allowedAssets.includes(symbol))
-      .map(([symbol, data]) => ({
-        symbol,
-        ...ASSETS[symbol],
-        price: data.price,
-        signal: data.signal,
-        lockedSignal: data.lockedSignal,
-        structureM5: data.structure?.trend || 'LOADING',
-        structureH1: data.structureH1?.trend || 'LOADING',
-        structureM15: data.structureM15?.trend || 'LOADING',
-        h1Loaded: data.h1Loaded || false,
-        mtfConfluence: data.mtfConfluence || false,
-        premiumDiscount: data.premiumDiscount || 'EQUILIBRIUM',
-        demandZones: data.demandZones?.length || 0,
-        supplyZones: data.supplyZones?.length || 0,
-        fvgZones: data.fvgZones?.length || 0
-      }));
-    
-    // Filtrar señales solo de activos del plan del usuario
-    const userSignals = signalHistory.filter(s => allowedAssets.includes(s.symbol));
-    
-    // Calcular estadísticas SOLO de los activos del usuario
-    const userStats = {
-      total: 0,
-      wins: 0,
-      losses: 0,
-      pending: 0,
-      tp1Hits: 0,
-      tp2Hits: 0,
-      tp3Hits: 0,
-      winRate: 0
-    };
-    
-    userSignals.forEach(signal => {
-      if (signal.status === 'PENDING') {
-        userStats.pending++;
-      } else if (signal.status === 'WIN') {
-        userStats.wins++;
-        userStats.total++;
-        if (signal.tpHit === 1) userStats.tp1Hits++;
-        else if (signal.tpHit === 2) userStats.tp2Hits++;
-        else if (signal.tpHit === 3) userStats.tp3Hits++;
-      } else if (signal.status === 'LOSS') {
-        userStats.losses++;
-        userStats.total++;
-      }
-    });
-    
-    userStats.winRate = userStats.total > 0 
-      ? Math.round((userStats.wins / userStats.total) * 100) 
-      : 0;
-    
-    // Estadísticas siempre calculadas fresh — solo los 3 activos permitidos
-    const finalStats = userStats;
-    
-    res.json({
-      connected: isConnected,
-      timestamp: Date.now(),
-      userId,
-      userPlan,
-      planName: planConfig.name,
-      assets: userAssets,
-      recentSignals: userSignals.slice(0, 30),
-      stats: finalStats,
-      subscription: {
-        plan: userPlan,
-        planName: planConfig.name,
-        status: subscription?.status || 'trial',
-        daysLeft: subscription?.days_left,
-        assetsCount: allowedAssets.length,
-        hasNightAccess: userPlan === 'premium' || userPlan === 'elite'
-      }
-    });
-    
-  } catch (error) {
-    console.error('Error getting user dashboard:', error);
-    res.status(500).json({ error: 'Error loading dashboard' });
-  }
-});
 
 app.get('/api/analyze/:symbol', (req, res) => {
   const { symbol } = req.params;
@@ -5927,256 +3699,126 @@ app.post('/api/reset/:symbol', (req, res) => {
   res.json({ ok: true, symbol, ts: Date.now() });
 });
 
-app.get('/api/signals', (req, res) => res.json({ signals: signalHistory, stats }));
+// [REMOVED] /api/signals — no longer needed
 
-// ── BITÁCORA Y PLAN DE TRADING ──
-app.get('/api/journal', (req, res) => {
-  const { period = 'all', limit = 50 } = req.query;
-  res.json({
-    entries:    TradingJournal.entries.slice(0, +limit),
-    stats:      TradingJournal.getStats(period),
-    plan:       TRADING_PLAN,
-    updatedAt:  new Date().toISOString()
-  });
-});
-
-app.get('/api/journal/stats', (req, res) => {
-  const { period = 'week' } = req.query;
-  res.json(TradingJournal.getStats(period));
-});
-
-app.post('/api/reset-history', async (req, res) => {
-  const { confirm } = req.body || {};
-  if (confirm !== 'RESET_CONFIRMED') return res.status(400).json({ error: 'Enviar { confirm: "RESET_CONFIRMED" }' });
-  signalHistory.length = 0;
-  signalIdCounter = 1;
-  stats.total = stats.wins = stats.losses = stats.pending = 0;
-  stats.tp1Hits = stats.tp2Hits = stats.tp3Hits = 0;
-  Object.keys(stats.byModel || {}).forEach(k => delete stats.byModel[k]);
-  Object.values(assetData).forEach(d => { d.lockedSignal = null; d.lastSignalTime = 0; d.lastSignalClosed = 0; });
-  if (supabase) {
-    try { await supabase.from('trading_signals').delete().gte('signal_time','2000-01-01T00:00:00Z'); } catch(e) {}
-  }
-  console.log('🔄 RESET COMPLETO — empezando desde 0');
-  res.json({ ok: true, message: 'Sistema reiniciado desde 0.' });
-});
-
-// ── API P&L: puntos ganados/perdidos con filtro por período ──
-app.get('/api/pnl', (req, res) => {
-  const { period = 'all', symbol } = req.query;
-  const now = Date.now();
-  const periodMs = {
-    day:   86400000,
-    week:  7 * 86400000,
-    month: 30 * 86400000,
-    all:   Infinity
-  };
-  const cutoff = period === 'all' ? 0 : now - (periodMs[period] || Infinity);
-
-  let signals = signalHistory.filter(s => s.status !== 'PENDING' && s.timestamp >= cutoff);
-  if (symbol && symbol !== 'all') signals = signals.filter(s => s.symbol === symbol);
-
-  const closed = signals.filter(s => s.status === 'WIN' || s.status === 'LOSS');
-  const wins   = closed.filter(s => s.status === 'WIN');
-  const losses = closed.filter(s => s.status === 'LOSS');
-
-  // Puntos totales (sumar pnlPoints calculados al cierre)
-  const totalPtsWon  = wins.reduce((a, s) => a + (s.pnlPoints || 0), 0);
-  const totalPtsLost = losses.reduce((a, s) => a + Math.abs(s.pnlPoints || 0), 0);
-  const netPoints    = +(totalPtsWon - totalPtsLost).toFixed(2);
-
-  // Desglose por TP
-  const tp1s = wins.filter(s => s.tpHit === 1);
-  const tp2s = wins.filter(s => s.tpHit === 2);
-  const tp3s = wins.filter(s => s.tpHit === 3);
-
-  const avgWin  = wins.length  ? +(totalPtsWon  / wins.length).toFixed(2)  : 0;
-  const avgLoss = losses.length ? +(totalPtsLost / losses.length).toFixed(2) : 0;
-  const profitFactor = totalPtsLost > 0 ? +(totalPtsWon / totalPtsLost).toFixed(2) : totalPtsWon > 0 ? 99 : 0;
-
-  // Curva de equity diaria
-  const byDay = {};
-  closed.forEach(s => {
-    const d = new Date(s.timestamp).toISOString().slice(0, 10);
-    if (!byDay[d]) byDay[d] = { date: d, pts: 0, wins: 0, losses: 0 };
-    byDay[d].pts    += s.pnlPoints || 0;
-    byDay[d].wins   += s.status === 'WIN' ? 1 : 0;
-    byDay[d].losses += s.status === 'LOSS' ? 1 : 0;
-  });
-
-  // Por modelo
-  const byModel = {};
-  closed.forEach(s => {
-    if (!byModel[s.model]) byModel[s.model] = { wins: 0, losses: 0, ptsWon: 0, ptsLost: 0 };
-    const m = byModel[s.model];
-    if (s.status === 'WIN')  { m.wins++;   m.ptsWon  += (s.pnlPoints || 0); }
-    else                     { m.losses++; m.ptsLost += Math.abs(s.pnlPoints || 0); }
-  });
-
-  // Por activo
-  const byAsset = {};
-  closed.forEach(s => {
-    if (!byAsset[s.symbol]) byAsset[s.symbol] = { wins: 0, losses: 0, ptsWon: 0, ptsLost: 0, name: s.assetName };
-    const a = byAsset[s.symbol];
-    if (s.status === 'WIN')  { a.wins++;   a.ptsWon  += (s.pnlPoints || 0); }
-    else                     { a.losses++; a.ptsLost += Math.abs(s.pnlPoints || 0); }
-  });
-
-  res.json({
-    period, symbol: symbol || 'all',
-    total: closed.length, wins: wins.length, losses: losses.length,
-    winRate: closed.length ? Math.round(wins.length / closed.length * 100) : 0,
-    totalPtsWon: +totalPtsWon.toFixed(2), totalPtsLost: +totalPtsLost.toFixed(2),
-    netPoints, avgWin, avgLoss, profitFactor,
-    tpBreakdown: { tp1: tp1s.length, tp2: tp2s.length, tp3: tp3s.length },
-    tpPoints: {
-      tp1: +tp1s.reduce((a,s)=>a+(s.pnlPoints||0),0).toFixed(2),
-      tp2: +tp2s.reduce((a,s)=>a+(s.pnlPoints||0),0).toFixed(2),
-      tp3: +tp3s.reduce((a,s)=>a+(s.pnlPoints||0),0).toFixed(2)
-    },
-    equity: Object.values(byDay).sort((a,b)=>a.date.localeCompare(b.date)),
-    byModel: Object.entries(byModel).map(([model, d]) => ({
-      model,
-      ...d,
-      wr: d.wins+d.losses>0 ? Math.round(d.wins/(d.wins+d.losses)*100) : 0,
-      net: +(d.ptsWon - d.ptsLost).toFixed(2)
-    })).sort((a,b) => b.net - a.net),
-    byAsset: Object.entries(byAsset).map(([sym, d]) => ({
-      symbol: sym, name: d.name,
-      wins: d.wins, losses: d.losses,
-      wr: d.wins+d.losses>0 ? Math.round(d.wins/(d.wins+d.losses)*100) : 0,
-      net: +(d.ptsWon - d.ptsLost).toFixed(2)
-    }))
-  });
-});
-
-app.put('/api/signals/:id', async (req, res) => {
-  const id = parseInt(req.params.id);
-  const signal = signalHistory.find(s => s.id === id);
-  if (!signal) return res.status(404).json({ error: 'Not found' });
+app.get('/api/dashboard/:userId', async (req, res) => {
+  const { userId } = req.params;
   
-  const { status, userId, tpHit } = req.body;
-  closeSignal(id, status, signal.symbol, tpHit);
-  
-  // Guardar en módulo de reportes si está disponible
-  if (reportsManager && userId) {
-    try {
-      // Obtener datos del usuario para el plan
-      const sub = await getSubscription(userId);
-      const planKey = sub?.plan || 'free';
+  try {
+    // Obtener suscripción del usuario
+    const sub = await getSubscription(userId);
+    
+    // Procesar la suscripción
+    let subscription = null;
+    if (sub) {
+      const planKey = sub.plan || 'free';
       const plan = PLANS[planKey] || PLANS.free;
-      
-      await reportsManager.recordTrade(userId, {
-        signalId: signal.id.toString(),
-        symbol: signal.symbol,
-        assetName: signal.assetName || signal.symbol,
-        action: signal.action,
-        model: signal.model,
-        score: signal.score,
-        entryPrice: signal.entry,
-        stopLoss: signal.stop,
-        tp1: signal.tp1,
-        tp2: signal.tp2,
-        tp3: signal.tp3,
-        result: status, // 'WIN' or 'LOSS'
-        closePrice: status === 'WIN' ? (tpHit === 3 ? signal.tp3 : tpHit === 2 ? signal.tp2 : signal.tp1) : signal.stop,
-        tpHit: status === 'WIN' ? (tpHit || 1) : null,
-        reason: signal.reason,
-        timeframe: 'M5',
-        userPlan: plan.name || 'free',
-        signalTime: signal.timestamp
-      });
-      
-      console.log(`📊 Trade guardado en reportes: ${signal.symbol} - ${status}`);
-    } catch (error) {
-      console.error('Error guardando trade en reportes:', error);
-    }
-  }
-  
-  res.json({ success: true, signal, stats });
-});
-
-// =============================================
-// API ENDPOINTS - SISTEMA DE REPORTES
-// =============================================
-
-// Obtener resumen del usuario
-app.get('/api/reports/summary/:userId', async (req, res) => {
-  try {
-    if (!reportsManager) {
-      return res.status(503).json({ error: 'Reportes no disponibles' });
+      subscription = {
+        plan: planKey,
+        plan_name: plan.name,
+        status: sub.estado || 'trial',
+        days_left: sub.days_left || sub.trial_days_left || 5,
+        hasNightAccess: planKey === 'premium' || planKey === 'elite'
+      };
+    } else {
+      subscription = {
+        plan: 'free',
+        plan_name: 'Free Trial',
+        status: 'trial',
+        days_left: 5,
+        hasNightAccess: false
+      };
     }
     
-    const summary = await reportsManager.getUserSummary(req.params.userId);
-    res.json({ success: true, summary });
-  } catch (error) {
-    console.error('Error getting summary:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Obtener reporte por período
-app.get('/api/reports/:userId', async (req, res) => {
-  try {
-    if (!reportsManager) {
-      return res.status(503).json({ error: 'Reportes no disponibles' });
-    }
+    const userPlan = subscription.plan;
+    const planConfig = PLANS[userPlan] || PLANS.free;
+    // Usar sub.assets si está disponible (ya filtrado por getSubscription), sino MY_ASSETS
+    const allowedAssets = (sub?.assets?.length > 0 ? sub.assets : planConfig.assets) || MY_ASSETS;
     
-    const period = req.query.period || 'all';
-    const report = await reportsManager.getReport(req.params.userId, period);
-    res.json({ success: true, report });
-  } catch (error) {
-    console.error('Error getting report:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Obtener equity curve para gráficas
-app.get('/api/reports/equity/:userId', async (req, res) => {
-  try {
-    if (!reportsManager) {
-      return res.status(503).json({ error: 'Reportes no disponibles' });
-    }
+    // Filtrar activos según el plan del usuario
+    const userAssets = Object.entries(assetData)
+      .filter(([symbol]) => allowedAssets.includes(symbol))
+      .map(([symbol, data]) => ({
+        symbol,
+        ...ASSETS[symbol],
+        price: data.price,
+        signal: data.signal,
+        lockedSignal: data.lockedSignal,
+        structureM5: data.structure?.trend || 'LOADING',
+        structureH1: data.structureH1?.trend || 'LOADING',
+        structureM15: data.structureM15?.trend || 'LOADING',
+        h1Loaded: data.h1Loaded || false,
+        mtfConfluence: data.mtfConfluence || false,
+        premiumDiscount: data.premiumDiscount || 'EQUILIBRIUM',
+        demandZones: data.demandZones?.length || 0,
+        supplyZones: data.supplyZones?.length || 0,
+        fvgZones: data.fvgZones?.length || 0
+      }));
     
-    const period = req.query.period || 'month';
-    const equityCurve = await reportsManager.getEquityCurve(req.params.userId, period);
-    res.json({ success: true, equityCurve });
-  } catch (error) {
-    console.error('Error getting equity curve:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Registrar trade manualmente (para sincronización)
-app.post('/api/reports/trade', async (req, res) => {
-  try {
-    if (!reportsManager) {
-      return res.status(503).json({ error: 'Reportes no disponibles' });
-    }
+    // Filtrar señales solo de activos del plan del usuario
+    const userSignals = []; // signals removed — AI handles analysis
     
-    const trade = await reportsManager.recordTrade(req.body.userId, req.body);
-    res.json({ success: true, trade });
+    // Calcular estadísticas SOLO de los activos del usuario
+    const userStats = {
+      total: 0,
+      wins: 0,
+      losses: 0,
+      pending: 0,
+      tp1Hits: 0,
+      tp2Hits: 0,
+      tp3Hits: 0,
+      winRate: 0
+    };
+    
+    userSignals.forEach(signal => {
+      if (signal.status === 'PENDING') {
+        userStats.pending++;
+      } else if (signal.status === 'WIN') {
+        userStats.wins++;
+        userStats.total++;
+        if (signal.tpHit === 1) userStats.tp1Hits++;
+        else if (signal.tpHit === 2) userStats.tp2Hits++;
+        else if (signal.tpHit === 3) userStats.tp3Hits++;
+      } else if (signal.status === 'LOSS') {
+        userStats.losses++;
+        userStats.total++;
+      }
+    });
+    
+    userStats.winRate = userStats.total > 0 
+      ? Math.round((userStats.wins / userStats.total) * 100) 
+      : 0;
+    
+    // Estadísticas siempre calculadas fresh — solo los 3 activos permitidos
+    const finalStats = userStats;
+    
+    res.json({
+      connected: isConnected,
+      timestamp: Date.now(),
+      userId,
+      userPlan,
+      planName: planConfig.name,
+      assets: userAssets,
+      recentSignals: userSignals.slice(0, 30),
+      stats: finalStats,
+      subscription: {
+        plan: userPlan,
+        planName: planConfig.name,
+        status: subscription?.status || 'trial',
+        daysLeft: subscription?.days_left,
+        assetsCount: allowedAssets.length,
+        hasNightAccess: userPlan === 'premium' || userPlan === 'elite'
+      }
+    });
+    
   } catch (error) {
-    console.error('Error recording trade:', error);
-    res.status(500).json({ error: error.message });
+    console.error('Error getting user dashboard:', error);
+    res.status(500).json({ error: 'Error loading dashboard' });
   }
 });
 
-app.post('/api/ai/chat', async (req, res) => {
-  const { question, symbol } = req.body;
-  try {
-    const response = await Elisa.chatWithAI(question || '', symbol || 'stpRNG');
-    res.json(response);
-  } catch (error) {
-    console.log('⚠️ Error en chat:', error.message);
-    res.json(Elisa.chat(question || '', symbol || 'stpRNG'));
-  }
-});
+app.get('/api/analyze/:symbol', (req, res) => {
 
-// =============================================
-// IA SMC INSTITUCIONAL — ANÁLISIS DEL GRÁFICO
-// Claude analiza el mercado con contexto real y
-// transmite el análisis en streaming al frontend
 // =============================================
 // Fetch noticias y sesgo del día para contexto macro
 // =============================================
@@ -6424,254 +4066,6 @@ ZONAS_IA:{"keyLevels":[{"price":NUMERO,"type":"resistance","label":"TEXTO CORTO"
 
 // Obtener VAPID public key
 app.get('/api/push/vapid-key', (req, res) => {
-  if (!pushManager) {
-    return res.status(503).json({ error: 'Push notifications no disponibles' });
-  }
-  res.json({ 
-    publicKey: pushManager.getPublicKey(),
-    enabled: true
-  });
-});
-
-// Guardar suscripción push
-app.post('/api/push/subscribe', async (req, res) => {
-  try {
-    if (!pushManager) {
-      return res.status(503).json({ error: 'Push notifications no disponibles' });
-    }
-
-    const { userId, subscription, deviceInfo } = req.body;
-    
-    if (!userId || !subscription) {
-      return res.status(400).json({ error: 'userId y subscription requeridos' });
-    }
-
-    const result = await pushManager.saveSubscription(userId, subscription, deviceInfo);
-    res.json(result);
-  } catch (error) {
-    console.error('Error en subscribe:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Eliminar suscripción push
-app.post('/api/push/unsubscribe', async (req, res) => {
-  try {
-    if (!pushManager) {
-      return res.status(503).json({ error: 'Push notifications no disponibles' });
-    }
-
-    const { userId, endpoint } = req.body;
-    
-    if (!userId || !endpoint) {
-      return res.status(400).json({ error: 'userId y endpoint requeridos' });
-    }
-
-    const result = await pushManager.removeSubscription(userId, endpoint);
-    res.json(result);
-  } catch (error) {
-    console.error('Error en unsubscribe:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Enviar notificación de prueba
-app.post('/api/push/test', async (req, res) => {
-  try {
-    if (!pushManager) {
-      return res.status(503).json({ error: 'Push notifications no disponibles' });
-    }
-
-    const { userId } = req.body;
-    
-    if (!userId) {
-      return res.status(400).json({ error: 'userId requerido' });
-    }
-
-    const result = await pushManager.sendTestNotification(userId);
-    res.json(result);
-  } catch (error) {
-    console.error('Error en test notification:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Obtener estadísticas de notificaciones
-app.get('/api/push/stats/:userId', async (req, res) => {
-  try {
-    if (!pushManager) {
-      return res.status(503).json({ error: 'Push notifications no disponibles' });
-    }
-
-    const stats = await pushManager.getUserStats(req.params.userId);
-    res.json({ success: true, stats });
-  } catch (error) {
-    console.error('Error obteniendo stats:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// =============================================
-// API ENDPOINTS - SISTEMA DE APRENDIZAJE
-// =============================================
-app.get('/api/learning/stats', (req, res) => {
-  const learningStats = LearningSystem.getStats();
-  res.json({
-    success: true,
-    learning: learningStats,
-    adjustments: stats.learning.scoreAdjustments
-  });
-});
-
-app.get('/api/learning/patterns', (req, res) => {
-  const lossPatterns = LearningSystem.analyzeLossPatterns();
-  res.json({
-    success: true,
-    patterns: lossPatterns,
-    recommendations: Object.entries(lossPatterns)
-      .filter(([_, p]) => p.count >= 3)
-      .map(([model, p]) => ({
-        model,
-        message: `${model} tiene ${p.count} pérdidas. Considerar reducir score o filtrar condiciones.`
-      }))
-  });
-});
-
-app.get('/api/learning/history', (req, res) => {
-  const limit = parseInt(req.query.limit) || 50;
-  res.json({
-    success: true,
-    trades: LearningSystem.tradeHistory.slice(-limit),
-    total: LearningSystem.tradeHistory.length
-  });
-});
-
-// =============================================
-// API ENDPOINTS - MODELOS SMC
-// =============================================
-app.get('/api/models', (req, res) => {
-  res.json({
-    success: true,
-    models: SMC_MODELS_DATA.models || {},
-    concepts: SMC_MODELS_DATA.concepts || {},
-    version: SMC_MODELS_DATA.version || '1.0.0'
-  });
-});
-
-app.get('/api/models/:modelId', (req, res) => {
-  const { modelId } = req.params;
-  const model = SMC_MODELS_DATA.models?.[modelId.toUpperCase()];
-  
-  if (!model) {
-    return res.status(404).json({ error: 'Model not found' });
-  }
-  
-  // Agregar estadísticas de aprendizaje al modelo
-  const learningStats = LearningSystem.getStats();
-  const modelStats = learningStats.byModel[modelId.toUpperCase()] || { wins: 0, losses: 0 };
-  const adjustment = stats.learning.scoreAdjustments[modelId.toUpperCase()] || 0;
-  
-  res.json({
-    success: true,
-    model: {
-      ...model,
-      currentAdjustment: adjustment,
-      stats: modelStats,
-      effectiveScore: model.baseScore + adjustment
-    }
-  });
-});
-
-// =============================================
-// API ENDPOINTS - SUSCRIPCIONES
-// =============================================
-app.get('/api/plans', (req, res) => {
-  res.json({ plans: PLANS });
-});
-
-// =============================================
-// ENDPOINT: Estado de sesión de trading
-// =============================================
-app.get('/api/trading-session', (req, res) => {
-  const plan = req.query.plan || 'free';
-  const now = new Date();
-  const utcHour = now.getUTCHours() + now.getUTCMinutes() / 60;
-  
-  // Horarios
-  const baseStart = SIGNAL_CONFIG.TRADING_HOURS.base.start; // 11:00 UTC (6AM COL)
-  const baseEnd = SIGNAL_CONFIG.TRADING_HOURS.base.end;     // 19:00 UTC (2PM COL)
-  const nightStart = SIGNAL_CONFIG.TRADING_HOURS.night.start; // 01:30 UTC (8:30PM COL)
-  const nightEnd = SIGNAL_CONFIG.TRADING_HOURS.night.end;     // 06:00 UTC (1AM COL)
-  
-  // Verificar sesión diurna
-  const isDaySession = utcHour >= baseStart && utcHour < baseEnd;
-  
-  // Verificar sesión nocturna (solo Premium/Elite)
-  const isNightSession = utcHour >= nightStart && utcHour < nightEnd;
-  
-  // Determinar acceso según plan
-  const hasDayAccess = true; // Todos tienen acceso diurno
-  const hasNightAccess = plan === 'premium' || plan === 'elite';
-  
-  // Estado actual
-  let sessionStatus = 'closed';
-  let currentSession = null;
-  let isLocked = false;
-  let lockReason = null;
-  
-  if (isDaySession) {
-    sessionStatus = 'open';
-    currentSession = 'day';
-    isLocked = false;
-  } else if (isNightSession) {
-    currentSession = 'night';
-    if (hasNightAccess) {
-      sessionStatus = 'open';
-      isLocked = false;
-    } else {
-      sessionStatus = 'restricted';
-      isLocked = true;
-      lockReason = 'night_session';
-    }
-  } else {
-    sessionStatus = 'closed';
-    currentSession = null;
-    isLocked = true;
-    lockReason = 'market_closed';
-  }
-  
-  // Calcular próxima apertura
-  let nextOpen = null;
-  if (sessionStatus !== 'open') {
-    if (utcHour < baseStart) {
-      nextOpen = `${Math.floor(baseStart)}:${Math.round((baseStart % 1) * 60).toString().padStart(2, '0')} UTC`;
-    } else if (utcHour >= baseEnd && utcHour < nightStart) {
-      if (hasNightAccess) {
-        nextOpen = `${Math.floor(nightStart)}:${Math.round((nightStart % 1) * 60).toString().padStart(2, '0')} UTC`;
-      } else {
-        nextOpen = `${Math.floor(baseStart)}:00 UTC (mañana)`;
-      }
-    } else {
-      nextOpen = `${Math.floor(baseStart)}:00 UTC (mañana)`;
-    }
-  }
-  
-  res.json({
-    sessionStatus,
-    currentSession,
-    isLocked,
-    lockReason,
-    plan,
-    hasNightAccess,
-    nextOpen,
-    hours: {
-      day: { start: '6:00 AM', end: '2:00 PM', timezone: 'Colombia' },
-      night: { start: '8:30 PM', end: '1:00 AM', timezone: 'Colombia', requiredPlan: 'premium' }
-    },
-    serverTime: now.toISOString(),
-    utcHour: utcHour.toFixed(2)
-  });
-});
 
 app.get('/api/subscription/:userId', async (req, res) => {
   const { userId } = req.params;
@@ -7106,7 +4500,7 @@ app.get('/api/health', (req, res) => {
     supabase: !!supabase,
     telegram: !!(TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID),
     assets:   MY_ASSETS.length,
-    signals:  signalHistory.length,
+    signals:  0,
     uptime:   Math.floor(process.uptime()),
     memory:   Math.floor(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB'
   });
@@ -7158,3 +4552,41 @@ app.listen(PORT, () => {
 });
 
 export default app;
+
+
+// =============================================
+// INICIO DEL SERVIDOR
+// =============================================
+async function startServer() {
+  // Cargar datos de usuarios de Supabase si disponible
+  if (supabase) {
+    try {
+      const { data } = await supabase.from('users').select('email, plan');
+      if (data) console.log(`✅ ${data.length} usuarios cargados`);
+    } catch(e) {}
+  }
+
+  // Conectar a Deriv para datos en vivo
+  connectDeriv();
+  
+  // Iniciar monitoring
+  startMarketMonitoring();
+}
+
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => {
+  console.log(`
+╔═══════════════════════════════════════════════════╗
+║   📊 TRADING MASTER PRO v25.0 — IA SMC            ║
+║   Datos en vivo + Análisis institucional con IA   ║
+╠═══════════════════════════════════════════════════╣
+║  Puerto: ${PORT}                                      ║
+║  OpenAI: ${openai ? '✅ Conectado' : '⚠️  No configurado'}                      ║
+║  Supabase: ${supabase ? '✅ Conectado' : '⚠️  No configurado'}                  ║
+║  Activos: Step · Oro · V100                       ║
+║  Señales automáticas: ❌ DESACTIVADAS             ║
+║  IA institucional: ✅ Activa (bajo demanda)        ║
+╚═══════════════════════════════════════════════════╝
+  `);
+  startServer();
+});
