@@ -1,6 +1,3 @@
-// Trading Master Pro v25.0 — IA SMC Institucional
-// Señales automáticas ELIMINADAS — la IA analiza y el humano decide
-
 // =============================================
 // TRADING MASTER PRO v16.0 - PLATAFORMA COMPLETA
 // Motor SMC + ELISA IA + Telegram + Supabase + Admin
@@ -41,19 +38,7 @@ const __dirname = path.dirname(__filename);
 
 dotenv.config();
 
-const app = express();
-app.use(cors());
-app.use(express.json());
-
-const PORT = process.env.PORT || 3001;
-
 // =============================================
-// CONFIGURACIÓN TELEGRAM
-// =============================================
-const TELEGRAM_BOT_TOKEN = process.env.TOKEN_BOT_DE_TELEGRAM || process.env.TELEGRAM_BOT_TOKEN;
-const TELEGRAM_CHAT_ID = process.env.ID_DE_CHAT_DE_TELEGRAM || process.env.TELEGRAM_CHAT_ID;
-
-
 // CONFIGURACIÓN OPENAI - IA SMC INSTITUCIONAL
 // =============================================
 let openai = null;
@@ -76,25 +61,168 @@ try {
   console.log('⚠️ Error cargando smc-models.json:', e.message);
 }
 
+// =============================================
+// SISTEMA DE APRENDIZAJE AUTOMÁTICO
+// =============================================
 
 // =============================================
-// SUPABASE — Solo para usuarios y suscripciones
+// CONFIGURACIÓN DE FILTROS v24.0
+// CALIDAD SOBRE CANTIDAD - Menos señales, mejor win rate
 // =============================================
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+// Función para verificar si estamos en horario de trading
+// Sesión diurna:   7:00 AM - 1:00 PM Colombia (12:00-18:00 UTC)
+// Sesión nocturna: 8:30 PM - 1:00 AM Colombia (01:30-06:00 UTC)
+function isInTradingHours(plan = 'free') {
+  const now = new Date();
+  const utcHour = now.getUTCHours() + now.getUTCMinutes() / 60;
+  const { base, night } = SIGNAL_CONFIG.TRADING_HOURS;
+
+  const inDaytime = utcHour >= base.start && utcHour < base.end;
+  const inNight   = utcHour >= night.start && utcHour < night.end;
+
+  return inDaytime || inNight;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// PLAN DE TRADING INSTITUCIONAL — Trading Master Pro v25
+// ══════════════════════════════════════════════════════════════════════
+// Reglas que el sistema sigue al pie de la letra para ser rentable
+// ══════════════════════════════════════════════════════════════════════
+
+const TRADING_PLAN = {
+  // ── GESTIÓN DE RIESGO ──
+  MAX_RISK_PER_TRADE_PCT: 1.0,   // Máximo 1% del capital por operación
+  MAX_DAILY_LOSS_PCT:     3.0,   // Si se pierde 3% en el día → STOP total
+  MAX_WEEKLY_LOSS_PCT:    6.0,   // Si se pierde 6% en la semana → pausa 48h
+  MIN_RR:                 1.5,   // R:R mínimo aceptable
+  TARGET_RR:              2.0,   // R:R objetivo
+  MAX_CONCURRENT:         1,     // Máximo 1 operación por activo
+
+  // ── SESIONES PERMITIDAS (kill zones institucionales) ──
+  PREFERRED_SESSIONS: ['NY_OPEN', 'LONDON_OPEN', 'LONDON_CLOSE'],
+  AVOID_SESSIONS: ['ASIA_OPEN'],  // Oro: evitar apertura Asia (spread alto)
+
+  // ── CONDICIONES OBLIGATORIAS PARA OPERAR ──
+  REQUIRED: {
+    H1_ALIGNED: true,            // H1 debe confirmar la dirección
+    OB_MUST_BE_FRESH: true,      // OB creado en las últimas 60 velas
+    MIN_SCORE: 88,               // Score mínimo para activar
+    ZONE_ALIGNMENT: true,        // DISCOUNT para BUY, PREMIUM para SELL
+  },
+
+  // ── REGLAS DE SALIDA ──
+  EXIT: {
+    MOVE_SL_TO_BE_AT_TP1: true,  // Al tocar TP1 → SL a breakeven
+    PARTIAL_CLOSE_AT_TP1: 0.33,  // Cerrar 33% en TP1
+    PARTIAL_CLOSE_AT_TP2: 0.33,  // Cerrar 33% en TP2
+    RUN_BALANCE_TO_TP3: true,    // Dejar correr el 34% hasta TP3
+    MAX_HOLD_HOURS: 24,          // Máximo 24h en posición
+  },
+
+  // ── ACTIVOS PREFERIDOS POR SESIÓN ──
+  ASSET_SESSION_MAP: {
+    stpRNG:    ['NY_OPEN', 'LONDON_OPEN', 'LONDON_CLOSE', 'NIGHT'], // 24h sintético
+    '1HZ100V': ['NY_OPEN', 'LONDON_OPEN', 'LONDON_CLOSE', 'NIGHT'], // 24h sintético
+    frxXAUUSD: ['LONDON_OPEN', 'NY_OPEN'],  // Oro: solo London+NY (mayor volumen)
+  },
+
+  // ── FILTROS ANTI-REVENGE TRADING ──
+  ANTI_REVENGE: {
+    PAUSE_AFTER_CONSECUTIVE_LOSSES: 2,   // Pausar tras 2 pérdidas seguidas
+    PAUSE_DURATION_MIN: 60,              // Pausa de 60 minutos
+    REDUCE_SIZE_AFTER_LOSS: true,        // Reducir tamaño tras pérdida
+  }
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// BITÁCORA DE TRADING — Registro detallado de cada operación
+// ══════════════════════════════════════════════════════════════════════
+
+
+const app = express();
+const PORT = process.env.PORT || 3001;
+
+app.use(cors());
+app.use(express.json());
+
+// =============================================
+// CONFIGURACIÓN TELEGRAM
+// =============================================
+const TELEGRAM_BOT_TOKEN = process.env.TOKEN_BOT_DE_TELEGRAM || process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_CHAT_ID = process.env.ID_DE_CHAT_DE_TELEGRAM || process.env.TELEGRAM_CHAT_ID;
+
+
+// =============================================
+// CONFIGURACIÓN SUPABASE
+// =============================================
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY || '';
 let supabase = null;
+
 if (SUPABASE_URL && SUPABASE_SERVICE_KEY) {
   supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
   console.log('✅ Supabase conectado');
 } else {
-  console.log('⚠️ Supabase no configurado - modo local');
+  console.log('⚠️ Supabase no configurado - usando memoria local');
+  console.log('   SUPABASE_URL:', SUPABASE_URL ? 'OK' : 'MISSING');
+  console.log('   SUPABASE_SERVICE_ROLE_KEY:', SUPABASE_SERVICE_KEY ? 'OK' : 'MISSING');
 }
 
-// Almacenamiento en memoria fallback
-const memoryStore = { subscriptions: new Map() };
+const memoryStore = {
+  subscriptions: new Map()
+};
 
+// =============================================
+// FUNCIONES DE SUSCRIPCIÓN - ESTRUCTURA NUEVA
+// Columnas: id, email, plan, estado, periodo, created_at, updated_at, trial_ends_at, subscription_ends_at
+// =============================================
 
-const PERIOD_DAYS = { mensual: 30, semestral: 180, anual: 365 };
+// Días por periodo
+const PERIOD_DAYS = {
+  mensual: 30,
+  semestral: 180,
+  anual: 365
+};
+
+// Función para calcular días restantes de cualquier suscripción
+function calculateDaysLeft(subscriptionEndsAt, trialEndsAt, estado, periodo) {
+  const now = new Date();
+  
+  // Si es trial, usar trial_ends_at
+  if (estado === 'trial' && trialEndsAt) {
+    const ends = new Date(trialEndsAt);
+    const diffDays = Math.ceil((ends - now) / (1000 * 60 * 60 * 24));
+    return Math.max(0, diffDays);
+  }
+  
+  // Si tiene fecha de vencimiento de suscripción
+  if (subscriptionEndsAt) {
+    const ends = new Date(subscriptionEndsAt);
+    const diffDays = Math.ceil((ends - now) / (1000 * 60 * 60 * 24));
+    return Math.max(0, diffDays);
+  }
+  
+  return 0;
+}
+
+// Función para verificar si la suscripción está activa
+function isSubscriptionActive(estado, daysLeft) {
+  if (estado === 'expired') return false;
+  if (daysLeft <= 0) return false;
+  return true;
+}
+
+// Función para calcular fecha de vencimiento al activar plan
+function calculateExpirationDate(periodo) {
+  const days = PERIOD_DAYS[periodo] || 30;
+  const expirationDate = new Date();
+  expirationDate.setDate(expirationDate.getDate() + days);
+  return expirationDate.toISOString();
+}
+
+// Activos operados — definido aquí para uso en toda la app
+const MY_ASSETS = ['stpRNG', 'frxXAUUSD', '1HZ100V'];
 
 async function getSubscription(userId) {
   if (supabase) {
@@ -250,13 +378,9 @@ async function deleteSubscription(userId) {
   return { error: null };
 }
 
-
 // =============================================
 // CONFIGURACIÓN DE ACTIVOS Y PLANES
 // =============================================
-
-// Activos operados en la plataforma
-const MY_ASSETS = ['stpRNG', 'frxXAUUSD', '1HZ100V'];
 
 const PLANS = {
   free: {
@@ -356,51 +480,316 @@ const BOOM_CRASH_RULES = {
 };
 
 // =============================================
+// ESTADO GLOBAL
+// =============================================
+let derivWs = null;
+let isConnected = false;
+let reconnectAttempts = 0;
 
-// =============================================
-// ESTADO EN MEMORIA — Datos de mercado en vivo
-// =============================================
-let assetData = {};
-for (const [symbol, config] of Object.entries(ASSETS)) {
-  assetData[symbol] = {
-    candles:    [],
-    candlesH1:  [],
-    candlesM15: [],
-    candlesM1:  [],
-    price:      null,
-    lastAnalysis: 0,
-    // SMC zones (updated by analyzeAsset)
-    structure:      null,
-    structureH1:    null,
-    structureM15:   null,
-    demandZones:    [],
-    supplyZones:    [],
-    demandZonesH1:  [],
-    supplyZonesH1:  [],
-    demandZonesM15: [],
-    supplyZonesM15: [],
-    fvgZones:        [],
-    liquidityLevels: [],
-    swings:          [],
-    swingsM15:       [],
-    choch:      null,
-    bos:        null,
-    chochM15:   null,
-    bosM15:     null,
-    premiumDiscount: 'EQUILIBRIUM',
-    mtfConfluence:   false,
-    h1Loaded:   false,
-    m15Loaded:  false,
-    m1Loaded:   false,
-    m1Steps:    null,
-    orderFlow:  null,
-    pullback:   null,
-    chartOverlays: {},
-    // No señales — la IA las sugiere, el humano las toma
+// Sistema de seguimiento de mercados activos
+const marketStatus = {};
+for (const symbol of MY_ASSETS) {
+  marketStatus[symbol] = {
+    lastDataReceived: 0,
+    isActive: false,
+    subscriptionAttempts: 0,
+    lastSubscriptionAttempt: 0
   };
 }
 
+// Función para detectar si un mercado de Forex/Metales debería estar abierto
+function isMarketOpenNow(symbol) {
+  const config = ASSETS[symbol];
+  if (!config) return true;
+  
+  // Los sintéticos operan 24/7
+  if (['sinteticos', 'boom', 'crash'].includes(config.category)) {
+    return true;
+  }
+  
+  // Forex y Metales: cerrados de viernes 17:00 EST a domingo 17:00 EST
+  const now = new Date();
+  const utcDay = now.getUTCDay();
+  const utcHour = now.getUTCHours();
+  
+  // Convertir a EST (UTC-5)
+  const estHour = (utcHour - 5 + 24) % 24;
+  
+  // Sábado completo = cerrado
+  if (utcDay === 6) return false;
+  
+  // Domingo antes de las 17:00 EST (22:00 UTC) = cerrado
+  if (utcDay === 0 && utcHour < 22) return false;
+  
+  // Viernes después de las 17:00 EST (22:00 UTC) = cerrado
+  if (utcDay === 5 && utcHour >= 22) return false;
+  
+  return true;
+}
 
+// Función para resubscribir a un activo específico
+// FIX: flag para evitar resuscripciones duplicadas durante el arranque
+let initialSubscriptionDone = false;
+const subscriptionCooldown  = {};  // symbol → timestamp de última sub
+
+function resubscribeToAsset(symbol) {
+  if (!derivWs || derivWs.readyState !== WebSocket.OPEN) return;
+  // FIX "Already subscribed": si la última suscripción fue hace <45s, omitir
+  const lastSub = subscriptionCooldown[symbol] || 0;
+  if (Date.now() - lastSub < 45000) {
+    console.log(`⏳ [${ASSETS[symbol]?.shortName}] Resuscripción omitida (cooldown 45s)`);
+    return;
+  }
+  subscriptionCooldown[symbol] = Date.now();
+  console.log(`🔄 [${ASSETS[symbol]?.shortName}] Resubscribiendo...`);
+  marketStatus[symbol].lastSubscriptionAttempt = Date.now();
+  marketStatus[symbol].subscriptionAttempts++;
+  
+  derivWs.send(JSON.stringify({
+    ticks_history: symbol,
+    adjust_start_time: 1,
+    count: 500,
+    end: 'latest',
+    granularity: 300,
+    style: 'candles',
+    subscribe: 1
+  }));
+  
+  requestH1(symbol);
+  requestM15(symbol);
+  requestM1(symbol);
+  derivWs.send(JSON.stringify({ ticks: symbol, subscribe: 1 }));
+}
+
+// Verificar mercados inactivos y resubscribir
+function checkAndResubscribeMarkets() {
+  if (!isConnected) return;
+  // FIX: no resubscribir durante los primeros 60s del arranque — evita "already subscribed"
+  if (!initialSubscriptionDone) return;
+  
+  const now = Date.now();
+  const inactivityThreshold = 60000; // 1 minuto sin datos = inactivo
+  
+  for (const symbol of MY_ASSETS) {
+    const status = marketStatus[symbol];
+    const config = ASSETS[symbol];
+    const shouldBeOpen = isMarketOpenNow(symbol);
+    
+    // Si el mercado debería estar abierto pero no recibimos datos
+    if (shouldBeOpen) {
+      const timeSinceLastData = now - status.lastDataReceived;
+      const timeSinceLastAttempt = now - status.lastSubscriptionAttempt;
+      
+      // Si no hay datos recientes y no intentamos recientemente (cada 30 segundos)
+      if (timeSinceLastData > inactivityThreshold && timeSinceLastAttempt > 30000) {
+        console.log(`⚠️ [${config?.shortName}] Sin datos por ${Math.round(timeSinceLastData/1000)}s - resubscribiendo`);
+        resubscribeToAsset(symbol);
+      }
+    }
+  }
+}
+
+// Iniciar verificación periódica de mercados
+// FIX: guardar TODOS los IDs de intervalos para poder limpiarlos en reconexión
+let marketCheckInterval = null;
+let m15RefreshInterval  = null;
+let h1RefreshInterval   = null;
+let pingWatchdogInterval = null;
+
+function clearAllMonitorIntervals() {
+  if (marketCheckInterval)  { clearInterval(marketCheckInterval);  marketCheckInterval  = null; }
+  if (m15RefreshInterval)   { clearInterval(m15RefreshInterval);   m15RefreshInterval   = null; }
+  if (h1RefreshInterval)    { clearInterval(h1RefreshInterval);    h1RefreshInterval    = null; }
+  if (pingWatchdogInterval) { clearInterval(pingWatchdogInterval); pingWatchdogInterval = null; }
+}
+
+function startMarketMonitoring() {
+  // FIX: limpiar todos los intervalos previos antes de crear nuevos
+  // Sin esto, cada reconexión acumula 3-4 intervalos → el scanner se degrada
+  clearAllMonitorIntervals();
+
+  // Verificar mercados cada 30 segundos
+  marketCheckInterval = setInterval(checkAndResubscribeMarkets, 30000);
+  console.log('✅ Monitor de mercados iniciado (verificación cada 30s)');
+
+  // Refrescar M15 + M1 cada 60 segundos
+  m15RefreshInterval = setInterval(() => {
+    if (derivWs?.readyState !== WebSocket.OPEN) return;
+    for (const symbol of MY_ASSETS) {
+      try { requestM15(symbol); } catch(e) {}
+      try { requestM1(symbol);  } catch(e) {}
+    }
+  }, 60 * 1000);
+
+  // Refrescar H1 cada 5 minutos
+  h1RefreshInterval = setInterval(() => {
+    if (derivWs?.readyState !== WebSocket.OPEN) return;
+    for (const symbol of MY_ASSETS) {
+      try { requestH1(symbol); } catch(e) {}
+    }
+  }, 5 * 60 * 1000);
+
+  // Ping + Watchdog cada 25 segundos
+  // Si no llegan datos en 90s → forzar reconexión (conexión zombie)
+  pingWatchdogInterval = setInterval(() => {
+    if (derivWs?.readyState !== WebSocket.OPEN) return;
+    try { derivWs.send(JSON.stringify({ ping: 1 })); } catch(e) {}
+    const maxSilence = 90000;
+    const anyData = MY_ASSETS.some(s =>
+      Date.now() - (marketStatus[s]?.lastDataReceived || 0) < maxSilence
+    );
+    if (!anyData) {
+      console.log('🔁 Watchdog: sin datos en 90s — terminando conexión zombie');
+      try { derivWs.terminate(); } catch(e) {}
+    }
+  }, 25000);
+}
+
+const assetData = {};
+for (const symbol of MY_ASSETS) {
+  assetData[symbol] = {
+    candles: [],       // M5
+    candlesH1: [],     // H1 — tendencia mayor
+    candlesM15: [],    // M15 — tendencia intermedia (NUEVA)
+    candlesM1: [],     // M1 — entrada precisa (NUEVA)
+    price: null,
+    signal: null,
+    lockedSignal: null,
+    lastAnalysis: 0,
+    demandZones: [],
+    supplyZones: [],
+    fvgZones: [],
+    liquidityLevels: [],
+    swings: [],
+    structure: { trend: 'NEUTRAL', strength: 0 },
+    choch: null,
+    bos: null,
+    orderFlow: { momentum: 'NEUTRAL', strength: 0 },
+    structureH1: { trend: 'LOADING', strength: 0 },
+    structureM15: { trend: 'LOADING', strength: 0 },
+    demandZonesH1: [],
+    supplyZonesH1: [],
+    demandZonesM15: [],
+    supplyZonesM15: [],
+    premiumDiscount: 'EQUILIBRIUM',
+    h1Loaded: false,
+    m15Loaded: false,
+    m1Loaded: false,
+    lastSignalClosed: 0,
+    lastSignalTime: 0,
+    mtfConfluence: false
+  };
+}
+
+let signalIdCounter = 1;
+
+
+for (const symbol of MY_ASSETS) {
+  stats.byAsset[symbol] = { wins: 0, losses: 0, total: 0 };
+}
+
+// ════════════════════════════════════════════════════════════════════
+// PERSISTENCIA SUPABASE — carga historial al arrancar, guarda en tiempo real
+// Tabla requerida: trading_signals (ver README.md para SQL)
+// ════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════
+// LIMPIEZA DE SEÑALES HUÉRFANAS al cargar historial
+// Una señal "huérfana" es PENDING en Supabase pero el servidor no la tiene en memoria
+// Esto causa el bug: "ACTIVAS: 1 pero no se ve en el gráfico"
+// ════════════════════════════════════════════════════════════════════
+async function loadHistoryFromSupabase() {
+  if (!supabase) return;
+  try {
+    const { data, error } = await supabase
+      .from('trading_signals')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(200);
+    if (error) { console.log('⚠️ No se pudo cargar historial:', error.message); return; }
+    if (!data?.length) { console.log('ℹ️ Sin historial previo en Supabase'); return; }
+
+    [] = data.map(r => ({
+      id:          r.signal_id,
+      symbol:      r.symbol,
+      assetName:   r.asset_name,
+      action:      r.action,
+      model:       r.model,
+      score:       r.score,
+      entry:       r.entry_price,
+      stop:        r.stop_loss,
+      tp1:         r.tp1,
+      tp2:         r.tp2,
+      tp3:         r.tp3,
+      status:      r.status,
+      closePrice:  r.close_price,
+      tpHit:       r.tp_hit,
+      tp1Hit:      r.tp_hit >= 1,
+      tp2Hit:      r.tp_hit >= 2,
+      reason:      r.reason,
+      timestamp:   new Date(r.signal_time).getTime(),
+      createdAt:   r.created_at
+    }));
+
+    // Reconstruir stats desde historial cargado
+    stats.total   = [].filter(s => s.status !== 'PENDING').length;
+    stats.wins    = [].filter(s => s.status === 'WIN').length;
+    stats.losses  = [].filter(s => s.status === 'LOSS').length;
+    stats.pending = [].filter(s => s.status === 'PENDING').length;
+    stats.tp1Hits = [].filter(s => s.tp1Hit).length;
+    stats.tp2Hits = [].filter(s => s.tp2Hit).length;
+
+    // Reconstruir scoreAdjustments del learning system
+    [].filter(s => s.status !== 'PENDING').forEach(s => {
+      if (!stats.learning.scoreAdjustments[s.model]) stats.learning.scoreAdjustments[s.model] = 0;
+      stats.learning.scoreAdjustments[s.model] += s.status === 'WIN' ? 2 : -3;
+      stats.learning.scoreAdjustments[s.model] = Math.max(-15, Math.min(10, stats.learning.scoreAdjustments[s.model]));
+    });
+
+    // Actualizar ID counter
+    const maxId = Math.max(...[].map(s => parseInt(s.id)||0), 0);
+    signalIdCounter = maxId + 1;
+
+    // FIX "señal abierta pero no activa": restaurar lockedSignal en cada asset
+    // Al reiniciar, assetData está vacío pero [] tiene las PENDING
+    // Sin esto: stats dice "ACTIVAS: 1" pero el gráfico no muestra nada
+    const pendingSignals = [].filter(s => s.status === 'PENDING');
+    const maxAge = 4 * 60 * 60 * 1000; // 4 horas máximo
+    pendingSignals.forEach(s => {
+      const age = Date.now() - s.timestamp;
+      if (age > maxAge) {
+        // Señal muy vieja → expirar (el mercado ya la cerró)
+        s.status = 'EXPIRED';
+        updateSignalStatusInSupabase(s.id, 'EXPIRED', null, 0).catch(() => {});
+        stats.pending = Math.max(0, stats.pending - 1);
+        console.log(`⏰ Señal #${s.id} expirada (${Math.round(age/60000)}min sin cerrar)`);
+      } else if (assetData[s.symbol]) {
+        // Restaurar en el asset para que el gráfico la muestre
+        assetData[s.symbol].lockedSignal = { ...s };
+        console.log(`🔄 Señal #${s.id} restaurada en ${s.symbol} (${s.action} @ ${s.entry})`);
+      }
+    });
+
+    console.log(`✅ Historial cargado: ${[].length} señales | Wins: ${stats.wins} | Losses: ${stats.losses} | WR: ${stats.total > 0 ? Math.round(stats.wins/stats.total*100) : 0}%`);
+  } catch(e) {
+    console.log('⚠️ Error cargando historial:', e.message);
+  }
+}
+
+
+async function updateSignalStatusInSupabase(signalId, status, closePrice, tpHit, pnlPoints = 0) {
+  if (!supabase) return;
+  try {
+    await supabase.from('trading_signals')
+      .update({ status, close_price: closePrice, tp_hit: tpHit, pnl_points: pnlPoints, updated_at: new Date().toISOString() })
+      .eq('signal_id', signalId);
+  } catch(e) {
+    console.log('⚠️ Error actualizando señal:', e.message);
+  }
+}
+
+// =============================================
+// MOTOR SMC v13.0
+// =============================================
 const SMC = {
   
   getAvgRange(candles, period = 14) {
@@ -3151,7 +3540,7 @@ const SMC = {
     // AJUSTE DE SCORE CON SISTEMA DE APRENDIZAJE
     // ═══════════════════════════════════════════
     // Nota: Usamos config.shortName en lugar de symbol (que no existe en este contexto)
-    const learningAdj = 0; // learning system removed
+    const learningAdj = 0;
     const finalScore  = Math.min(100, Math.max(0, best.baseScore + learningAdj));
 
     console.log(`📊 [${config.shortName}] Score Final: ${finalScore} vs Min: ${effectiveMinScore} → ${finalScore >= effectiveMinScore ? '✅ PASA' : '❌ NO PASA'} | Modelo: ${best.model}`);
@@ -3197,96 +3586,13 @@ const SMC = {
   } // close analyze()
 }; // close SMC
 
-// Verificar mercados inactivos y resubscribir
-function checkAndResubscribeMarkets() {
-  if (!isConnected) return;
-  // FIX: no resubscribir durante los primeros 60s del arranque — evita "already subscribed"
-  if (!initialSubscriptionDone) return;
-  
-  const now = Date.now();
-  const inactivityThreshold = 60000; // 1 minuto sin datos = inactivo
-  
-  for (const symbol of MY_ASSETS) {
-    const status = marketStatus[symbol];
-    const config = ASSETS[symbol];
-    const shouldBeOpen = isMarketOpenNow(symbol);
-    
-    // Si el mercado debería estar abierto pero no recibimos datos
-    if (shouldBeOpen) {
-      const timeSinceLastData = now - status.lastDataReceived;
-      const timeSinceLastAttempt = now - status.lastSubscriptionAttempt;
-      
-      // Si no hay datos recientes y no intentamos recientemente (cada 30 segundos)
-      if (timeSinceLastData > inactivityThreshold && timeSinceLastAttempt > 30000) {
-        console.log(`⚠️ [${config?.shortName}] Sin datos por ${Math.round(timeSinceLastData/1000)}s - resubscribiendo`);
-        resubscribeToAsset(symbol);
-      }
-    }
-  }
-}
-
-// Iniciar verificación periódica de mercados
-// FIX: guardar TODOS los IDs de intervalos para poder limpiarlos en reconexión
-let marketCheckInterval = null;
-let m15RefreshInterval  = null;
-let h1RefreshInterval   = null;
-let pingWatchdogInterval = null;
-
-function clearAllMonitorIntervals() {
-  if (marketCheckInterval)  { clearInterval(marketCheckInterval);  marketCheckInterval  = null; }
-  if (m15RefreshInterval)   { clearInterval(m15RefreshInterval);   m15RefreshInterval   = null; }
-  if (h1RefreshInterval)    { clearInterval(h1RefreshInterval);    h1RefreshInterval    = null; }
-  if (pingWatchdogInterval) { clearInterval(pingWatchdogInterval); pingWatchdogInterval = null; }
-}
-
-function startMarketMonitoring() {
-  // FIX: limpiar todos los intervalos previos antes de crear nuevos
-  // Sin esto, cada reconexión acumula 3-4 intervalos → el scanner se degrada
-  clearAllMonitorIntervals();
-
-  // Verificar mercados cada 30 segundos
-  marketCheckInterval = setInterval(checkAndResubscribeMarkets, 30000);
-  console.log('✅ Monitor de mercados iniciado (verificación cada 30s)');
-
-  // Refrescar M15 + M1 cada 60 segundos
-  m15RefreshInterval = setInterval(() => {
-    if (derivWs?.readyState !== WebSocket.OPEN) return;
-    for (const symbol of MY_ASSETS) {
-      try { requestM15(symbol); } catch(e) {}
-      try { requestM1(symbol);  } catch(e) {}
-    }
-  }, 60 * 1000);
-
-  // Refrescar H1 cada 5 minutos
-  h1RefreshInterval = setInterval(() => {
-    if (derivWs?.readyState !== WebSocket.OPEN) return;
-    for (const symbol of MY_ASSETS) {
-      try { requestH1(symbol); } catch(e) {}
-    }
-  }, 5 * 60 * 1000);
-
-  // Ping + Watchdog cada 25 segundos
-  // Si no llegan datos en 90s → forzar reconexión (conexión zombie)
-  pingWatchdogInterval = setInterval(() => {
-    if (derivWs?.readyState !== WebSocket.OPEN) return;
-    try { derivWs.send(JSON.stringify({ ping: 1 })); } catch(e) {}
-    const maxSilence = 90000;
-    const anyData = MY_ASSETS.some(s =>
-      Date.now() - (marketStatus[s]?.lastDataReceived || 0) < maxSilence
-    );
-    if (!anyData) {
-      console.log('🔁 Watchdog: sin datos en 90s — terminando conexión zombie');
-      try { derivWs.terminate(); } catch(e) {}
-    }
-  }, 25000);
-}
-
-
 // =============================================
-// INTERVALOS — Actualizaciones periódicas de mercado
+// ELISA IA - ASISTENTE EXPRESIVA
 // =============================================
 
-
+// =============================================
+// AUTO-TRACKING CON TRAILING STOP
+// =============================================
 function connectDeriv() {
   const appId = process.env.DERIV_APP_ID || '1089';
   
@@ -3454,7 +3760,7 @@ function connectDeriv() {
           // Actualizar estado del mercado
           marketStatus[symbol].lastDataReceived = Date.now();
           marketStatus[symbol].isActive = true;
-    // [REMOVED] checkSignalHits — signal engine disabled
+          checkSignalHits();
         }
       }
       
@@ -3465,7 +3771,7 @@ function connectDeriv() {
           // Actualizar estado del mercado
           marketStatus[symbol].lastDataReceived = Date.now();
           marketStatus[symbol].isActive = true;
-    // [REMOVED] checkSignalHits — signal engine disabled
+          checkSignalHits();
         }
       }
       
@@ -3497,34 +3803,268 @@ function connectDeriv() {
   });
 }
 
+function requestH1(symbol) {
+  if (derivWs?.readyState === WebSocket.OPEN) {
+    derivWs.send(JSON.stringify({
+      ticks_history: symbol,
+      adjust_start_time: 1,
+      count: 120,
+      end: 'latest',
+      granularity: 3600,
+      style: 'candles'
+    }));
+  }
+}
+
+function requestM15(symbol) {
+  if (derivWs?.readyState === WebSocket.OPEN) {
+    derivWs.send(JSON.stringify({
+      ticks_history: symbol,
+      adjust_start_time: 1,
+      count: 300,
+      end: 'latest',
+      granularity: 900,   // 15 min
+      style: 'candles'
+    }));
+  }
+}
+
+function requestM1(symbol) {
+  if (derivWs?.readyState === WebSocket.OPEN) {
+    derivWs.send(JSON.stringify({
+      ticks_history: symbol,
+      adjust_start_time: 1,
+      count: 120,
+      end: 'latest',
+      granularity: 60,
+      style: 'candles'
+      // FIX: sin subscribe:1 — los refreshes de M1 son solo histórico
+      // La suscripción en tiempo real va en el OHLC stream del M5 (granularity 300)
+    }));
+  }
+}
+
 // =============================================
-// ANÁLISIS SMC — Solo detección de zonas para la IA
-// Sin señales automáticas, sin Telegram, sin guardado
+// ANÁLISIS DE ACTIVOS v13.2 (con filtros mejorados)
 // =============================================
 async function analyzeAsset(symbol) {
   const data = assetData[symbol];
   const config = ASSETS[symbol];
   if (!data || !config || data.candles.length < 30) return;
-
   const now = Date.now();
-  // Cooldown de 30s para no sobrecargar el análisis
   if (now - data.lastAnalysis < 30000) return;
   data.lastAnalysis = now;
-
-  // ── Log estructural en consola ──
-  const logStruct = (tf, s) => s?.trend ? `${tf}:${s.trend.slice(0,4)}(${s.strength||0}%)` : `${tf}:---`;
+  const logS = (tf, s) => s?.trend ? `${tf}:${s.trend.slice(0,4)}(${s.strength||0}%)` : `${tf}:---`;
   console.log(
-    `📈 [${config.shortName}] ${logStruct('H1',data.structureH1)} | ${logStruct('M15',data.structureM15)} | ${logStruct('M5',data.structure)}` +
-    ` | OBs:D${(data.demandZones||[]).filter(z=>!z.mitigated).length}/S${(data.supplyZones||[]).filter(z=>!z.mitigated).length}` +
-    ` | Price:${(data.price||0).toFixed(config.decimals)} | ${data.premiumDiscount||'EQ'}`
+    `📈 [${config.shortName}] ${logS('H1',data.structureH1)} | ${logS('M15',data.structureM15)} | ${logS('M5',data.structure)}` +
+    ` | D${(data.demandZones||[]).filter(z=>!z.mitigated).length}/S${(data.supplyZones||[]).filter(z=>!z.mitigated).length}` +
+    ` | ${(data.price||0).toFixed(config.decimals)} | ${data.premiumDiscount||'EQ'}`
   );
-
-  // ── Análisis SMC puro: estructura + zonas ──
-  // Solo llama al motor para detectar OBs, FVGs, liquidez, CHoCH, BOS
-  // No genera señales, no guarda en BD, no envía Telegram
   await SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
 }
 
+
+// =============================================
+// API ENDPOINTS - BÁSICOS
+// =============================================
+app.get('/', (req, res) => res.json({ 
+  name: 'Trading Master Pro', 
+  version: '14.0', 
+  connected: isConnected,
+  supabase: !!supabase,
+  filters: {
+    minScore: 88,
+    analysisCooldown: SIGNAL_CONFIG.ANALYSIS_COOLDOWN,
+    postSignalCooldown: SIGNAL_CONFIG.POST_SIGNAL_COOLDOWN,
+    requireMTF: SIGNAL_CONFIG.REQUIRE_MTF_CONFLUENCE,
+    modelsWithoutMTF: SIGNAL_CONFIG.MODELS_WITHOUT_MTF,
+    maxPending: SIGNAL_CONFIG.MAX_PENDING_TOTAL,
+    tradingHours: SIGNAL_CONFIG.TRADING_HOURS
+  },
+  features: {
+    mtfOptional: true,
+    newModels: ['OB_ENTRY', 'STRUCTURE_BREAK', 'REVERSAL_PATTERN', 'PREMIUM_DISCOUNT'],
+    boomCrashModels: ['BOOM_SPIKE', 'CRASH_SPIKE']
+  }
+}));
+
+// Endpoint para cambiar configuración de MTF dinámicamente
+app.post('/api/config/mtf', (req, res) => {
+  const { requireMTF } = req.body;
+  if (typeof requireMTF === 'boolean') {
+    SIGNAL_CONFIG.REQUIRE_MTF_CONFLUENCE = requireMTF;
+    console.log(`⚙️ Configuración MTF cambiada a: ${requireMTF ? 'OBLIGATORIO' : 'OPCIONAL'}`);
+    res.json({ 
+      success: true, 
+      requireMTF: SIGNAL_CONFIG.REQUIRE_MTF_CONFLUENCE,
+      message: `MTF ahora es ${requireMTF ? 'obligatorio' : 'opcional'}`
+    });
+  } else {
+    res.status(400).json({ error: 'Parámetro requireMTF debe ser boolean' });
+  }
+});
+
+// Endpoint para obtener configuración actual
+app.get('/api/config', (req, res) => {
+  res.json({
+    version: '14.0',
+    signalConfig: {
+      minScore: 88,
+      analysisCooldown: SIGNAL_CONFIG.ANALYSIS_COOLDOWN,
+      postSignalCooldown: SIGNAL_CONFIG.POST_SIGNAL_COOLDOWN,
+      requireMTFConfluence: SIGNAL_CONFIG.REQUIRE_MTF_CONFLUENCE,
+      modelsWithoutMTF: SIGNAL_CONFIG.MODELS_WITHOUT_MTF,
+      maxPendingTotal: SIGNAL_CONFIG.MAX_PENDING_TOTAL,
+      tradingHours: SIGNAL_CONFIG.TRADING_HOURS
+    },
+    smcModels: SMC_MODELS_DATA.models ? Object.keys(SMC_MODELS_DATA.models) : [],
+    learningStats: LearningSystem.getStats()
+  });
+});
+
+app.get('/api/dashboard', (req, res) => {
+  res.json({
+    connected: isConnected,
+    timestamp: Date.now(),
+    assets: Object.entries(assetData).map(([symbol, data]) => ({
+      symbol,
+      ...ASSETS[symbol],
+      price: data.price,
+      signal: data.signal,
+      lockedSignal: data.lockedSignal,
+      structureM5: data.structure?.trend || 'LOADING',
+      structureH1: data.structureH1?.trend || 'LOADING',
+      h1Loaded: data.h1Loaded || false,
+      mtfConfluence: data.mtfConfluence || false,
+      premiumDiscount: data.premiumDiscount || 'EQUILIBRIUM',
+      demandZones: data.demandZones?.length || 0,
+      supplyZones: data.supplyZones?.length || 0,
+      fvgZones: data.fvgZones?.length || 0
+    })),
+    recentSignals: [].slice(0, 30),
+    stats,
+    plans: PLANS
+  });
+});
+
+// =============================================
+// DASHBOARD PERSONALIZADO POR USUARIO
+// =============================================
+app.get('/api/dashboard/:userId', async (req, res) => {
+  const { userId } = req.params;
+  
+  try {
+    // Obtener suscripción del usuario
+    const sub = await getSubscription(userId);
+    
+    // Procesar la suscripción
+    let subscription = null;
+    if (sub) {
+      const planKey = sub.plan || 'free';
+      const plan = PLANS[planKey] || PLANS.free;
+      subscription = {
+        plan: planKey,
+        plan_name: plan.name,
+        status: sub.estado || 'trial',
+        days_left: sub.days_left || sub.trial_days_left || 5,
+        hasNightAccess: planKey === 'premium' || planKey === 'elite'
+      };
+    } else {
+      subscription = {
+        plan: 'free',
+        plan_name: 'Free Trial',
+        status: 'trial',
+        days_left: 5,
+        hasNightAccess: false
+      };
+    }
+    
+    const userPlan = subscription.plan;
+    const planConfig = PLANS[userPlan] || PLANS.free;
+    // Usar sub.assets si está disponible (ya filtrado por getSubscription), sino MY_ASSETS
+    const allowedAssets = (sub?.assets?.length > 0 ? sub.assets : planConfig.assets) || MY_ASSETS;
+    
+    // Filtrar activos según el plan del usuario
+    const userAssets = Object.entries(assetData)
+      .filter(([symbol]) => allowedAssets.includes(symbol))
+      .map(([symbol, data]) => ({
+        symbol,
+        ...ASSETS[symbol],
+        price: data.price,
+        signal: data.signal,
+        lockedSignal: data.lockedSignal,
+        structureM5: data.structure?.trend || 'LOADING',
+        structureH1: data.structureH1?.trend || 'LOADING',
+        structureM15: data.structureM15?.trend || 'LOADING',
+        h1Loaded: data.h1Loaded || false,
+        mtfConfluence: data.mtfConfluence || false,
+        premiumDiscount: data.premiumDiscount || 'EQUILIBRIUM',
+        demandZones: data.demandZones?.length || 0,
+        supplyZones: data.supplyZones?.length || 0,
+        fvgZones: data.fvgZones?.length || 0
+      }));
+    
+    // Filtrar señales solo de activos del plan del usuario
+    const userSignals = [].filter(s => allowedAssets.includes(s.symbol));
+    
+    // Calcular estadísticas SOLO de los activos del usuario
+    const userStats = {
+      total: 0,
+      wins: 0,
+      losses: 0,
+      pending: 0,
+      tp1Hits: 0,
+      tp2Hits: 0,
+      tp3Hits: 0,
+      winRate: 0
+    };
+    
+    userSignals.forEach(signal => {
+      if (signal.status === 'PENDING') {
+        userStats.pending++;
+      } else if (signal.status === 'WIN') {
+        userStats.wins++;
+        userStats.total++;
+        if (signal.tpHit === 1) userStats.tp1Hits++;
+        else if (signal.tpHit === 2) userStats.tp2Hits++;
+        else if (signal.tpHit === 3) userStats.tp3Hits++;
+      } else if (signal.status === 'LOSS') {
+        userStats.losses++;
+        userStats.total++;
+      }
+    });
+    
+    userStats.winRate = userStats.total > 0 
+      ? Math.round((userStats.wins / userStats.total) * 100) 
+      : 0;
+    
+    // Estadísticas siempre calculadas fresh — solo los 3 activos permitidos
+    const finalStats = userStats;
+    
+    res.json({
+      connected: isConnected,
+      timestamp: Date.now(),
+      userId,
+      userPlan,
+      planName: planConfig.name,
+      assets: userAssets,
+      recentSignals: userSignals.slice(0, 30),
+      stats: finalStats,
+      subscription: {
+        plan: userPlan,
+        planName: planConfig.name,
+        status: subscription?.status || 'trial',
+        daysLeft: subscription?.days_left,
+        assetsCount: allowedAssets.length,
+        hasNightAccess: userPlan === 'premium' || userPlan === 'elite'
+      }
+    });
+    
+  } catch (error) {
+    console.error('Error getting user dashboard:', error);
+    res.status(500).json({ error: 'Error loading dashboard' });
+  }
+});
 
 app.get('/api/analyze/:symbol', (req, res) => {
   const { symbol } = req.params;
@@ -3669,125 +4209,15 @@ app.post('/api/reset/:symbol', (req, res) => {
   res.json({ ok: true, symbol, ts: Date.now() });
 });
 
-// [REMOVED] /api/signals — no longer needed
 
-app.get('/api/dashboard/:userId', async (req, res) => {
-  const { userId } = req.params;
-  
-  try {
-    // Obtener suscripción del usuario
-    const sub = await getSubscription(userId);
-    
-    // Procesar la suscripción
-    let subscription = null;
-    if (sub) {
-      const planKey = sub.plan || 'free';
-      const plan = PLANS[planKey] || PLANS.free;
-      subscription = {
-        plan: planKey,
-        plan_name: plan.name,
-        status: sub.estado || 'trial',
-        days_left: sub.days_left || sub.trial_days_left || 5,
-        hasNightAccess: planKey === 'premium' || planKey === 'elite'
-      };
-    } else {
-      subscription = {
-        plan: 'free',
-        plan_name: 'Free Trial',
-        status: 'trial',
-        days_left: 5,
-        hasNightAccess: false
-      };
-    }
-    
-    const userPlan = subscription.plan;
-    const planConfig = PLANS[userPlan] || PLANS.free;
-    // Usar sub.assets si está disponible (ya filtrado por getSubscription), sino MY_ASSETS
-    const allowedAssets = (sub?.assets?.length > 0 ? sub.assets : planConfig.assets) || MY_ASSETS;
-    
-    // Filtrar activos según el plan del usuario
-    const userAssets = Object.entries(assetData)
-      .filter(([symbol]) => allowedAssets.includes(symbol))
-      .map(([symbol, data]) => ({
-        symbol,
-        ...ASSETS[symbol],
-        price: data.price,
-        signal: data.signal,
-        lockedSignal: data.lockedSignal,
-        structureM5: data.structure?.trend || 'LOADING',
-        structureH1: data.structureH1?.trend || 'LOADING',
-        structureM15: data.structureM15?.trend || 'LOADING',
-        h1Loaded: data.h1Loaded || false,
-        mtfConfluence: data.mtfConfluence || false,
-        premiumDiscount: data.premiumDiscount || 'EQUILIBRIUM',
-        demandZones: data.demandZones?.length || 0,
-        supplyZones: data.supplyZones?.length || 0,
-        fvgZones: data.fvgZones?.length || 0
-      }));
-    
-    // Filtrar señales solo de activos del plan del usuario
-    const userSignals = []; // signals removed — AI handles analysis
-    
-    // Calcular estadísticas SOLO de los activos del usuario
-    const userStats = {
-      total: 0,
-      wins: 0,
-      losses: 0,
-      pending: 0,
-      tp1Hits: 0,
-      tp2Hits: 0,
-      tp3Hits: 0,
-      winRate: 0
-    };
-    
-    userSignals.forEach(signal => {
-      if (signal.status === 'PENDING') {
-        userStats.pending++;
-      } else if (signal.status === 'WIN') {
-        userStats.wins++;
-        userStats.total++;
-        if (signal.tpHit === 1) userStats.tp1Hits++;
-        else if (signal.tpHit === 2) userStats.tp2Hits++;
-        else if (signal.tpHit === 3) userStats.tp3Hits++;
-      } else if (signal.status === 'LOSS') {
-        userStats.losses++;
-        userStats.total++;
-      }
-    });
-    
-    userStats.winRate = userStats.total > 0 
-      ? Math.round((userStats.wins / userStats.total) * 100) 
-      : 0;
-    
-    // Estadísticas siempre calculadas fresh — solo los 3 activos permitidos
-    const finalStats = userStats;
-    
-    res.json({
-      connected: isConnected,
-      timestamp: Date.now(),
-      userId,
-      userPlan,
-      planName: planConfig.name,
-      assets: userAssets,
-      recentSignals: userSignals.slice(0, 30),
-      stats: finalStats,
-      subscription: {
-        plan: userPlan,
-        planName: planConfig.name,
-        status: subscription?.status || 'trial',
-        daysLeft: subscription?.days_left,
-        assetsCount: allowedAssets.length,
-        hasNightAccess: userPlan === 'premium' || userPlan === 'elite'
-      }
-    });
-    
-  } catch (error) {
-    console.error('Error getting user dashboard:', error);
-    res.status(500).json({ error: 'Error loading dashboard' });
-  }
-});
+// ── BITÁCORA Y PLAN DE TRADING ──
 
+// ── API P&L: puntos ganados/perdidos con filtro por período ──
 
+// =============================================
+// IA SMC INSTITUCIONAL — ANÁLISIS DEL GRÁFICO
+// Claude analiza el mercado con contexto real y
+// transmite el análisis en streaming al frontend
 // =============================================
 // Fetch noticias y sesgo del día para contexto macro
 // =============================================
@@ -4034,6 +4464,98 @@ ZONAS_IA:{"keyLevels":[{"price":NUMERO,"type":"resistance","label":"TEXTO CORTO"
 // =============================================
 
 // Obtener VAPID public key
+
+// =============================================
+// API ENDPOINTS - SUSCRIPCIONES
+// =============================================
+app.get('/api/plans', (req, res) => {
+  res.json({ plans: PLANS });
+});
+
+// =============================================
+// ENDPOINT: Estado de sesión de trading
+// =============================================
+app.get('/api/trading-session', (req, res) => {
+  const plan = req.query.plan || 'free';
+  const now = new Date();
+  const utcHour = now.getUTCHours() + now.getUTCMinutes() / 60;
+  
+  // Horarios
+  const baseStart = SIGNAL_CONFIG.TRADING_HOURS.base.start; // 11:00 UTC (6AM COL)
+  const baseEnd = SIGNAL_CONFIG.TRADING_HOURS.base.end;     // 19:00 UTC (2PM COL)
+  const nightStart = SIGNAL_CONFIG.TRADING_HOURS.night.start; // 01:30 UTC (8:30PM COL)
+  const nightEnd = SIGNAL_CONFIG.TRADING_HOURS.night.end;     // 06:00 UTC (1AM COL)
+  
+  // Verificar sesión diurna
+  const isDaySession = utcHour >= baseStart && utcHour < baseEnd;
+  
+  // Verificar sesión nocturna (solo Premium/Elite)
+  const isNightSession = utcHour >= nightStart && utcHour < nightEnd;
+  
+  // Determinar acceso según plan
+  const hasDayAccess = true; // Todos tienen acceso diurno
+  const hasNightAccess = plan === 'premium' || plan === 'elite';
+  
+  // Estado actual
+  let sessionStatus = 'closed';
+  let currentSession = null;
+  let isLocked = false;
+  let lockReason = null;
+  
+  if (isDaySession) {
+    sessionStatus = 'open';
+    currentSession = 'day';
+    isLocked = false;
+  } else if (isNightSession) {
+    currentSession = 'night';
+    if (hasNightAccess) {
+      sessionStatus = 'open';
+      isLocked = false;
+    } else {
+      sessionStatus = 'restricted';
+      isLocked = true;
+      lockReason = 'night_session';
+    }
+  } else {
+    sessionStatus = 'closed';
+    currentSession = null;
+    isLocked = true;
+    lockReason = 'market_closed';
+  }
+  
+  // Calcular próxima apertura
+  let nextOpen = null;
+  if (sessionStatus !== 'open') {
+    if (utcHour < baseStart) {
+      nextOpen = `${Math.floor(baseStart)}:${Math.round((baseStart % 1) * 60).toString().padStart(2, '0')} UTC`;
+    } else if (utcHour >= baseEnd && utcHour < nightStart) {
+      if (hasNightAccess) {
+        nextOpen = `${Math.floor(nightStart)}:${Math.round((nightStart % 1) * 60).toString().padStart(2, '0')} UTC`;
+      } else {
+        nextOpen = `${Math.floor(baseStart)}:00 UTC (mañana)`;
+      }
+    } else {
+      nextOpen = `${Math.floor(baseStart)}:00 UTC (mañana)`;
+    }
+  }
+  
+  res.json({
+    sessionStatus,
+    currentSession,
+    isLocked,
+    lockReason,
+    plan,
+    hasNightAccess,
+    nextOpen,
+    hours: {
+      day: { start: '6:00 AM', end: '2:00 PM', timezone: 'Colombia' },
+      night: { start: '8:30 PM', end: '1:00 AM', timezone: 'Colombia', requiredPlan: 'premium' }
+    },
+    serverTime: now.toISOString(),
+    utcHour: utcHour.toFixed(2)
+  });
+});
+
 app.get('/api/subscription/:userId', async (req, res) => {
   const { userId } = req.params;
   
@@ -4467,7 +4989,7 @@ app.get('/api/health', (req, res) => {
     supabase: !!supabase,
     telegram: !!(TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID),
     assets:   MY_ASSETS.length,
-    signals:  0,
+    signals:  [].length,
     uptime:   Math.floor(process.uptime()),
     memory:   Math.floor(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB'
   });
@@ -4488,34 +5010,32 @@ async function ensureAdminElite() {
   } catch(e) { console.log('Admin update:', e.message); }
 }
 
-
-
-
-// =============================================
-// INICIO DEL SERVIDOR
-// =============================================
-
-// =============================================
-// INICIO DEL SERVIDOR
-// =============================================
-async function startServer() {
-  if (supabase) {
-    try {
-      const { data } = await supabase.from('users').select('email, plan');
-      if (data) console.log('✅ ' + data.length + ' usuarios cargados');
-    } catch(e) {}
-  }
-  connectDeriv();
-  startMarketMonitoring();
-}
-
 app.listen(PORT, () => {
-  console.log('\n=== TRADING MASTER PRO v25.0 - IA SMC ===');
-  console.log('Puerto: ' + PORT);
-  console.log('OpenAI: ' + (openai ? 'Conectado' : 'No configurado'));
-  console.log('Supabase: ' + (supabase ? 'Conectado' : 'No configurado'));
-  console.log('Senales automaticas: DESACTIVADAS');
-  console.log('IA institucional: ACTIVA (bajo demanda)');
-  console.log('=========================================\n');
-  startServer();
+  console.log(`
+╔═══════════════════════════════════════════════════════╗
+║   🤖 TRADING MASTER PRO v14.0 - ELISA AI              ║
+║   Motor SMC Puro + OpenAI + Aprendizaje Automático    ║
+╠═══════════════════════════════════════════════════════╣
+║  Puerto: ${PORT}                                          ║
+║  OpenAI: ${openai ? '✅ Conectado' : '⚠️ No configurado'}                           ║
+║  Supabase: ${supabase ? '✅ Conectado' : '⚠️ No configurado'}                         ║
+║  Telegram: ${TELEGRAM_BOT_TOKEN ? '✅ Configurado' : '⚠️ No configurado'}                        ║
+║  Modelos SMC: ${SMC_MODELS_DATA.models ? Object.keys(SMC_MODELS_DATA.models).length : 0} cargados                          ║
+║  Aprendizaje: ✅ Activo                               ║
+║  Activos: ${MY_ASSETS.length} (${MY_ASSETS.join(', ')})
+╚═══════════════════════════════════════════════════════╝
+  `);
+  
+  console.log('\n🔌 Conectando a Deriv WebSocket...');
+  connectDeriv();
+  ensureAdminElite();
+  // PERSISTENCIA: cargar historial desde Supabase al arrancar
+  // Esto evita que los datos se pierdan al hacer deploy
+  loadHistoryFromSupabase().catch(e => console.log('⚠️ Sin historial previo:', e.message));
+  // startMarketMonitoring() (llamado dentro de connectDeriv → on('open'))
+  // ya maneja: H1/M15 refresh, M1 refresh, ping + watchdog.
+  // Tener estos intervalos duplicados aquí causaba:
+  //   1. Doble carga de peticiones al servidor de Deriv
+  //   2. Ping duplicado cada 25s + 30s
+  //   3. Degradación del scanner con el tiempo
 });

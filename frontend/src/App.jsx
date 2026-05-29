@@ -4,7 +4,6 @@ import Login from './Login.jsx'
 import Dashboard from './Dashboard.jsx'
 import AdminPanel from './AdminPanel.jsx'
 import Pricing from './Pricing.jsx'
-import ModelosGuia from './ModelosGuia.jsx'
 import { API_URL } from './config/plans.js'
 
 export default function App() {
@@ -46,7 +45,6 @@ export default function App() {
           : <Navigate to="/" />
       }/>
       <Route path="/pricing" element={<Pricing user={user} subscription={subscription} />}/>
-      <Route path="/modelos" element={<ModelosGuia user={user} onBack={() => window.history.back()} />}/>
       <Route path="*" element={<Navigate to="/" />}/>
     </Routes>
   )
