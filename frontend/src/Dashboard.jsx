@@ -351,7 +351,7 @@ function StructTag({label,trend}){
 /* ═══════════════════════════════════════════════════════════════
    AI ANALYSIS PANEL — El corazón del nuevo sistema
    ═══════════════════════════════════════════════════════════════ */
-function AIAnalysisPanel({ symbol, onZonesDetected }) {
+function AIAnalysisPanel({ symbol, onZonesDetected, onActivate }) {
   const [status, setStatus] = useState('idle') // idle | loading | streaming | done | error
   const [text, setText]     = useState('')
   const [dots, setDots]     = useState(0)
@@ -428,6 +428,7 @@ function AIAnalysisPanel({ symbol, onZonesDetected }) {
       }
 
       setStatus('streaming')
+      onActivate()  // chart now shows zones as IA analyzes
       const reader = response.body.getReader()
       readerRef.current = reader
       const decoder = new TextDecoder()
@@ -477,6 +478,8 @@ function AIAnalysisPanel({ symbol, onZonesDetected }) {
     setStatus('idle')
     setText('')
     onZonesDetected(null)
+    // Note: onActivate resets via parent's symbol-change effect
+    // Caller can call setAiActive(false) if needed
   },[onZonesDetected])
 
   return (
@@ -628,9 +631,16 @@ export default function Dashboard({user,subscription,onLogout}){
   const[zoom,     setZoom]    =useState(1)
   const[offsetX,  setOffsetX] =useState(0)
   const[aiZones,  setAiZones] =useState(null) // zones detected by AI
+  const[aiActive, setAiActive]=useState(false) // true = AI has run, show zones on chart
   const[panelW,   setPanelW]  =useState(340)  // AI panel width
 
   /* Fetch data */
+  // Reset AI state when switching asset
+  useEffect(()=>{
+    setAiZones(null)
+    setAiActive(false)
+  },[symbol])
+
   const fetchDash=useCallback(async()=>{
     try{
       const r=await fetch(`${API_URL}/api/dashboard/${encodeURIComponent(user.email)}`)
@@ -684,22 +694,23 @@ export default function Dashboard({user,subscription,onLogout}){
     const sKey=tf==='H1'?'supplyZonesH1':tf==='M15'?'supplyZonesM15':'supplyZones'
     const candles=analyze[cKey]
     if(!candles?.length)return
+    // Zones only drawn AFTER AI has analyzed — clean chart until then
     drawChart(canvasRef.current,{
       candles,
-      demandZones:analyze[dKey]||[],
-      supplyZones:analyze[sKey]||[],
-      fvgZones: tf==='M5'?(analyze.fvgZones||[]):[], // FVGs only on M5
-      liquidityLevels: tf==='M5'?(analyze.liquidityLevels||[]):[],
-      aiZones,
-      choch:analyze.chartOverlays?.choch,
-      bos:analyze.chartOverlays?.bos,
-      chochM15:analyze.chartOverlays?.chochM15,
-      bosM15:analyze.chartOverlays?.bosM15,
-      structure:analyze.structureM5Data||{},
+      demandZones:   aiActive ? (analyze[dKey]||[])     : [],
+      supplyZones:   aiActive ? (analyze[sKey]||[])     : [],
+      fvgZones:      aiActive && tf==='M5' ? (analyze.fvgZones||[])         : [],
+      liquidityLevels: aiActive && tf==='M5' ? (analyze.liquidityLevels||[]) : [],
+      aiZones:       aiActive ? aiZones : null,
+      choch:         aiActive ? analyze.chartOverlays?.choch   : null,
+      bos:           aiActive ? analyze.chartOverlays?.bos     : null,
+      chochM15:      aiActive ? analyze.chartOverlays?.chochM15: null,
+      bosM15:        aiActive ? analyze.chartOverlays?.bosM15  : null,
+      structure:     aiActive ? (analyze.structureM5Data||{})  : {},
       zoom, offsetX,
-      premiumDiscount: analyze.premiumDiscount||'EQUILIBRIUM'
+      premiumDiscount: aiActive ? (analyze.premiumDiscount||'EQUILIBRIUM') : 'EQUILIBRIUM'
     })
-  },[analyze,tf,assetData,zoom,offsetX,aiZones])
+  },[analyze,tf,assetData,zoom,offsetX,aiZones,aiActive])
 
   useEffect(()=>{renderChart()},[renderChart])
   useEffect(()=>{
@@ -857,10 +868,19 @@ export default function Dashboard({user,subscription,onLogout}){
                     </div>
                   </div>
                 )}
+                {analyze&&!aiActive&&(
+                  <div style={{position:'absolute',bottom:40,left:'50%',transform:'translateX(-50%)',
+                    background:'rgba(13,17,23,.85)',border:`1px solid ${C.teal}44`,
+                    borderRadius:8,padding:'8px 16px',display:'flex',alignItems:'center',gap:8,
+                    backdropFilter:'blur(4px)',pointerEvents:'none'}}>
+                    <span style={{fontSize:14}}>🧠</span>
+                    <span style={{fontSize:11,color:C.muted}}>Presiona <strong style={{color:C.teal}}>⚡ Activar IA</strong> para ver las zonas institucionales</span>
+                  </div>
+                )}
               </ChartContainer>
 
-              {/* Legend row */}
-              <div style={{display:'flex',gap:8,flexShrink:0,flexWrap:'wrap',padding:'2px 0'}}>
+              {/* Legend row — only show after AI activated */}
+              {aiActive&&<div style={{display:'flex',gap:8,flexShrink:0,flexWrap:'wrap',padding:'2px 0'}}>
                 {[
                   {col:C.green,label:'OB Demanda'},
                   {col:C.red,label:'OB Oferta'},
@@ -875,7 +895,7 @@ export default function Dashboard({user,subscription,onLogout}){
                     <span style={{fontSize:9,color:C.muted}}>{label}</span>
                   </div>
                 ))}
-              </div>
+              </div>}
             </div>
 
             {/* RIGHT: AI Analysis Panel */}
@@ -892,6 +912,7 @@ export default function Dashboard({user,subscription,onLogout}){
               <AIAnalysisPanel
                 symbol={symbol}
                 onZonesDetected={setAiZones}
+                onActivate={()=>setAiActive(true)}
               />
             </div>
           </div>

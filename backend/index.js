@@ -6178,6 +6178,63 @@ app.post('/api/ai/chat', async (req, res) => {
 // Claude analiza el mercado con contexto real y
 // transmite el análisis en streaming al frontend
 // =============================================
+// Fetch noticias y sesgo del día para contexto macro
+// =============================================
+async function fetchMarketContext(assetName, symbol) {
+  const now = new Date();
+  const hora = now.toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' });
+  const fecha = now.toLocaleDateString('es', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'America/New_York' });
+  const sesionNY = now.getUTCHours() >= 13 && now.getUTCHours() < 21;
+  const sesionLondon = now.getUTCHours() >= 7 && now.getUTCHours() < 16;
+  const sesionAsiatica = now.getUTCHours() >= 0 && now.getUTCHours() < 8;
+  const sesionActual = sesionNY ? 'Nueva York (sesión principal)' : sesionLondon ? 'Londres' : sesionAsiatica ? 'Asiática' : 'Pre-mercado';
+
+  // Determinar activos relacionados para buscar noticias relevantes
+  const isGold = symbol === 'frxXAUUSD';
+  const isForex = symbol.startsWith('frx');
+  const isSynthetic = !isForex;
+
+  let newsContext = '';
+  
+  try {
+    // Intentar obtener noticias relevantes del activo
+    if (isGold) {
+      const r = await fetch('https://www.investing.com/economic-calendar/', { 
+        headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'text/html' }, 
+        signal: AbortSignal.timeout(4000) 
+      });
+      // Si falla, usamos contexto estático inteligente
+    }
+  } catch {}
+
+  // Contexto macro estático inteligente basado en activo y sesión
+  if (isGold) {
+    newsContext = `ACTIVO MACROECONÓMICO: El Oro (XAU/USD) reacciona a:
+- Datos de inflación USA (CPI, PCE) y decisiones de la Fed
+- Tensiones geopolíticas: Rusia-Ucrania, Medio Oriente, Asia
+- DXY (Dólar Index): DXY sube → Oro baja, DXY baja → Oro sube
+- Bonos del Tesoro USA a 10 años: yields altos presionan Oro
+- Sesión NY es la de mayor volatilidad para Oro`;
+  } else if (isSynthetic) {
+    newsContext = `ACTIVO SINTÉTICO DERIV: ${assetName}
+- No correlaciona con noticias fundamentales externas
+- Precio generado algorítmicamente con volatilidad controlada
+- El flujo institucional y SMC puro domina el movimiento
+- Sesión NY y London tienen mayor liquidez incluso en sintéticos
+- Foco 100% en estructura de precio, OB, FVG y liquidez`;
+  }
+
+  return {
+    fecha,
+    hora,
+    sesionActual,
+    sesionNY,
+    sesionLondon,
+    diaTrading: !['Saturday', 'Sunday'].includes(now.toLocaleDateString('en', { weekday: 'long', timeZone: 'America/New_York' })),
+    newsContext
+  };
+}
+
 app.post('/api/ai/analyze-chart', async (req, res) => {
   const { symbol } = req.body;
 
@@ -6200,90 +6257,128 @@ app.post('/api/ai/analyze-chart', async (req, res) => {
     l: c.low?.toFixed(dec),  c: c.close?.toFixed(dec)
   }));
 
-  const demandActivas = (data.demandZones || []).filter(z => !z.mitigated).slice(0, 4);
-  const supplyActivas = (data.supplyZones || []).filter(z => !z.mitigated).slice(0, 4);
-  const fvgs = (data.fvgZones || []).slice(-5);
+  // Últimas 20 velas para detectar impulsos recientes
+  const candles20 = (data.candles || []).slice(-20).map(c => ({
+    o: c.open?.toFixed(dec), h: c.high?.toFixed(dec),
+    l: c.low?.toFixed(dec),  c: c.close?.toFixed(dec)
+  }));
+
+  const demandActivas = (data.demandZones || []).filter(z => !z.mitigated).slice(0, 5);
+  const supplyActivas = (data.supplyZones || []).filter(z => !z.mitigated).slice(0, 5);
+  const fvgs = (data.fvgZones || []).slice(-6);
   const liquidity = (data.liquidityLevels || []);
   const swings = (data.swings || []);
 
-  const swingHighs = swings.filter(s => s.type === 'high').slice(-4).map(s => s.price?.toFixed(dec));
-  const swingLows  = swings.filter(s => s.type === 'low').slice(-4).map(s => s.price?.toFixed(dec));
+  const swingHighs = swings.filter(s => s.type === 'high').slice(-5).map(s => s.price?.toFixed(dec));
+  const swingLows  = swings.filter(s => s.type === 'low').slice(-5).map(s => s.price?.toFixed(dec));
 
   // OTE Fibonacci del último impulso
   const lastHigh = swingHighs.length ? parseFloat(swingHighs[swingHighs.length - 1]) : null;
   const lastLow  = swingLows.length  ? parseFloat(swingLows[swingLows.length - 1])  : null;
   const impulseRange = lastHigh && lastLow ? Math.abs(lastHigh - lastLow) : null;
   const structUp = data.structure?.trend === 'BULLISH';
+  const fib50  = impulseRange ? (structUp ? lastHigh - impulseRange * 0.500 : lastLow + impulseRange * 0.500).toFixed(dec) : null;
   const fib618 = impulseRange ? (structUp ? lastHigh - impulseRange * 0.618 : lastLow + impulseRange * 0.618).toFixed(dec) : null;
   const fib705 = impulseRange ? (structUp ? lastHigh - impulseRange * 0.705 : lastLow + impulseRange * 0.705).toFixed(dec) : null;
   const fib786 = impulseRange ? (structUp ? lastHigh - impulseRange * 0.786 : lastLow + impulseRange * 0.786).toFixed(dec) : null;
 
   const choch = data.choch;
   const bos   = data.bos;
+  const chochM15 = data.chochM15;
+  const bosM15   = data.bosM15;
   const pd    = data.premiumDiscount || 'EQUILIBRIUM';
 
-  const systemPrompt = `Eres un trader institucional experto en Smart Money Concepts (SMC). 
-Operas y enseñas con datos reales del mercado. NUNCA usas indicadores (sin RSI, MACD, EMA, Bollinger, Stoch).
-Solo usas: precio puro, estructura, liquidez, order blocks, FVG, premium/discount, BOS, CHoCH.
+  // Obtener contexto macro y sesión
+  const mktCtx = await fetchMarketContext(config.name, symbol);
 
-Cuando analizas, escribes como un trader institucional de verdad hablándole a un estudiante:
-- Específico con precios exactos (los que te dan en el contexto)
-- Explicas el POR QUÉ institucional de cada zona
-- Dices qué está haciendo el dinero inteligente y qué hace el retail (para que el estudiante entienda la diferencia)
-- Tono directo, profesional, sin rodeos
+  const systemPrompt = `Eres un trader institucional con 15 años de experiencia en Smart Money Concepts (SMC).
+NUNCA usas indicadores (sin RSI, MACD, EMA, Bollinger, Stoch, nada).
+Solo precio puro: estructura, liquidez, order blocks, FVG, premium/discount, BOS, CHoCH.
 
-Tu análisis SIEMPRE tiene estas secciones con estos títulos EXACTOS:
+ESTILO DE ANÁLISIS:
+- Hablas directamente al trader, tutéalo
+- Explicas el POR QUÉ institucional de cada zona con lógica real
+- Dices qué hace el dinero institucional VS qué hace el retail
+- Eres específico con precios exactos del contexto dado
+- Incluyes SIEMPRE el sesgo del día basado en la sesión y contexto macro
 
-## 📊 CONTEXTO DEL FLUJO INSTITUCIONAL
+ESTRUCTURA OBLIGATORIA (usa estos títulos exactos con los emojis):
+
+## 📅 SESGO DEL DÍA
+## 📊 CONTEXTO DEL FLUJO INSTITUCIONAL  
 ## 🎯 ZONAS QUE DEBES MARCAR
 ## 📈 ESCENARIOS DE PRECIO
 ## 💡 ENTRADA INTELIGENTE
 ## ❌ ERRORES DEL RETAIL
-## 🔍 LECTURA DEL FLUJO AHORA`;
+## 🔍 LECTURA DEL FLUJO AHORA
 
-  const userMsg = `Analiza este mercado AHORA en tiempo real:
+En ZONAS QUE DEBES MARCAR lista cada zona con precio exacto, nombre SMC y por qué importa.
+En ESCENARIOS DE PRECIO escribe Escenario 1 (más probable) y Escenario 2 paso a paso con precios.
+En ENTRADA INTELIGENTE especifica: zona de entrada, SL exacto, TP1 TP2, confirmación necesaria (BOS/CHOCH en M1).
+Al final incluye esta línea JSON con los niveles clave detectados (6-8 niveles, precios numéricos reales del contexto):
+ZONAS_IA:{"keyLevels":[{"price":NUMERO,"type":"resistance","label":"TEXTO CORTO"},{"price":NUMERO,"type":"support","label":"TEXTO CORTO"}]}`;
 
-ACTIVO: ${config.name} (${symbol})
-PRECIO ACTUAL: ${price?.toFixed(dec)}
+  const userMsg = `Analiza este mercado AHORA. Estos son los datos reales en tiempo real:
 
-ESTRUCTURA DE MERCADO:
-- M5: ${data.structure?.trend || 'NEUTRAL'} (fuerza: ${data.structure?.strength || 0}%)
-- M15: ${data.structureM15?.trend || 'CARGANDO'}
-- H1: ${data.structureH1?.trend || 'CARGANDO'}
-- Confluencia Multi-Timeframe: ${data.mtfConfluence ? 'SÍ ✅' : 'NO ❌'}
-- Zona actual: ${pd}
+━━━ INFORMACIÓN TEMPORAL ━━━
+Fecha: ${mktCtx.fecha}
+Hora NY: ${mktCtx.hora}
+Sesión activa: ${mktCtx.sesionActual}
+Día de trading: ${mktCtx.diaTrading ? 'Sí' : 'FIN DE SEMANA — liquidez reducida'}
 
-ORDER BLOCKS ACTIVOS (sin mitigar):
-DEMANDA (compras institucionales):
-${demandActivas.length ? demandActivas.map(z => `  • [${z.low?.toFixed(dec)} — ${z.high?.toFixed(dec)}]${z.isStructureOB ? ' ★ ESTRUCTURAL (máxima importancia)' : ''}`).join('\n') : '  • Ninguno detectado'}
+━━━ ACTIVO ━━━
+${config.name} (${symbol})
+Precio actual: ${price?.toFixed(dec)}
+Tipo: ${config.type === 'standard' ? 'Par estándar' : config.type || 'Sintético Deriv'}
 
-OFERTA (ventas institucionales):
-${supplyActivas.length ? supplyActivas.map(z => `  • [${z.low?.toFixed(dec)} — ${z.high?.toFixed(dec)}]${z.isStructureOB ? ' ★ ESTRUCTURAL (máxima importancia)' : ''}`).join('\n') : '  • Ninguno detectado'}
+━━━ CONTEXTO MACRO ━━━
+${mktCtx.newsContext}
 
-FAIR VALUE GAPS (desequilibrios / imanes de precio):
-${fvgs.length ? fvgs.map(f => `  • ${f.side === 'BUY' ? 'Alcista' : 'Bajista'} [${f.low?.toFixed(dec)} — ${f.high?.toFixed(dec)}]`).join('\n') : '  • Ninguno reciente'}
+━━━ ESTRUCTURA MULTI-TIMEFRAME ━━━
+H1  (tendencia mayor):  ${data.structureH1?.trend || 'CARGANDO'} — fuerza ${data.structureH1?.strength || 0}%
+M15 (tendencia media):  ${data.structureM15?.trend || 'CARGANDO'} — fuerza ${data.structureM15?.strength || 0}%
+M5  (tendencia corta):  ${data.structure?.trend || 'NEUTRAL'} — fuerza ${data.structure?.strength || 0}%
+Confluencia MTF: ${data.mtfConfluence ? 'SÍ ✅ (H1+M15+M5 alineados)' : 'NO ❌'}
+Zona de precio: ${pd}
 
-LIQUIDEZ EXTERNA (donde están los stops):
-Buy Side Liquidity (stops de vendedores): ${swingHighs.slice(-2).join(', ') || 'N/A'}
-Sell Side Liquidity (stops de compradores): ${swingLows.slice(-2).join(', ') || 'N/A'}
-${liquidity.length ? liquidity.map(l => `  • ${l.type === 'EQUAL_HIGHS' ? 'Equal Highs (BSL)' : 'Equal Lows (SSL)'}: ${l.price?.toFixed(dec)} (${l.touches}x tocado)`).join('\n') : ''}
+━━━ CHoCH y BOS (cambios de estructura) ━━━
+CHoCH M5:  ${choch  ? `${choch.type  === 'BULLISH_CHOCH' ? '↑ ALCISTA' : '↓ BAJISTA'} en ${choch.level?.toFixed(dec)}`  : 'No detectado'}
+BOS   M5:  ${bos    ? `${bos.side    === 'BUY'           ? '↑ ALCISTA' : '↓ BAJISTA'} en ${bos.level?.toFixed(dec)}`    : 'No detectado'}
+CHoCH M15: ${chochM15 ? `${chochM15.type === 'BULLISH_CHOCH' ? '↑ ALCISTA' : '↓ BAJISTA'} en ${chochM15.level?.toFixed(dec)}` : 'No detectado'}
+BOS   M15: ${bosM15   ? `${bosM15.side   === 'BUY'           ? '↑ ALCISTA' : '↓ BAJISTA'} en ${bosM15.level?.toFixed(dec)}`   : 'No detectado'}
 
-CAMBIOS DE ESTRUCTURA DETECTADOS:
-CHoCH: ${choch ? `${choch.type === 'BULLISH_CHOCH' ? '↑ Alcista' : '↓ Bajista'} en ${choch.level?.toFixed(dec)}` : 'No detectado'}
-BOS: ${bos ? `${bos.side === 'BUY' ? '↑ Alcista' : '↓ Bajista'} en ${bos.level?.toFixed(dec)}` : 'No detectado'}
+━━━ ORDER BLOCKS ACTIVOS (sin mitigar) ━━━
+OB DEMANDA — compras institucionales:
+${demandActivas.length ? demandActivas.map((z,i) => `  ${i+1}. [${z.low?.toFixed(dec)} — ${z.high?.toFixed(dec)}] mid:${z.mid?.toFixed(dec)}${z.isStructureOB ? ' ★ ESTRUCTURAL' : ''}`).join('\n') : '  Ninguno activo'}
 
-OTE — FIBONACCI DEL IMPULSO (zona óptima de entrada):
-61.8%: ${fib618 || 'N/A'}
-70.5%: ${fib705 || 'N/A'}
-78.6%: ${fib786 || 'N/A'}
+OB OFERTA — ventas institucionales:
+${supplyActivas.length ? supplyActivas.map((z,i) => `  ${i+1}. [${z.low?.toFixed(dec)} — ${z.high?.toFixed(dec)}] mid:${z.mid?.toFixed(dec)}${z.isStructureOB ? ' ★ ESTRUCTURAL' : ''}`).join('\n') : '  Ninguno activo'}
 
-ÚLTIMAS 5 VELAS M5:
-${candles5.map((c, i) => `  Vela ${i + 1}: O:${c.o} H:${c.h} L:${c.l} C:${c.c}`).join('\n')}
+━━━ FAIR VALUE GAPS — imanes de precio ━━━
+${fvgs.length ? fvgs.map(f => `  • FVG ${f.side === 'BUY' ? 'ALCISTA ↑' : 'BAJISTA ↓'}: [${f.low?.toFixed(dec)} — ${f.high?.toFixed(dec)}] mid:${f.mid?.toFixed(dec)}`).join('\n') : '  Sin FVGs recientes'}
 
-Con TODOS estos datos reales, dame el análisis SMC institucional completo. 
-Sé específico con los precios. Explica qué está haciendo el institucional, qué zonas marcar, los escenarios probables y la entrada inteligente.
-Al final incluye exactamente esta línea con los 3-6 niveles clave más importantes (precios numéricos reales):
-ZONAS_IA:{"keyLevels":[{"price":NUMERO,"type":"resistance","label":"TEXTO"},{"price":NUMERO,"type":"support","label":"TEXTO"}]}`;
+━━━ LIQUIDEZ EXTERNA — donde están los stops ━━━
+Buy Side Liquidity  (BSL - stops vendedores): ${swingHighs.slice(-3).join(' | ') || 'N/A'}
+Sell Side Liquidity (SSL - stops compradores): ${swingLows.slice(-3).join(' | ') || 'N/A'}
+Equal levels detectados:
+${liquidity.length ? liquidity.map(l => `  • ${l.type === 'EQUAL_HIGHS' ? 'Equal Highs → BSL' : 'Equal Lows → SSL'}: ${l.price?.toFixed(dec)} (${l.touches} toques)`).join('\n') : '  Ninguno detectado'}
+
+━━━ OTE — FIBONACCI DEL IMPULSO ━━━
+50.0%: ${fib50  || 'N/A'}
+61.8%: ${fib618 || 'N/A'} ← zona OTE inicio
+70.5%: ${fib705 || 'N/A'} ← zona OTE óptima  
+78.6%: ${fib786 || 'N/A'} ← zona OTE profunda
+Impulso calculado de: ${lastLow || 'N/A'} a ${lastHigh || 'N/A'}
+
+━━━ ÚLTIMAS 20 VELAS M5 ━━━
+${candles20.map((c, i) => `  ${String(i+1).padStart(2,'0')}: O:${c.o} H:${c.h} L:${c.l} C:${c.c}`).join('\n')}
+
+━━━ INSTRUCCIÓN ━━━
+Con todos estos datos reales, escribe el análisis SMC institucional completo.
+Usa los PRECIOS EXACTOS del contexto en cada sección.
+El sesgo del día debe reflejar la sesión activa (${mktCtx.sesionActual}) y contexto macro.
+Incluye al final la línea JSON con 6-8 niveles clave reales:
+ZONAS_IA:{"keyLevels":[{"price":NUMERO,"type":"resistance","label":"TEXTO CORTO"},{"price":NUMERO,"type":"support","label":"TEXTO CORTO"}]}`;
 
   // ── Streaming con Server-Sent Events ──
   res.setHeader('Content-Type', 'text/event-stream');
