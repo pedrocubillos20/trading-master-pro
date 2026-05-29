@@ -3277,44 +3277,6 @@ function startMarketMonitoring() {
 // =============================================
 // INTERVALOS — Actualizaciones periódicas de mercado
 // =============================================
-let marketCheckInterval   = null;
-let m15RefreshInterval    = null;
-let h1RefreshInterval     = null;
-let pingWatchdogInterval  = null;
-
-function startMarketMonitoring() {
-  // Resubscribir activos inactivos cada 30s
-  marketCheckInterval = setInterval(checkAndResubscribeMarkets, 30000);
-  console.log('✅ Monitor de mercados iniciado (verificación cada 30s)');
-
-  // Refrescar M15 manualmente si hay gaps (cada 60s)
-  m15RefreshInterval = setInterval(() => {
-    for (const symbol of Object.keys(ASSETS)) {
-      const d = assetData[symbol];
-      if (!d) continue;
-      const m15 = d.candlesM15 || [];
-      if (m15.length > 0 && (Date.now()/1000 - m15[m15.length-1].time) > 900) {
-        console.log(`⚠️ [${symbol}] M15 stale — re-requesting`);
-      }
-    }
-  }, 60000);
-
-  // Ping watchdog — detectar desconexión
-  pingWatchdogInterval = setInterval(() => {
-    for (const symbol of Object.keys(ASSETS)) {
-      const d = assetData[symbol];
-      if (!d || !d.price) continue;
-      const m5 = d.candles || [];
-      if (m5.length > 0) {
-        const lastCandleAge = (Date.now()/1000) - (m5[m5.length-1]?.time || 0);
-        if (lastCandleAge > 600) {
-          console.log(`⚠️ [${symbol}] Sin datos M5 por ${Math.round(lastCandleAge/60)}min — reconectando`);
-          connectDeriv();
-        }
-      }
-    }
-  }, 120000);
-}
 
 
 function connectDeriv() {
@@ -3817,7 +3779,6 @@ app.get('/api/dashboard/:userId', async (req, res) => {
   }
 });
 
-app.get('/api/analyze/:symbol', (req, res) => {
 
 // =============================================
 // Fetch noticias y sesgo del día para contexto macro
@@ -4065,8 +4026,6 @@ ZONAS_IA:{"keyLevels":[{"price":NUMERO,"type":"resistance","label":"TEXTO CORTO"
 // =============================================
 
 // Obtener VAPID public key
-app.get('/api/push/vapid-key', (req, res) => {
-
 app.get('/api/subscription/:userId', async (req, res) => {
   const { userId } = req.params;
   
@@ -4521,72 +4480,34 @@ async function ensureAdminElite() {
   } catch(e) { console.log('Admin update:', e.message); }
 }
 
-app.listen(PORT, () => {
-  console.log(`
-╔═══════════════════════════════════════════════════════╗
-║   🤖 TRADING MASTER PRO v14.0 - ELISA AI              ║
-║   Motor SMC Puro + OpenAI + Aprendizaje Automático    ║
-╠═══════════════════════════════════════════════════════╣
-║  Puerto: ${PORT}                                          ║
-║  OpenAI: ${openai ? '✅ Conectado' : '⚠️ No configurado'}                           ║
-║  Supabase: ${supabase ? '✅ Conectado' : '⚠️ No configurado'}                         ║
-║  Telegram: ${TELEGRAM_BOT_TOKEN ? '✅ Configurado' : '⚠️ No configurado'}                        ║
-║  Modelos SMC: ${SMC_MODELS_DATA.models ? Object.keys(SMC_MODELS_DATA.models).length : 0} cargados                          ║
-║  Aprendizaje: ✅ Activo                               ║
-║  Activos: ${MY_ASSETS.length} (${MY_ASSETS.join(', ')})
-╚═══════════════════════════════════════════════════════╝
-  `);
-  
-  console.log('\n🔌 Conectando a Deriv WebSocket...');
-  connectDeriv();
-  ensureAdminElite();
-  // PERSISTENCIA: cargar historial desde Supabase al arrancar
-  // Esto evita que los datos se pierdan al hacer deploy
-  loadHistoryFromSupabase().catch(e => console.log('⚠️ Sin historial previo:', e.message));
-  // startMarketMonitoring() (llamado dentro de connectDeriv → on('open'))
-  // ya maneja: H1/M15 refresh, M1 refresh, ping + watchdog.
-  // Tener estos intervalos duplicados aquí causaba:
-  //   1. Doble carga de peticiones al servidor de Deriv
-  //   2. Ping duplicado cada 25s + 30s
-  //   3. Degradación del scanner con el tiempo
-});
 
-export default app;
 
 
 // =============================================
 // INICIO DEL SERVIDOR
 // =============================================
+
+// =============================================
+// INICIO DEL SERVIDOR
+// =============================================
 async function startServer() {
-  // Cargar datos de usuarios de Supabase si disponible
   if (supabase) {
     try {
       const { data } = await supabase.from('users').select('email, plan');
-      if (data) console.log(`✅ ${data.length} usuarios cargados`);
+      if (data) console.log('✅ ' + data.length + ' usuarios cargados');
     } catch(e) {}
   }
-
-  // Conectar a Deriv para datos en vivo
   connectDeriv();
-  
-  // Iniciar monitoring
   startMarketMonitoring();
 }
 
-const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-  console.log(`
-╔═══════════════════════════════════════════════════╗
-║   📊 TRADING MASTER PRO v25.0 — IA SMC            ║
-║   Datos en vivo + Análisis institucional con IA   ║
-╠═══════════════════════════════════════════════════╣
-║  Puerto: ${PORT}                                      ║
-║  OpenAI: ${openai ? '✅ Conectado' : '⚠️  No configurado'}                      ║
-║  Supabase: ${supabase ? '✅ Conectado' : '⚠️  No configurado'}                  ║
-║  Activos: Step · Oro · V100                       ║
-║  Señales automáticas: ❌ DESACTIVADAS             ║
-║  IA institucional: ✅ Activa (bajo demanda)        ║
-╚═══════════════════════════════════════════════════╝
-  `);
+  console.log('\n=== TRADING MASTER PRO v25.0 - IA SMC ===');
+  console.log('Puerto: ' + PORT);
+  console.log('OpenAI: ' + (openai ? 'Conectado' : 'No configurado'));
+  console.log('Supabase: ' + (supabase ? 'Conectado' : 'No configurado'));
+  console.log('Senales automaticas: DESACTIVADAS');
+  console.log('IA institucional: ACTIVA (bajo demanda)');
+  console.log('=========================================\n');
   startServer();
 });
