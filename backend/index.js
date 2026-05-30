@@ -76,7 +76,7 @@ try {
 function isInTradingHours(plan = 'free') {
   const now = new Date();
   const utcHour = now.getUTCHours() + now.getUTCMinutes() / 60;
-  const { base, night } = SIGNAL_CONFIG.TRADING_HOURS;
+  // trading hours removed
 
   const inDaytime = utcHour >= base.start && utcHour < base.end;
   const inNight   = utcHour >= night.start && utcHour < night.end;
@@ -680,6 +680,16 @@ for (const symbol of MY_ASSETS) {
     mtfConfluence: false
   };
 }
+
+// ── Stubs para compatibilidad con código SMC heredado ──
+// Las señales automáticas están desactivadas — estos objetos
+// solo existen para que el motor SMC no genere ReferenceErrors
+const signalHistory = [];
+const stats = {
+  total: 0, wins: 0, losses: 0, pending: 0, tp1Hits: 0, tp2Hits: 0,
+  byAsset: {},
+  learning: { scoreAdjustments: {}, winRates: {} }
+};
 
 let signalIdCounter = 1;
 
@@ -3540,7 +3550,7 @@ const SMC = {
     // AJUSTE DE SCORE CON SISTEMA DE APRENDIZAJE
     // ═══════════════════════════════════════════
     // Nota: Usamos config.shortName en lugar de symbol (que no existe en este contexto)
-    const learningAdj = 0;
+    const learningAdj = 0; // learning system removed
     const finalScore  = Math.min(100, Math.max(0, best.baseScore + learningAdj));
 
     console.log(`📊 [${config.shortName}] Score Final: ${finalScore} vs Min: ${effectiveMinScore} → ${finalScore >= effectiveMinScore ? '✅ PASA' : '❌ NO PASA'} | Modelo: ${best.model}`);
@@ -3760,7 +3770,7 @@ function connectDeriv() {
           // Actualizar estado del mercado
           marketStatus[symbol].lastDataReceived = Date.now();
           marketStatus[symbol].isActive = true;
-          checkSignalHits();
+          // signal hits disabled
         }
       }
       
@@ -3771,7 +3781,7 @@ function connectDeriv() {
           // Actualizar estado del mercado
           marketStatus[symbol].lastDataReceived = Date.now();
           marketStatus[symbol].isActive = true;
-          checkSignalHits();
+          // signal hits disabled
         }
       }
       
@@ -3874,12 +3884,12 @@ app.get('/', (req, res) => res.json({
   supabase: !!supabase,
   filters: {
     minScore: 88,
-    analysisCooldown: SIGNAL_CONFIG.ANALYSIS_COOLDOWN,
-    postSignalCooldown: SIGNAL_CONFIG.POST_SIGNAL_COOLDOWN,
-    requireMTF: SIGNAL_CONFIG.REQUIRE_MTF_CONFLUENCE,
-    modelsWithoutMTF: SIGNAL_CONFIG.MODELS_WITHOUT_MTF,
-    maxPending: SIGNAL_CONFIG.MAX_PENDING_TOTAL,
-    tradingHours: SIGNAL_CONFIG.TRADING_HOURS
+    analysisCooldown: 30000,
+    postSignalCooldown: 0,
+    requireMTF: false,
+    modelsWithoutMTF: [],
+    maxPending: 999,
+    tradingHours: {}
   },
   features: {
     mtfOptional: true,
@@ -3892,11 +3902,11 @@ app.get('/', (req, res) => res.json({
 app.post('/api/config/mtf', (req, res) => {
   const { requireMTF } = req.body;
   if (typeof requireMTF === 'boolean') {
-    SIGNAL_CONFIG.REQUIRE_MTF_CONFLUENCE = requireMTF;
+    // requireMTF setting removed
     console.log(`⚙️ Configuración MTF cambiada a: ${requireMTF ? 'OBLIGATORIO' : 'OPCIONAL'}`);
     res.json({ 
       success: true, 
-      requireMTF: SIGNAL_CONFIG.REQUIRE_MTF_CONFLUENCE,
+      requireMTF: false,
       message: `MTF ahora es ${requireMTF ? 'obligatorio' : 'opcional'}`
     });
   } else {
@@ -3910,15 +3920,15 @@ app.get('/api/config', (req, res) => {
     version: '14.0',
     signalConfig: {
       minScore: 88,
-      analysisCooldown: SIGNAL_CONFIG.ANALYSIS_COOLDOWN,
-      postSignalCooldown: SIGNAL_CONFIG.POST_SIGNAL_COOLDOWN,
-      requireMTFConfluence: SIGNAL_CONFIG.REQUIRE_MTF_CONFLUENCE,
-      modelsWithoutMTF: SIGNAL_CONFIG.MODELS_WITHOUT_MTF,
-      maxPendingTotal: SIGNAL_CONFIG.MAX_PENDING_TOTAL,
-      tradingHours: SIGNAL_CONFIG.TRADING_HOURS
+      analysisCooldown: 30000,
+      postSignalCooldown: 0,
+      requireMTFConfluence: false,
+      modelsWithoutMTF: [],
+      maxPendingTotal: 999,
+      tradingHours: {}
     },
     smcModels: SMC_MODELS_DATA.models ? Object.keys(SMC_MODELS_DATA.models) : [],
-    learningStats: LearningSystem.getStats()
+    learningStats: null
   });
 });
 
@@ -4481,10 +4491,10 @@ app.get('/api/trading-session', (req, res) => {
   const utcHour = now.getUTCHours() + now.getUTCMinutes() / 60;
   
   // Horarios
-  const baseStart = SIGNAL_CONFIG.TRADING_HOURS.base.start; // 11:00 UTC (6AM COL)
-  const baseEnd = SIGNAL_CONFIG.TRADING_HOURS.base.end;     // 19:00 UTC (2PM COL)
-  const nightStart = SIGNAL_CONFIG.TRADING_HOURS.night.start; // 01:30 UTC (8:30PM COL)
-  const nightEnd = SIGNAL_CONFIG.TRADING_HOURS.night.end;     // 06:00 UTC (1AM COL)
+  const baseStart = "11:00"; // 11:00 UTC (6AM COL)
+  const baseEnd = "19:00";     // 19:00 UTC (2PM COL)
+  const nightStart = "01:30"; // 01:30 UTC (8:30PM COL)
+  const nightEnd = "06:00";     // 06:00 UTC (1AM COL)
   
   // Verificar sesión diurna
   const isDaySession = utcHour >= baseStart && utcHour < baseEnd;
