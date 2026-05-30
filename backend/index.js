@@ -6386,7 +6386,15 @@ VALIDACIÓN OBLIGATORIA DEL JSON antes de escribirlo:
 □ Si side=SELL: ¿tp1 < entry? ¿tp2 < tp1? ¿sl > entry? → Si no, CORREGIR
 □ Si side=BUY: ¿tp1 > entry? ¿tp2 > tp1? ¿sl < entry? → Si no, CORREGIR
 □ ¿R:R = |tp1-entry| / |entry-sl| >= 1.5? → Si no, ajustar SL o no poner trade
-□ ¿Los precios de activación de escenarios son futuros (aún no tocados)? → Si no, CORREGIR`;
+□ ¿Los precios de activación de escenarios son futuros (aún no tocados)? → Si no, CORREGIR
+
+EJEMPLOS OBLIGATORIOS DE REFERENCIA:
+BUY correcto:  entry=7970.25, sl=7969.50 (DEBAJO), tp1=7972.05 (ARRIBA), tp2=7975.50 (MÁS ARRIBA)
+SELL correcto: entry=7994.05, sl=7996.00 (ENCIMA), tp1=7988.20 (ABAJO), tp2=7984.45 (MÁS ABAJO)
+BUY INCORRECTO (NUNCA): entry=7970.25, sl=7970.40 ← SL ENCIMA de entry en BUY = ERROR GRAVE
+
+IMPORTANTE: El JSON debe escribirse en una sola línea sin bloques de código markdown (sin \`\`\`json).
+Escribe directamente: ZONAS_IA:{...}`;
 
   const userMsg = `Analiza este mercado AHORA. Estos son los datos reales en tiempo real:
 

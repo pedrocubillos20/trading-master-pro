@@ -562,8 +562,10 @@ function AIAnalysisPanel({ symbol, onZonesDetected, onActivate, onReset }) {
             : p
         )
       }
+      // Hide JSON code blocks
+      if(line.startsWith('```')||line.startsWith('ZONAS_IA:')||line.startsWith('...'))return null
       return <div key={i} style={{color:C.text,fontSize:11,lineHeight:1.65}}>{renderInline(line)}</div>
-    })
+    }).filter(Boolean)
   }
 
   const activateAI = useCallback(async()=>{
@@ -619,6 +621,33 @@ function AIAnalysisPanel({ symbol, onZonesDetected, onActivate, onReset }) {
                 if(end>start){
                   try{
                     const parsed=JSON.parse(fullText.slice(start,end))
+                    // ── Hard validation of trade direction ──
+                    if(parsed.trade){
+                      const t=parsed.trade
+                      const isBuy=t.side==='BUY'
+                      const entryNum=parseFloat(t.entry)
+                      const slNum=parseFloat(t.sl)
+                      const tp1Num=parseFloat(t.tp1)
+                      const tp2Num=parseFloat(t.tp2)
+                      // Fix SL direction if wrong
+                      if(isBuy && slNum>=entryNum){
+                        console.warn('IA: SL above entry on BUY — auto-fixing')
+                        parsed.trade.sl=+(entryNum-(Math.abs(tp1Num-entryNum)*0.6)).toFixed(2)
+                      }
+                      if(!isBuy && slNum<=entryNum){
+                        console.warn('IA: SL below entry on SELL — auto-fixing')
+                        parsed.trade.sl=+(entryNum+(Math.abs(tp1Num-entryNum)*0.6)).toFixed(2)
+                      }
+                      // Fix TP direction if wrong
+                      if(isBuy && tp1Num<=entryNum){
+                        console.warn('IA: TP1 below entry on BUY — swapping with SL')
+                        parsed.trade.tp1=+(entryNum+(Math.abs(entryNum-slNum)*1.5)).toFixed(2)
+                      }
+                      if(!isBuy && tp1Num>=entryNum){
+                        console.warn('IA: TP1 above entry on SELL — fixing')
+                        parsed.trade.tp1=+(entryNum-(Math.abs(entryNum-slNum)*1.5)).toFixed(2)
+                      }
+                    }
                     onZonesDetected(parsed)
                   }catch(e){console.warn('ZONAS_IA parse error',e)}
                 }
@@ -833,8 +862,9 @@ export default function Dashboard({user,subscription,onLogout}){
 
   useEffect(()=>{
     fetchDash();fetchAnalyze()
-    const id=setInterval(()=>{fetchDash();fetchAnalyze()},8000)
-    return()=>clearInterval(id)
+    const id=setInterval(()=>{fetchAnalyze()},2000)
+    const dashId=setInterval(()=>{fetchDash()},15000)
+    return()=>{clearInterval(id);clearInterval(dashId)}
   },[fetchDash,fetchAnalyze])
 
   useEffect(()=>{
