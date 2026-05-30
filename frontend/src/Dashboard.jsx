@@ -292,6 +292,46 @@ function drawChart(canvas, state) {
   drawLvl(bosM15,   'rgba(140,140,255,.9)', bosM15?.side==='BUY'?'BOS↑ M15':'BOS↓ M15')
   drawLvl(chochM15, 'rgba(255,200,60,.8)',  chochM15?.type==='BULLISH_CHOCH'?'CHoCH↑ M15':'CHoCH↓ M15')
 
+  // ── Scenario activation levels ──
+  if(aiZones?.scenarios){
+    const {s1,s2} = aiZones.scenarios
+    // Draw S1 activation line
+    if(s1?.activation){
+      const y=py(s1.activation)
+      if(y>=MT&&y<=MT+CH){
+        const col=s1.direction==='UP'?'rgba(63,185,80,.85)':'rgba(255,107,107,.85)'
+        ctx.strokeStyle=col;ctx.lineWidth=2;ctx.setLineDash([10,4])
+        ctx.beginPath();ctx.moveTo(ML,y);ctx.lineTo(ML+CW,y);ctx.stroke()
+        ctx.setLineDash([])
+        // S1 pill with arrow
+        const arrow=s1.direction==='UP'?'▲':'▼'
+        const lbl=`${arrow} S1 ${s1.activation?.toFixed?.(2)||s1.activation} (${s1.probability||'?'}%)`
+        const lw=lbl.length*6+16
+        ctx.fillStyle=col.replace('.85','.2');ctx.strokeStyle=col;ctx.lineWidth=1.5
+        ctx.beginPath();ctx.roundRect(ML+4,y-11,lw,18,4);ctx.fill();ctx.stroke()
+        ctx.fillStyle=col;ctx.font='bold 9px system-ui';ctx.textAlign='left'
+        ctx.fillText(lbl,ML+8,y+5)
+      }
+    }
+    // Draw S2 activation line
+    if(s2?.activation){
+      const y=py(s2.activation)
+      if(y>=MT&&y<=MT+CH){
+        const col=s2.direction==='UP'?'rgba(63,185,80,.5)':'rgba(255,107,107,.5)'
+        ctx.strokeStyle=col;ctx.lineWidth=1.5;ctx.setLineDash([6,6])
+        ctx.beginPath();ctx.moveTo(ML,y);ctx.lineTo(ML+CW,y);ctx.stroke()
+        ctx.setLineDash([])
+        const arrow=s2.direction==='UP'?'▲':'▼'
+        const lbl=`${arrow} S2 ${s2.activation?.toFixed?.(2)||s2.activation} (${s2.probability||'?'}%)`
+        const lw=lbl.length*6+16
+        ctx.fillStyle=col.replace('.5','.12');ctx.strokeStyle=col;ctx.lineWidth=1
+        ctx.beginPath();ctx.roundRect(ML+4,y-10,lw,16,3);ctx.fill();ctx.stroke()
+        ctx.fillStyle=col;ctx.font='9px system-ui';ctx.textAlign='left'
+        ctx.fillText(lbl,ML+8,y+4)
+      }
+    }
+  }
+
   // M1 mode: draw confirmation zone indicator
   if(isM1&&aiZones?.trade){
     const tr=aiZones.trade
@@ -473,7 +513,11 @@ function AIAnalysisPanel({ symbol, onZonesDetected, onActivate }) {
     if(!raw)return null
     return raw.split('\n').map((line,i)=>{
       if(line.startsWith('## ')){
-        const icons = {'📊':'#60a5fa','🎯':C.teal,'📈':C.green,'💡':C.yellow,'❌':C.red,'🔍':C.purple}
+        const icons = {
+          '📅':'#f9ca24','📊':'#60a5fa','🎯':C.teal,
+          '📈':'#2ed573','📉':'#ff6b6b','⏰':'#a78bfa',
+          '💡':C.yellow,'❌':C.red,'🔍':C.purple
+        }
         const col = Object.keys(icons).find(k=>line.includes(k))
         return <div key={i} style={{color:col?icons[col]:C.teal,fontWeight:700,fontSize:12,
           marginTop:14,marginBottom:5,borderBottom:`1px solid ${col?icons[col]+'33':C.tealDark+'33'}`,
@@ -828,6 +872,33 @@ export default function Dashboard({user,subscription,onLogout}){
       {lvl:bosM15,  tf:'M15',type:'BOS'},
       {lvl:chochM15,tf:'M15',type:'CHoCH'},
     ]
+    // Check scenario activation
+    if(aiZones?.scenarios){
+      const {s1,s2} = aiZones.scenarios
+      if(s1?.activation){
+        const dist=Math.abs(price-s1.activation)
+        const rng=Math.abs((s1.activation||0)-(s2?.activation||s1.activation-10))*0.1||0.5
+        if(dist<Math.max(rng,0.3)){
+          newAlerts.push({
+            id:'scenario-1',
+            msg:`🟢 ESCENARIO 1 ACTIVADO — ${s1.label||'Escenario principal'} (${s1.probability||'?'}%)`,
+            color:'#2ed573', ts:Date.now()
+          })
+        }
+      }
+      if(s2?.activation){
+        const dist=Math.abs(price-s2.activation)
+        const rng=Math.abs((s2.activation||0)-(s1?.activation||s2.activation-10))*0.1||0.5
+        if(dist<Math.max(rng,0.3)){
+          newAlerts.push({
+            id:'scenario-2',
+            msg:`🟡 ESCENARIO 2 ACTIVADO — ${s2.label||'Escenario alternativo'} (${s2.probability||'?'}%)`,
+            color:'#f9ca24', ts:Date.now()
+          })
+        }
+      }
+    }
+
     lvls.forEach(({lvl,tf,type})=>{
       if(!lvl?.level)return
       const dist=Math.abs(price-lvl.level)
@@ -1157,6 +1228,52 @@ export default function Dashboard({user,subscription,onLogout}){
                     {aiZones.trade.label&&(
                       <div style={{fontSize:9,color:'#7d8590',marginTop:4,borderTop:'1px solid #30363d',paddingTop:3}}>
                         {aiZones.trade.label}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ── Scenarios mini card ── */}
+                {aiActive&&aiZones?.scenarios&&(
+                  <div style={{position:'absolute',top: aiZones?.trade ? 220 : 8, right:8,
+                    background:'rgba(13,17,23,.92)',
+                    border:'1px solid #30363d',
+                    borderRadius:8,padding:'8px 12px',zIndex:8,minWidth:160}}>
+                    <div style={{fontSize:9,color:'#7d8590',fontWeight:700,marginBottom:6,
+                      letterSpacing:'.06em',textTransform:'uppercase'}}>Escenarios</div>
+                    {[
+                      {s:aiZones.scenarios.s1, n:1, baseCol:'#2ed573'},
+                      {s:aiZones.scenarios.s2, n:2, baseCol:'#f9ca24'},
+                    ].filter(x=>x.s).map(({s,n,baseCol})=>{
+                      const isActive=alerts.some(a=>a.id===`scenario-${n}`)
+                      const col=isActive?baseCol:`${baseCol}66`
+                      return(
+                        <div key={n} style={{
+                          display:'flex',alignItems:'center',gap:6,marginBottom:5,
+                          background:isActive?`${baseCol}15`:'transparent',
+                          borderRadius:4,padding:'3px 5px',
+                          border:isActive?`1px solid ${baseCol}44`:'1px solid transparent',
+                          transition:'all .3s'
+                        }}>
+                          <span style={{fontSize:14}}>{s.direction==='UP'?'▲':'▼'}</span>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:10,fontWeight:700,color:col}}>
+                              S{n} {isActive?'⚡ ACTIVO':''}
+                            </div>
+                            <div style={{fontSize:9,color:'#7d8590',
+                              overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:120}}>
+                              {s.label?.replace(`Escenario ${n} — `,'')?.slice(0,30)||''}
+                            </div>
+                          </div>
+                          <span style={{fontSize:10,fontWeight:700,color:col}}>{s.probability}%</span>
+                        </div>
+                      )
+                    })}
+                    {aiZones.scenarios.s1?.activation&&(
+                      <div style={{fontSize:8,color:'#7d8590',marginTop:3,
+                        borderTop:'1px solid #30363d',paddingTop:4}}>
+                        S1 activa en: {aiZones.scenarios.s1.activation}
+                        {aiZones.scenarios.s2?.activation&&` · S2: ${aiZones.scenarios.s2.activation}`}
                       </div>
                     )}
                   </div>
