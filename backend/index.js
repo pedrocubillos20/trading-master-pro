@@ -619,6 +619,80 @@ function queueTelegramMessage(message) {
   processTelegramQueue();
 }
 
+
+// ═══════════════════════════════════════════════════════════════
+// TELEGRAM IA — Enviar análisis institucional al canal
+// Se llama cuando la IA detecta una entrada potencial
+// ═══════════════════════════════════════════════════════════════
+async function sendTelegramIA(assetName, analysis) {
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
+    console.log('⚠️ Telegram IA: No configurado');
+    return;
+  }
+
+  const { side, entry, sl, tp1, tp2, label, sesion, sesgo, escenario1, escenario2, flujo } = analysis;
+  const isBuy = side === 'BUY';
+  const emoji = isBuy ? '🟢' : '🔴';
+  const rrRaw = tp1 && sl && entry ? Math.abs(tp1 - entry) / Math.abs(entry - sl) : 0;
+  const rr = rrRaw.toFixed(1);
+
+  const msg = [
+    `${emoji} *ANÁLISIS IA — ${assetName}*`,
+    ``,
+    `📅 *Sesión:* ${sesion || 'N/A'}`,
+    `📊 *Sesgo:* ${sesgo || 'N/A'}`,
+    ``,
+    `💡 *ENTRADA POTENCIAL*`,
+    `Dirección: *${isBuy ? 'COMPRA ▲' : 'VENTA ▼'}*`,
+    `Zona entrada: \`${entry}\``,
+    `Stop Loss: \`${sl}\``,
+    `TP1: \`${tp1}\``,
+    tp2 ? `TP2: \`${tp2}\`` : '',
+    `R:R: *1:${rr}*`,
+    label ? `Zona: ${label}` : '',
+    ``,
+    escenario1 ? `📈 *Escenario 1:* ${escenario1}` : '',
+    escenario2 ? `📉 *Escenario 2:* ${escenario2}` : '',
+    ``,
+    flujo ? `🔍 *Flujo:* ${flujo}` : '',
+    ``,
+    `⚠️ _Confirmar BOS/CHoCH en M1 antes de ejecutar_`,
+    `_Solo entra con confirmación estructural_`,
+  ].filter(l => l !== undefined && l !== null).join('\n');
+
+  try {
+    const response = await fetch(
+      `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: TELEGRAM_CHAT_ID,
+          text: msg,
+          parse_mode: 'Markdown'
+        })
+      }
+    );
+    const result = await response.json();
+    if (result.ok) {
+      console.log(`📱 Telegram IA: Alerta enviada — ${assetName} ${side} @ ${entry}`);
+    } else {
+      // Retry without markdown
+      await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: TELEGRAM_CHAT_ID,
+          text: `${isBuy?'🟢':'🔴'} ANÁLISIS IA — ${assetName}\n${isBuy?'COMPRA':'VENTA'} @ ${entry}\nSL: ${sl} | TP1: ${tp1} | R:R 1:${rr}\n⚠️ Confirmar en M1`,
+          parse_mode: ''
+        })
+      });
+    }
+  } catch(e) {
+    console.log('⚠️ Telegram IA error:', e.message);
+  }
+}
+
 // Notificar TP alcanzado
 async function sendTelegramTP(signal, tpLevel, price) {
   const emoji = tpLevel === 'TP1' ? '🎯' : tpLevel === 'TP2' ? '🎯🎯' : '🎯🎯🎯';
@@ -4079,7 +4153,7 @@ const SMC = {
       const now = Date.now();
       if (!this._lastDebugLog || now - this._lastDebugLog > 30000) {
         this._lastDebugLog = now;
-        console.log(`🔍 [DEBUG ${config.shortName}] Sin señales:`);
+        // [SEÑALES DESACTIVADAS] debug
         console.log(`   M5=${structureM5.trend} H1=${structureH1.trend} MTF=${mtfConfluence ? 'SÍ' : 'NO'}`);
         console.log(`   CHoCH=${choch ? choch.type + ' @' + choch.level : 'NO'}`);
         console.log(`   Pullback=${pullback ? pullback.side + ' @' + pullback.entry : 'NO'}`);
@@ -4112,7 +4186,7 @@ const SMC = {
     const enabledSignals = signals.filter(s => !(SIGNAL_CONFIG.DISABLED_MODELS||[]).includes(s.model));
     if (enabledSignals.length !== signals.length) console.log(`🚫 [${config.shortName}] ${signals.length - enabledSignals.length} modelos deshabilitados filtrados`);
     signals.length = 0; enabledSignals.forEach(s => signals.push(s));
-    console.log(`✨ [${config.shortName}] ${signals.length} candidatas: ${signals.map(s=>s.model+'('+s.baseScore+')').join(', ')}`);
+    // [SEÑALES DESACTIVADAS] candidatas log
     
     signals.sort((a, b) => b.baseScore - a.baseScore);
     const best = signals[0];
@@ -4142,7 +4216,7 @@ const SMC = {
       : minScore;
     
     // 🔍 LOG: Mostrar score de la mejor señal
-    console.log(`🎯 [${config.shortName}] Mejor: ${best.model} | Score Base: ${best.baseScore} | Side: ${best.pullback?.side}`);
+    // [SEÑALES DESACTIVADAS] mejor log
     
     // ═══════════════════════════════════════════
     // AJUSTE DE SCORE CON SISTEMA DE APRENDIZAJE
@@ -4151,7 +4225,7 @@ const SMC = {
     const learningAdj = LearningSystem.getScoreAdjustment(best.model, config.shortName);
     const finalScore  = Math.min(100, Math.max(0, best.baseScore + learningAdj));
 
-    console.log(`📊 [${config.shortName}] Score Final: ${finalScore} vs Min: ${effectiveMinScore} → ${finalScore >= effectiveMinScore ? '✅ PASA' : '❌ NO PASA'} | Modelo: ${best.model}`);
+    // [SEÑALES DESACTIVADAS] score log
 
     if (finalScore < effectiveMinScore) {
       console.log(`❌ [${config.shortName}] Rechazada: ${finalScore} < ${effectiveMinScore}${best.model==='OB_REJECTION'?' (OB_REJECTION necesita ≥90)':''}`);
@@ -4170,7 +4244,7 @@ const SMC = {
     }
     
     // ✅ SCORE SUFICIENTE - GENERAR SEÑAL
-    console.log(`✅ [${config.shortName}] APROBADA: ${best.model} con score ${finalScore}`);
+    // [SEÑALES DESACTIVADAS] aprobada log
     
     const pb = best.pullback;
     return {
@@ -4774,179 +4848,9 @@ const Elisa = {
 };
 
 // =============================================
-// AUTO-TRACKING CON TRAILING STOP
-// =============================================
-function checkSignalHits() {
-  for (const [symbol, data] of Object.entries(assetData)) {
-    const locked = data.lockedSignal;
-    if (!locked || !data.price) continue;
-    
-    const price = data.price;
-    const isLong = locked.action === 'LONG';
-    const signal = signalHistory.find(s => s.id === locked.id);
-    if (!signal || signal.status !== 'PENDING') continue;
-    
-    const config = ASSETS[symbol];
-    
-    // ═══════════════════════════════════════════
-    // DETECCIÓN DE CAMBIO DE ESTRUCTURA M5 + M15
-    // Si M5 o M15 cambian contra la posición → alerta inmediata
-    // Si AMBOS cambian → alerta crítica de cierre urgente
-    // ═══════════════════════════════════════════
-    const trendM5  = data.structure?.trend;
-    const trendM15 = data.structureM15?.trend;
-    const oppositeDir = isLong ? 'BEARISH' : 'BULLISH';
+// [SEÑALES DESACTIVADAS] — Auto-tracking y trailing stop eliminados
+// La IA institucional analiza y proyecta; el humano decide la entrada
 
-    const m5Against  = trendM5  === oppositeDir;
-    const m15Against = trendM15 === oppositeDir;
-    const bothAgainst = m5Against && m15Against;
-    const oneAgainst  = m5Against || m15Against;
-
-    // Calcular distancia al SL y posición actual
-    const slLevel      = signal.stop;
-    const slDistance   = Math.abs(signal.entry - slLevel);
-    const currentDist  = isLong ? signal.entry - price : price - signal.entry;
-    const pnlPct       = (currentDist / signal.entry * 100).toFixed(2);
-    const isInLoss     = currentDist > 0;
-    const lossUsed     = slDistance > 0 ? (currentDist / slDistance * 100).toFixed(0) : 0;
-
-    // --- ALERTA CRÍTICA: ambos timeframes en contra ---
-    if (bothAgainst && !signal.criticalAlertSent) {
-      signal.criticalAlertSent = true;
-      signal.structureAlert = {
-        level: 'CRITICAL',
-        msg: `⛔ M5 + M15 ambos en ${oppositeDir} — Cierre recomendado`,
-        m5: trendM5, m15: trendM15,
-        pnlPct, lossUsed,
-        ts: Date.now()
-      };
-      // Reflejar en lockedSignal para el frontend
-      if (data.lockedSignal) data.lockedSignal.structureAlert = signal.structureAlert;
-
-      const rec = isInLoss
-        ? `🚨 Cerrar ahora: evitas usar ${lossUsed}% del SL restante`
-        : `💡 Estás en ganancia (${Math.abs(pnlPct)}%) — considera asegurar parcial`;
-      sendTelegramDirectionChange(signal, price,
-        `🔴 CRÍTICO: M5 Y M15 cambiaron a ${oppositeDir}\n${rec}`);
-      console.log(`🚨 [${config.shortName}] ALERTA CRÍTICA #${signal.id}: M5+M15 vs ${signal.action}`);
-    }
-    // --- ALERTA MODERADA: solo un timeframe en contra ---
-    else if (oneAgainst && !bothAgainst && !signal.moderateAlertSent && !signal.criticalAlertSent) {
-      const whichTf = m5Against ? 'M5' : 'M15';
-      signal.moderateAlertSent = true;
-      signal.structureAlert = {
-        level: 'WARNING',
-        msg: `⚠️ ${whichTf} cambió a ${oppositeDir} — Mantener vigilancia`,
-        m5: trendM5, m15: trendM15,
-        pnlPct, lossUsed,
-        ts: Date.now()
-      };
-      if (data.lockedSignal) data.lockedSignal.structureAlert = signal.structureAlert;
-
-      sendTelegramDirectionChange(signal, price,
-        `⚠️ ${whichTf} cambió a ${oppositeDir}. Vigilar cierre si M15 también confirma.`);
-      console.log(`⚠️ [${config.shortName}] Alerta moderada #${signal.id}: ${whichTf} vs ${signal.action}`);
-    }
-    // --- Resetear alertas si la estructura vuelve a alinearse ---
-    else if (!oneAgainst && (signal.moderateAlertSent || signal.criticalAlertSent)) {
-      signal.moderateAlertSent = false;
-      signal.criticalAlertSent = false;
-      signal.directionAlertSent = false;
-      signal.structureAlert = null;
-      if (data.lockedSignal) data.lockedSignal.structureAlert = null;
-      console.log(`✅ [${config.shortName}] Estructura recuperada — alertas reseteadas #${signal.id}`);
-    }
-    
-    // ═══════════════════════════════════════════
-    // TRAILING STOP LOGIC
-    // ═══════════════════════════════════════════
-    
-    // Después de TP1: Mover SL a Entry (breakeven)
-    if (signal.tp1Hit && !signal.trailingTP1) {
-      signal.trailingTP1 = true;
-      signal.originalStop = signal.stop;
-      signal.stop = signal.entry;
-      locked.stop = signal.entry;
-      locked.trailingActive = true;
-      console.log(`🔄 TRAILING #${signal.id}: SL movido a Breakeven (${signal.entry})`);
-      sendTelegramTrailing(signal, signal.entry, 'TP1 alcanzado - SL movido a Breakeven');
-    }
-    
-    // Después de TP2: Mover SL a TP1
-    if (signal.tp2Hit && !signal.trailingTP2) {
-      signal.trailingTP2 = true;
-      signal.stop = signal.tp1;
-      locked.stop = signal.tp1;
-      console.log(`🔄 TRAILING #${signal.id}: SL movido a TP1 (${signal.tp1})`);
-      sendTelegramTrailing(signal, signal.tp1, 'TP2 alcanzado - SL movido a TP1');
-    }
-    
-    // ═══════════════════════════════════════════
-    // CHECK SL (con trailing)
-    // ═══════════════════════════════════════════
-    const currentSL = signal.stop;
-    
-    if ((isLong && price <= currentSL) || (!isLong && price >= currentSL)) {
-      // Si ya tocó TP1, es WIN parcial, no LOSS
-      if (signal.tp1Hit) {
-        // Detectar cuál TP se alcanzó para cierre correcto
-        const trailTP = signal.tp2Hit ? 2 : 1;
-        closeSignal(signal.id, 'WIN', symbol, trailTP);
-        sendTelegramSL(signal, price, true);
-        console.log(`✅ #${signal.id} cerrado TRAILING STOP TP${trailTP} (WIN)`);
-      } else {
-        closeSignal(signal.id, 'LOSS', symbol);
-        sendTelegramSL(signal, price, false); // LOSS
-      }
-      continue;
-    }
-    
-    // ═══════════════════════════════════════════
-    // CHECK TPs con notificaciones Telegram
-    // ═══════════════════════════════════════════
-    if (isLong) {
-      if (price >= locked.tp1 && !signal.tp1Hit) { 
-        signal.tp1Hit = locked.tp1Hit = true; 
-        stats.tp1Hits++; 
-        console.log(`🎯 TP1 HIT #${signal.id} - Activando trailing stop`);
-        sendTelegramTP(signal, 'TP1', price);
-      }
-      if (price >= locked.tp2 && !signal.tp2Hit) { 
-        signal.tp2Hit = locked.tp2Hit = true; 
-        stats.tp2Hits++; 
-        console.log(`🎯 TP2 HIT #${signal.id}`);
-        sendTelegramTP(signal, 'TP2', price);
-      }
-      if (price >= locked.tp3 && !signal.tp3Hit) { 
-        signal.tp3Hit = locked.tp3Hit = true; 
-        stats.tp3Hits++; 
-        sendTelegramTP(signal, 'TP3', price);
-        closeSignal(signal.id, 'WIN', symbol, 3); 
-        console.log(`💎 TP3 HIT #${signal.id} - TRADE COMPLETO`);
-      }
-    } else {
-      if (price <= locked.tp1 && !signal.tp1Hit) { 
-        signal.tp1Hit = locked.tp1Hit = true; 
-        stats.tp1Hits++; 
-        console.log(`🎯 TP1 HIT #${signal.id} - Activando trailing stop`);
-        sendTelegramTP(signal, 'TP1', price);
-      }
-      if (price <= locked.tp2 && !signal.tp2Hit) { 
-        signal.tp2Hit = locked.tp2Hit = true; 
-        stats.tp2Hits++; 
-        console.log(`🎯 TP2 HIT #${signal.id}`);
-        sendTelegramTP(signal, 'TP2', price);
-      }
-      if (price <= locked.tp3 && !signal.tp3Hit) { 
-        signal.tp3Hit = locked.tp3Hit = true; 
-        stats.tp3Hits++; 
-        sendTelegramTP(signal, 'TP3', price);
-        closeSignal(signal.id, 'WIN', symbol, 3); 
-        console.log(`💎 TP3 HIT #${signal.id} - TRADE COMPLETO`);
-      }
-    }
-  }
-}
 
 function closeSignal(id, status, symbol, tpHit = null) {
   const signal = signalHistory.find(s => s.id === id);
@@ -5296,306 +5200,25 @@ function requestM1(symbol) {
 async function analyzeAsset(symbol) {
   const data = assetData[symbol];
   const config = ASSETS[symbol];
-  
   if (!data || !config || data.candles.length < 30) return;
-  
+
+  // Cooldown 30s — no spamear el análisis
   const now = Date.now();
-  
-  // ═══════════════════════════════════════════
-  // FILTRO 1: Cooldown de análisis (30 segundos)
-  // ═══════════════════════════════════════════
-  if (now - data.lastAnalysis < SIGNAL_CONFIG.ANALYSIS_COOLDOWN) return;
+  if (now - (data.lastAnalysis||0) < 30000) return;
   data.lastAnalysis = now;
 
-  // ── Professional SMC Analysis Log ──
-  const logStruct = (tf, s) => s?.trend ? `${tf}:${s.trend.slice(0,4)}(${s.strength||0}%)` : `${tf}:---`;
-  const logOBs = (d, s) => `D${(d||[]).filter(z=>!z.mitigated).length}/S${(s||[]).filter(z=>!z.mitigated).length}`;
-  const chochStr = data.choch ? `CHoCH${data.choch.side==='BUY'?'↑':'↓'}` : '---';
-  const bosStr   = data.bos   ? `BOS${data.bos.side==='BUY'?'↑':'↓'}` : '---';
+  // Log de estructura — sin generar señales
+  const logS = (tf,s) => s?.trend ? `${tf}:${s.trend.slice(0,4)}(${s.strength||0}%)` : `${tf}:---`;
   console.log(
-    `📈 [${config.shortName}] ${logStruct('H1',data.structureH1)} | ${logStruct('M15',data.structureM15)} | ${logStruct('M5',data.structure)}` +
-    ` | OBs:${logOBs(data.demandZones,data.supplyZones)} | ${chochStr} ${bosStr}` +
-    ` | Price:${(data.price||0).toFixed(config.decimals)}` +
-    ` | ${data.premiumDiscount||'EQ'}`
+    `📈 [${config.shortName}] ${logS('H1',data.structureH1)} | ${logS('M15',data.structureM15)} | ${logS('M5',data.structure)}` +
+    ` | OBs:D${(data.demandZones||[]).filter(z=>!z.mitigated).length}/S${(data.supplyZones||[]).filter(z=>!z.mitigated).length}` +
+    ` | Price:${(data.price||0).toFixed(config.decimals)} | ${data.premiumDiscount||'EQ'}`
   );
-  
-  // V100 ha mostrado 27% WR en 200 ops — requiere score más alto
-  const assetMinScoreOverride = symbol === '1HZ100V' ? 92 : null;
 
-  // ═══════════════════════════════════════════
-  // FILTRO 2: Verificar horas de trading
-  // Sesión diurna:   7:00 AM - 1:00 PM Colombia
-  // Sesión nocturna: 8:30 PM - 1:00 AM Colombia
-  // ═══════════════════════════════════════════
-  if (!isInTradingHours()) {
-    // Fuera de horario — analizar sin generar señales
-    const signal = await SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
-    data.signal = signal;
-    return;
-  }
-  
-  // ═══════════════════════════════════════════
-  // FILTRO 3: Cooldown post-señal (3-5 minutos según activo)
-  // ═══════════════════════════════════════════
-  const isBoomCrash = config.type === 'boom' || config.type === 'crash';
-  const cooldownTime = isBoomCrash 
-    ? SIGNAL_CONFIG.POST_SIGNAL_COOLDOWN_BOOM_CRASH 
-    : SIGNAL_CONFIG.POST_SIGNAL_COOLDOWN;
-  
-  // BUG 2 FIX: usar max(lastSignalClosed, lastSignalTime) para cooldown
-  // El bug: solo miraba lastSignalClosed (=0 mientras señal abierta)
-  // lastSignalTime se setea al EMITIR → cooldown correcto
-  const lastEmission = Math.max(data.lastSignalClosed || 0, data.lastSignalTime || 0);
-  if (lastEmission && now - lastEmission < cooldownTime) {
-    const signal = await SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
-    data.signal = { ...signal, action: 'WAIT', model: 'COOLDOWN',
-      reason: `Cooldown (${Math.ceil((cooldownTime-(now-lastEmission))/60000)}min restantes)` };
-    return;
-  }
-  
-  // ═══════════════════════════════════════════
-  // FILTRO 4: Máximo de señales pendientes
-  // FIX: verificar ANTES del análisis SMC para no desperdiciar CPU
-  // FIX: añadir límite por par (1 señal por activo)
-  // ═══════════════════════════════════════════
-  const totalPending    = signalHistory.filter(s => s.status === 'PENDING').length;
-  const pendingThisAsset = signalHistory.filter(s => s.status === 'PENDING' && s.symbol === symbol).length;
-
-  // Bloquear si hay señal abierta en ESTE par
-  if (pendingThisAsset >= SIGNAL_CONFIG.MAX_PENDING_PER_ASSET) {
-    console.log(`⏸️ [${config.shortName}] Ya tiene señal abierta (${pendingThisAsset}/${SIGNAL_CONFIG.MAX_PENDING_PER_ASSET})`);
-    // Aún analizar para mantener estructura y zonas frescas en el frontend
-    const signal = await SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
-    data.signal = signal;
-    return;
-  }
-
-  // Bloquear si se alcanzó el límite global
-  if (totalPending >= SIGNAL_CONFIG.MAX_PENDING_TOTAL) {
-    console.log(`⏸️ [${config.shortName}] Límite global alcanzado (${totalPending}/${SIGNAL_CONFIG.MAX_PENDING_TOTAL})`);
-    const signal = await SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
-    data.signal = signal;
-    return;
-  }
-  
-  // Ejecutar análisis SMC (ASYNC para validación IA)
-  const signal = await SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
-  data.signal = signal;
-
-  // Filtro de score mínimo por activo (basado en datos reales de 200 ops)
-  // V100: 27% WR histórico → solo señales de máxima calidad (92%)
-  if (signal && signal.action !== 'WAIT') {
-    const assetMin = symbol === '1HZ100V' ? 92 : (SIGNAL_CONFIG.MIN_SCORE || 88);
-    if (signal.score < assetMin) {
-      console.log(`📉 [${config.shortName}] Score ${signal.score}% < ${assetMin}% (filtro activo) → WAIT`);
-      data.signal = { ...signal, action: 'WAIT', reason: `Score ${signal.score}% insuficiente` };
-    }
-  }
-
-  // ── Calcular pasos de M1_PRECISION para visualización en tiempo real ──
-  // Esto muestra en el gráfico M1 qué condiciones están cumplidas ahora mismo
-  {
-    const tH1  = data.structureH1?.trend;
-    const tM15 = data.structureM15?.trend;
-    const tM5  = data.structure?.trend;
-    const h1ok  = tH1  !== 'NEUTRAL' && tH1  !== 'LOADING';
-    const m15ok = tM15 !== 'NEUTRAL' && tM15 !== 'LOADING' && tM15 === tH1;
-    const m5ok  = tM5  !== 'NEUTRAL' && tM5  !== 'LOADING' && tM5  === tH1;
-    // Zona M15: hay demand/supply zones presentes
-    const zoneok = (data.demandZones?.length > 0 || data.supplyZones?.length > 0);
-    // M1 confirmación: última vela M1 muestra patrón de entrada
-    let m1conf = false;
-    const m1 = data.candlesM1 || [];
-    if (m1.length >= 3) {
-      const last  = m1[m1.length-1];
-      const prev  = m1[m1.length-2];
-      const prev2 = m1[m1.length-3];
-      const isBuy = tH1 === 'BULLISH';
-      const engulfBull = isBuy  && prev2.close < prev2.open && prev.close > prev.open && prev.close > prev2.open;
-      const engulfBear = !isBuy && prev2.close > prev2.open && prev.close < prev.open && prev.close < prev2.open;
-      const avgM1 = SMC.getAvgRange(m1.slice(-20));
-      const wickBull = isBuy  && (last.low < Math.min(last.open,last.close) - avgM1*0.5) && last.close > last.open;
-      const wickBear = !isBuy && (last.high > Math.max(last.open,last.close) + avgM1*0.5) && last.close < last.open;
-      m1conf = engulfBull || engulfBear || wickBull || wickBear;
-    }
-    data.m1Steps = { h1ok, m15ok, m5ok, zoneok, m1conf,
-      direction: tH1, readyCount: [h1ok,m15ok,m5ok,zoneok,m1conf].filter(Boolean).length };
-  }
-  
-  // 🔍 LOG SIEMPRE - Ver qué devuelve el análisis
-  console.log(`🔎 [${config.shortName}] Resultado: ${signal.action} | ${signal.model} | Score: ${signal.score}`);
-  
-  // Ya tiene señal activa?
-  // Anti-revenge trading check
-  const planCheck = TradingJournal.checkPlanAllowed(symbol);
-  if (!planCheck.allowed) {
-    console.log(`🛑 [${config.shortName}] PLAN: ${planCheck.reason}`);
-    return;
-  }
-
-  if (data.lockedSignal) {
-    console.log(`🔒 [${config.shortName}] Bloqueado: Ya tiene señal activa #${data.lockedSignal.id}`);
-    return;
-  }
-  
-  // ═══════════════════════════════════════════
-  // FILTRO 5: Score mínimo
-  // ═══════════════════════════════════════════
-  if (signal.action === 'WAIT' || signal.action === 'LOADING') {
-    // No loguear WAIT porque sería spam
-    return;
-  }
-  
-  console.log(`📈 [${config.shortName}] Señal activa detectada: ${signal.action} ${signal.model} (${signal.score}pts)`);
-  
-  // ═══════════════════════════════════════════
-  // FILTRO 5: Score mínimo (más estricto para Boom/Crash)
-  // ═══════════════════════════════════════════
-  const isBoomCrashAsset = config.type === 'boom' || config.type === 'crash';
-  const minScoreRequired = isBoomCrashAsset 
-    ? SIGNAL_CONFIG.MIN_SCORE_BOOM_CRASH 
-    : SIGNAL_CONFIG.MIN_SCORE;
-  
-  if (signal.score < minScoreRequired) {
-    console.log(`⚠️ [${config.shortName}] RECHAZADA: Score ${signal.score} < ${minScoreRequired} mínimo${isBoomCrashAsset ? ' (Boom/Crash requiere H1+OB)' : ''}`);
-    return;
-  }
-  
-  console.log(`✅ [${config.shortName}] Pasó filtro de score: ${signal.score} >= ${minScoreRequired}`);
-  
-  // ═══════════════════════════════════════════
-  // FILTRO 6: Requiere MTF Confluence (excepto modelos específicos)
-  // ═══════════════════════════════════════════
-  if (SIGNAL_CONFIG.REQUIRE_MTF_CONFLUENCE) {
-    const requiresMTF = !SIGNAL_CONFIG.MODELS_WITHOUT_MTF.includes(signal.model);
-    if (requiresMTF && !data.mtfConfluence) {
-      console.log(`⚠️ [${config.shortName}] Señal ${signal.model} rechazada - Requiere MTF (M5=${data.structure?.trend} H1=${data.structureH1?.trend})`);
-      return;
-    }
-  }
-  
-  // ═══════════════════════════════════════════
-  // FILTRO 7: Verificar que no haya señal pendiente
-  // ═══════════════════════════════════════════
-  const hasPending = signalHistory.some(s => s.symbol === symbol && s.status === 'PENDING');
-  if (hasPending) {
-    console.log(`⚠️ [${config.shortName}] Señal ${signal.model} rechazada - Ya hay señal pendiente`);
-    return;
-  }
-
-  // ── LÍMITE DIARIO (informativo, sin bloqueo) ──
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-  const todaySignals = signalHistory.filter(s =>
-    s.symbol === symbol &&
-    new Date(s.timestamp) >= todayStart
-  ).length;
-  const maxDaily = SIGNAL_CONFIG.MAX_DAILY_SIGNALS_PER_ASSET;
-  if (maxDaily > 0 && todaySignals >= maxDaily) {
-    console.log(`⏸️ [${config.shortName}] Límite diario alcanzado (${todaySignals}/${maxDaily}) — No más señales hoy`);
-    return;
-  }
-  if (todaySignals > 0) {
-    console.log(`📊 [${config.shortName}] Señales hoy: ${todaySignals} (sin límite activo)`);
-  }
-  
-  // ═══════════════════════════════════════════════════════════════
-  // FILTRO CRÍTICO: Validar que el precio sigue cerca de la entrada
-  // Si el precio ya se movió más de 0.5 riesgo desde la entrada → RECHAZAR
-  // Esto evita entrar en señales "vencidas" donde el movimiento ya ocurrió
-  // ═══════════════════════════════════════════════════════════════
-  const currentPrice = data.price;
-  const signalEntry  = signal.entry;
-  const signalRisk   = Math.abs(signalEntry - signal.stop);
-  const priceDistance = Math.abs(currentPrice - signalEntry);
-
-  // ── Minimum R:R check: TP1 must be at least 1.5x the risk ──
-  const tp1Distance = Math.abs(signal.tp1 - signalEntry);
-  if (signalRisk > 0 && tp1Distance < signalRisk * 1.4) {
-    console.log(`⛔ [${config.shortName}] R:R insuficiente: TP1=${tp1Distance.toFixed(config.decimals)} < 1.4 × SL=${signalRisk.toFixed(config.decimals)}`);
-    return;
-  }
-
-  if (signalRisk > 0 && priceDistance > signalRisk * 0.6) {
-    const direction = signal.action === 'LONG'
-      ? (currentPrice > signalEntry ? 'precio ya subió past entry' : 'precio cayó demasiado')
-      : (currentPrice < signalEntry ? 'precio ya bajó past entry' : 'precio subió demasiado');
-    console.log(`⛔ [${config.shortName}] SEÑAL VENCIDA — ${direction}: price=${currentPrice.toFixed(config.decimals)} entry=${signalEntry} dist=${priceDistance.toFixed(config.decimals)} > ${(signalRisk*0.6).toFixed(config.decimals)}`);
-    return;
-  }
-
-  // ═══════════════════════════════════════════
-  // GENERAR SEÑAL (pasó todos los filtros)
-  // ═══════════════════════════════════════════
-  const newSignal = {
-    id: signalIdCounter++,
-    symbol,
-    assetName: config.name,
-    emoji: config.emoji,
-    action: signal.action,
-    model: signal.model,
-    score: signal.score,
-    entry: signal.entry,
-    stop: signal.stop,
-    tp1: signal.tp1,
-    tp2: signal.tp2,
-    tp3: signal.tp3,
-    tp1Hit: false,
-    tp2Hit: false,
-    tp3Hit: false,
-    trailingTP1: false,
-    trailingTP2: false,
-    trailingActive: false,
-    originalStop: signal.stop,
-    status: 'PENDING',
-    timestamp: new Date().toISOString(),
-    reason: signal.reason,
-    // Alertas de estructura
-    structureAlert: null,
-    moderateAlertSent: false,
-    criticalAlertSent: false,
-    directionAlertSent: false,
-    // Campos de contexto v13.2
-    mtfConfluence: data.mtfConfluence,
-    structureH1: data.structureH1?.trend,
-    structureM5: data.structure?.trend,
-    premiumDiscount: data.premiumDiscount
-  };
-  
-  signalHistory.unshift(newSignal);
-  data.lockedSignal = { ...newSignal };
-  data.lastSignalTime = now;
-  TradingJournal.logOpen(newSignal); // Registrar en bitácora
-  stats.total++;
-  stats.pending++;
-
-  // PERSISTENCIA: guardar señal nueva en Supabase inmediatamente
-  saveSignalToSupabase(newSignal).catch(() => {});
-
-  // FIX: límite de señales en memoria + limpiar huérfanas (PENDING > 4h = cerradas sin notificar)
-  const fourHours = 4 * 60 * 60 * 1000;
-  signalHistory = signalHistory.map(s => {
-    if (s.status === 'PENDING' && Date.now() - s.timestamp > fourHours) {
-      return { ...s, status: 'EXPIRED', closeReason: 'Auto-cerrada por timeout' };
-    }
-    return s;
-  });
-  if (signalHistory.length > 200) signalHistory = signalHistory.slice(0, 200);
-  
-  console.log(`💎 SEÑAL #${newSignal.id} | ${config.shortName} | ${signal.action} | ${signal.model} | ${signal.score}%`);
-  console.log(`   H1: ${data.structureH1?.trend} | M15: ${data.structureM15?.trend} | M5: ${data.structure?.trend} | PD: ${data.premiumDiscount}`);
-  console.log(`   Escenario: ${signal.reason}`);
-  
-  // Enviar a Telegram
-  sendTelegramSignal(newSignal);
-  
-  // Enviar Push Notifications a usuarios según su plan
-  if (pushManager) {
-    pushManager.broadcastSignal(newSignal).catch(err => {
-      console.error('Error en push broadcast:', err);
-    });
-  }
+  // Solo detección de zonas SMC — sin señales automáticas, sin Telegram, sin BD
+  await SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
 }
+
 
 // =============================================
 // API ENDPOINTS - BÁSICOS
@@ -6478,13 +6101,60 @@ ZONAS_IA:{"keyLevels":[{"price":NUMERO,"type":"resistance","label":"TEXTO CORTO"
       ]
     });
 
+    let fullText = '';
+
     for await (const chunk of stream) {
       const delta = chunk.choices[0]?.delta?.content;
       if (delta) {
+        fullText += delta;
         res.write(`data: ${JSON.stringify({ type: 'text', text: delta })}\n\n`);
       }
       if (chunk.choices[0]?.finish_reason === 'stop') {
         res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+
+        // ── Parse ZONAS_IA → enviar Telegram si hay trade válido ──
+        try {
+          const zonaIdx = fullText.indexOf('ZONAS_IA:');
+          if (zonaIdx !== -1) {
+            let depth = 0, si = zonaIdx + 9, ei = -1;
+            for (let i = si; i < fullText.length; i++) {
+              if (fullText[i] === '{') depth++;
+              else if (fullText[i] === '}') { depth--; if (depth === 0) { ei = i + 1; break; } }
+            }
+            if (ei > si) {
+              const parsed = JSON.parse(fullText.slice(si, ei));
+              const tr = parsed.trade;
+              if (tr && tr.entry && tr.sl && tr.tp1) {
+                const isBuy = tr.side === 'BUY';
+                const entryN = parseFloat(tr.entry);
+                const slN    = parseFloat(tr.sl);
+                const tp1N   = parseFloat(tr.tp1);
+                const dirOk  = isBuy ? (slN < entryN && tp1N > entryN) : (slN > entryN && tp1N < entryN);
+                if (dirOk) {
+                  const sesgMatch  = fullText.match(/SESGO[^\n]*\n([^\n]{10,120})/i);
+                  const flujoMatch = fullText.match(/FLUJO AHORA[^\n]*\n([^\n]{10,120})/i);
+                  const s1Match    = fullText.match(/ESCENARIO 1[^\n]*\n([^\n]{10,100})/i);
+                  const s2Match    = fullText.match(/ESCENARIO 2[^\n]*\n([^\n]{10,100})/i);
+                  await sendTelegramIA(config.name, {
+                    side: tr.side, entry: tr.entry, sl: tr.sl, tp1: tr.tp1, tp2: tr.tp2 || null,
+                    label: tr.label || '',
+                    sesion:     mktCtx.sesionActual,
+                    sesgo:      sesgMatch  ? sesgMatch[1].replace(/\*\*/g,'').trim()  : '',
+                    flujo:      flujoMatch ? flujoMatch[1].replace(/\*\*/g,'').trim() : '',
+                    escenario1: s1Match    ? s1Match[1].replace(/\*\*/g,'').trim()    : '',
+                    escenario2: s2Match    ? s2Match[1].replace(/\*\*/g,'').trim()    : '',
+                  });
+                } else {
+                  console.log(`⚠️ [IA] Dirección inválida (${tr.side} entry:${entryN} sl:${slN}) — sin Telegram`);
+                }
+              } else {
+                console.log('ℹ️ [IA] Sin entrada concreta en este análisis — sin Telegram');
+              }
+            }
+          }
+        } catch(pe) {
+          console.log('⚠️ [IA] Error parseando ZONAS_IA:', pe.message);
+        }
       }
     }
 
