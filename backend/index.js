@@ -32,8 +32,6 @@ import OpenAI from 'openai';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import ReportsManager from './reports-manager.js';
-import PushNotificationManager from './push-notifications.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -711,6 +709,23 @@ if (SUPABASE_URL && SUPABASE_SERVICE_KEY) {
 }
 
 // Inicializar módulo de reportes
+// ── Stubs inline — archivos externos eliminados ──
+class ReportsManager {
+  constructor() {}
+  async recordTrade() { return null }
+  async getUserSummary() { return {} }
+  async getReport() { return {} }
+  async getEquityCurve() { return [] }
+}
+class PushNotificationManager {
+  constructor() {}
+  getPublicKey() { return '' }
+  async broadcastSignal() {}
+  async saveSubscription() { return { success: false } }
+  async removeSubscription() { return { success: false } }
+  async getStats() { return {} }
+}
+
 let reportsManager = null;
 if (supabase) {
   reportsManager = new ReportsManager(supabase);
