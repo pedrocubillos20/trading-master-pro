@@ -32,8 +32,6 @@ import OpenAI from 'openai';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import ReportsManager from './reports-manager.js';
-import PushNotificationManager from './push-notifications.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
