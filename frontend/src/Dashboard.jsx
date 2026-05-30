@@ -1293,8 +1293,8 @@ export default function Dashboard({user,subscription,onLogout}){
                         {aiZones.trade.label}
                       </div>
                     )}
-                  </div>{/* end inner padding div */}
-                  </div>{/* end card */}
+                  </div>
+                  </div>
                 )}
 
                 {/* ── Show card button when hidden ── */}
