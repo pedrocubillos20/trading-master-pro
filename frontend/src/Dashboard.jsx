@@ -489,7 +489,7 @@ function StructTag({label,trend}){
 /* ═══════════════════════════════════════════════════════════════
    AI ANALYSIS PANEL — El corazón del nuevo sistema
    ═══════════════════════════════════════════════════════════════ */
-function AIAnalysisPanel({ symbol, onZonesDetected, onActivate }) {
+function AIAnalysisPanel({ symbol, onZonesDetected, onActivate, onReset }) {
   const [status, setStatus] = useState('idle') // idle | loading | streaming | done | error
   const [text, setText]     = useState('')
   const [dots, setDots]     = useState(0)
@@ -648,9 +648,8 @@ function AIAnalysisPanel({ symbol, onZonesDetected, onActivate }) {
     setStatus('idle')
     setText('')
     onZonesDetected(null)
-    // Note: onActivate resets via parent's symbol-change effect
-    // Caller can call setAiActive(false) if needed
-  },[onZonesDetected])
+    onReset?.()
+  },[onZonesDetected, onReset])
 
   return (
     <div style={{display:'flex',flexDirection:'column',height:'100%',gap:0}}>
@@ -805,12 +804,19 @@ export default function Dashboard({user,subscription,onLogout}){
   const[panelW,   setPanelW]  =useState(340)  // AI panel width
   const[alerts,   setAlerts]  =useState([])   // structure alerts
   const[tradeHit, setTradeHit]=useState(null) // 'entry'|'sl'|'tp1'|'tp2' when price hits
+  const[entryHit, setEntryHit]=useState(false) // true once price has touched entry zone
+  const[cardHidden, setCardHidden]=useState(false) // hide trade card
+  const[cardPos, setCardPos]=useState({x:8,y:8})   // trade card position
+  const[dragging, setDragging]=useState(null)       // drag state
 
   /* Fetch data */
   // Reset AI state when switching asset
   useEffect(()=>{
     setAiZones(null)
     setAiActive(false)
+    setTradeHit(null)
+    setEntryHit(false)
+    setCardHidden(false)
   },[symbol])
 
   const fetchDash=useCallback(async()=>{
@@ -920,21 +926,28 @@ export default function Dashboard({user,subscription,onLogout}){
     const tr=aiZones?.trade
     if(tr?.entry){
       const isBuy=tr.side==='BUY'
-      if(Math.abs(price-tr.entry)<(Math.abs(tr.tp1-tr.entry)*0.05)){
+      const entryDist=Math.abs(price-tr.entry)
+      const entryRange=Math.abs(tr.tp1-tr.entry)
+      // STEP 1: Detect entry zone touch first
+      if(entryDist<entryRange*0.06){
+        setEntryHit(true)
         setTradeHit('entry')
         newAlerts.push({id:'trade-entry',msg:'🎯 Precio en ZONA DE ENTRADA — Confirmar BOS/CHoCH en M1',color:'#f9ca24',ts:Date.now()})
       }
-      if(tr.tp1&&Math.abs(price-tr.tp1)<(Math.abs(tr.tp1-tr.entry)*0.03)){
-        setTradeHit('tp1')
-        newAlerts.push({id:'trade-tp1',msg:'✅ TP1 ALCANZADO — Asegurar parcial',color:'#2ed573',ts:Date.now()})
-      }
-      if(tr.tp2&&Math.abs(price-tr.tp2)<(Math.abs(tr.tp2-tr.entry)*0.03)){
-        setTradeHit('tp2')
-        newAlerts.push({id:'trade-tp2',msg:'🏆 TP2 ALCANZADO — Objetivo completo',color:'#00d4aa',ts:Date.now()})
-      }
-      if(Math.abs(price-tr.sl)<(Math.abs(tr.entry-tr.sl)*0.03)){
-        setTradeHit('sl')
-        newAlerts.push({id:'trade-sl',msg:'⛔ STOP LOSS TOCADO — Salir de la operación',color:'#ff4757',ts:Date.now()})
+      // STEP 2: TP/SL only fire AFTER entry was touched
+      if(entryHit){
+        if(tr.tp1&&Math.abs(price-tr.tp1)<(entryRange*0.03)){
+          setTradeHit('tp1')
+          newAlerts.push({id:'trade-tp1',msg:'✅ TP1 ALCANZADO — Asegurar parcial',color:'#2ed573',ts:Date.now()})
+        }
+        if(tr.tp2&&Math.abs(price-tr.tp2)<(Math.abs(tr.tp2-tr.entry)*0.03)){
+          setTradeHit('tp2')
+          newAlerts.push({id:'trade-tp2',msg:'🏆 TP2 ALCANZADO — Objetivo completo',color:'#00d4aa',ts:Date.now()})
+        }
+        if(Math.abs(price-tr.sl)<(Math.abs(tr.entry-tr.sl)*0.04)){
+          setTradeHit('sl')
+          newAlerts.push({id:'trade-sl',msg:'⛔ STOP LOSS TOCADO — Salir de la operación',color:'#ff4757',ts:Date.now()})
+        }
       }
     }
 
@@ -1182,13 +1195,33 @@ export default function Dashboard({user,subscription,onLogout}){
                   </div>
                 )}
 
-                {/* ── AI Trade Card (when trade active) ── */}
-                {aiActive&&aiZones?.trade&&(
-                  <div style={{position:'absolute',top:8,right:8,
-                    background:'rgba(13,17,23,.92)',
-                    border:`1px solid ${aiZones.trade.side==='BUY'?'#2ed573':'#ff4757'}`,
-                    borderRadius:8,padding:'8px 12px',zIndex:9,minWidth:160,
-                    boxShadow:`0 0 12px ${aiZones.trade.side==='BUY'?'#2ed57322':'#ff475722'}`}}>
+                {/* ── AI Trade Card (draggable, hideable) ── */}
+                {aiActive&&aiZones?.trade&&!cardHidden&&(
+                  <div
+                    style={{position:'absolute',
+                      top:cardPos.y,right:'auto',left:cardPos.x,
+                      background:'rgba(13,17,23,.95)',
+                      border:`1px solid ${aiZones.trade.side==='BUY'?'#2ed573':'#ff4757'}`,
+                      borderRadius:8,zIndex:20,minWidth:165,
+                      boxShadow:`0 4px 20px rgba(0,0,0,.6)`,
+                      cursor:'grab',userSelect:'none'}}
+                    onMouseDown={e=>{
+                      const startX=e.clientX-cardPos.x
+                      const startY=e.clientY-cardPos.y
+                      const onMove=ev=>setCardPos({x:ev.clientX-startX,y:ev.clientY-startY})
+                      const onUp=()=>{window.removeEventListener('mousemove',onMove);window.removeEventListener('mouseup',onUp)}
+                      window.addEventListener('mousemove',onMove)
+                      window.addEventListener('mouseup',onUp)
+                    }}>
+                  {/* Header row with hide button */}
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',
+                    padding:'6px 10px 4px',borderBottom:'1px solid #30363d33',cursor:'grab'}}>
+                    <span style={{fontSize:10,color:'#7d8590',fontWeight:600}}>⠿ Trade IA</span>
+                    <button onClick={e=>{e.stopPropagation();setCardHidden(true)}}
+                      style={{background:'none',border:'none',color:'#7d8590',cursor:'pointer',
+                        fontSize:14,lineHeight:1,padding:'0 2px'}} title="Ocultar">×</button>
+                  </div>
+                  <div style={{padding:'6px 12px 10px'}}>
                     <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:6}}>
                       <span style={{fontSize:16}}>{aiZones.trade.side==='BUY'?'▲':'▼'}</span>
                       <span style={{fontWeight:800,fontSize:13,
@@ -1230,12 +1263,28 @@ export default function Dashboard({user,subscription,onLogout}){
                         {aiZones.trade.label}
                       </div>
                     )}
-                  </div>
+                  </div>{/* end inner padding div */}
+                  </div>{/* end card */}
+                )}
+
+                {/* ── Show card button when hidden ── */}
+                {aiActive&&aiZones?.trade&&cardHidden&&(
+                  <button onClick={()=>setCardHidden(false)}
+                    style={{position:'absolute',top:8,right:8,zIndex:20,
+                      background:'rgba(13,17,23,.92)',
+                      border:`1px solid ${aiZones.trade.side==='BUY'?'#2ed573':'#ff4757'}`,
+                      borderRadius:6,padding:'4px 10px',cursor:'pointer',
+                      color:aiZones.trade.side==='BUY'?'#2ed573':'#ff4757',
+                      fontSize:11,fontWeight:700}}>
+                    {aiZones.trade.side==='BUY'?'▲':'▼'} Trade IA
+                  </button>
                 )}
 
                 {/* ── Scenarios mini card ── */}
                 {aiActive&&aiZones?.scenarios&&(
-                  <div style={{position:'absolute',top: aiZones?.trade ? 220 : 8, right:8,
+                  <div style={{position:'absolute',
+                    top: cardHidden ? 8 : cardPos.y+210,
+                    left: cardHidden ? 'auto' : cardPos.x, right: cardHidden ? 8 : 'auto',
                     background:'rgba(13,17,23,.92)',
                     border:'1px solid #30363d',
                     borderRadius:8,padding:'8px 12px',zIndex:8,minWidth:160}}>
@@ -1347,6 +1396,14 @@ export default function Dashboard({user,subscription,onLogout}){
                 symbol={symbol}
                 onZonesDetected={setAiZones}
                 onActivate={()=>setAiActive(true)}
+                onReset={()=>{
+                  setAiActive(false)
+                  setTradeHit(null)
+                  setEntryHit(false)
+                  setAlerts([])
+                  setCardHidden(false)
+                  setCardPos({x:8,y:8})
+                }}
               />
             </div>
           </div>
