@@ -5217,6 +5217,12 @@ async function analyzeAsset(symbol) {
 
   // Solo detección de zonas SMC — sin señales automáticas, sin Telegram, sin BD
   await SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
+
+  // Calcular y guardar avgRange para que la IA lo use en el SL
+  if (data.candles.length >= 20) {
+    const recent = data.candles.slice(-20);
+    data.avgRange = recent.reduce((sum, c) => sum + Math.abs(c.high - c.low), 0) / recent.length;
+  }
 }
 
 
@@ -5945,10 +5951,14 @@ REGLAS DE DIRECCIÓN (CRÍTICAS — nunca violar):
 - R:R mínimo 1:1.5 — si no se cumple, NO hay trade
 - Verificar SIEMPRE antes de escribir el JSON: ¿Los TP están en la dirección correcta?
 
-REGLAS DE SL INSTITUCIONAL:
-- SL va debajo del EXTREMO del OB/FVG (no del mid) — debe sobrevivir un barrido
-- En activos sintéticos (Step Index, V100): SL mínimo 1.5x el rango promedio de vela
-- Doble barrido = señal de acumulación real — el segundo trade lleva SL más amplio
+REGLAS DE SL INSTITUCIONAL — CRÍTICO:
+- SL va debajo/encima del EXTREMO COMPLETO del OB/FVG, nunca del mid
+- REGLA DE ORO: El SL mínimo obligatorio está en el contexto (campo "SL MÍNIMO OBLIGATORIO"). Si el extremo del OB no da ese espacio, amplía el SL hasta cumplirlo
+- V100 (Volatility 100): SL mínimo = 3x avgRange. Activo extremadamente volátil con barridos frecuentes y agresivos. Un SL de 0.64 puntos en V100 ES INVÁLIDO — siempre será barrido
+- Step Index: SL mínimo = 2x avgRange. Barridos regulares antes del movimiento real
+- Oro (XAU/USD): SL mínimo = 2x avgRange. Muy manipulado por el institucional
+- Doble barrido = señal de acumulación real — el segundo trade lleva SL aún más amplio
+- NUNCA un SL de menos de 1 punto en V100 o menos de 5 puntos en Step
 
 TIMING INSTITUCIONAL — PLAN DE TRADING:
 Indica siempre el timing óptimo del setup:
@@ -6012,9 +6022,11 @@ VALIDACIÓN OBLIGATORIA DEL JSON antes de escribirlo:
 □ ¿Los precios de activación de escenarios son futuros (aún no tocados)? → Si no, CORREGIR
 
 EJEMPLOS OBLIGATORIOS DE REFERENCIA:
-BUY correcto:  entry=7970.25, sl=7969.50 (DEBAJO), tp1=7972.05 (ARRIBA), tp2=7975.50 (MÁS ARRIBA)
-SELL correcto: entry=7994.05, sl=7996.00 (ENCIMA), tp1=7988.20 (ABAJO), tp2=7984.45 (MÁS ABAJO)
-BUY INCORRECTO (NUNCA): entry=7970.25, sl=7970.40 ← SL ENCIMA de entry en BUY = ERROR GRAVE
+BUY correcto V100:  entry=805.33, sl=803.50 (DEBAJO — mínimo 1.83 pts = 3x avgRange 0.61), tp1=808.56, tp2=810.80
+SELL correcto V100: entry=812.23, sl=814.50 (ENCIMA — mínimo 2.27 pts), tp1=808.56, tp2=806.00
+BUY correcto Step:  entry=7970.25, sl=7966.00 (DEBAJO — mínimo 4+ pts), tp1=7975.50, tp2=7980.00
+BUY INCORRECTO (NUNCA): entry=805.33, sl=804.69 ← Solo 0.64 pts en V100 = SIEMPRE BARRIDO
+BUY INCORRECTO (NUNCA): entry=7970.25, sl=7969.50 ← Solo 0.75 pts en Step = SIEMPRE BARRIDO
 
 IMPORTANTE: El JSON debe escribirse en una sola línea sin bloques de código markdown (sin \`\`\`json).
 Escribe directamente: ZONAS_IA:{...}`;
@@ -6031,6 +6043,12 @@ Día de trading: ${mktCtx.diaTrading ? 'Sí' : 'FIN DE SEMANA — liquidez reduc
 ${config.name} (${symbol})
 Precio actual: ${price?.toFixed(dec)}
 Tipo: ${config.type === 'standard' ? 'Par estándar' : config.type || 'Sintético Deriv'}
+Rango promedio vela M5 (avgRange): ${data.avgRange ? data.avgRange.toFixed(dec) : 'N/A'}
+SL MÍNIMO OBLIGATORIO para este activo: ${
+  symbol === '1HZ100V' ? (data.avgRange ? (data.avgRange * 3).toFixed(dec) + ' (3x avgRange — V100 muy volátil)' : '~3.00')
+  : symbol === 'stpRNG' ? (data.avgRange ? (data.avgRange * 2).toFixed(dec) + ' (2x avgRange — Step Index)' : '~8.00')
+  : (data.avgRange ? (data.avgRange * 2).toFixed(dec) + ' (2x avgRange)' : 'calcular')
+} puntos desde la entrada
 
 ━━━ CONTEXTO MACRO ━━━
 ${mktCtx.newsContext}

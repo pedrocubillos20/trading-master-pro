@@ -123,8 +123,12 @@ function drawChart(canvas, state) {
         ctx.setLineDash([])
       }
       if(!isMit){
-        ctx.fillStyle=stroke;ctx.font=`${isStruc?'bold ':''  }9px system-ui`;ctx.textAlign='left'
-        ctx.fillText(isStruc?label+' ★':label,x1+4,y1+11)
+        // Only draw zone label if zone is tall enough to show text
+        const zoneH = Math.abs(y2-y1)
+        if(zoneH >= 10){
+          ctx.fillStyle=stroke;ctx.font=`${isStruc?'bold ':''  }9px system-ui`;ctx.textAlign='left'
+          ctx.fillText(isStruc?label+' ★':label,x1+4,y1+11)
+        }
         if(x2>=ML+CW-60){
           ctx.fillStyle=stroke+'cc';ctx.font='8px system-ui'
           ctx.fillText(z.high.toFixed(2),ML+CW+2,y1+4)
@@ -145,11 +149,14 @@ function drawChart(canvas, state) {
     const col=z.side==='BUY'?'rgba(96,165,250,.15)':'rgba(251,146,60,.15)'
     const colS=z.side==='BUY'?C.blue:C.orange
     ctx.fillStyle=col;ctx.fillRect(x1,y1,x2-x1,y2-y1)
-    ctx.strokeStyle=colS+'66';ctx.lineWidth=1;ctx.setLineDash([3,3])
+    ctx.strokeStyle=colS+'44';ctx.lineWidth=0.8;ctx.setLineDash([3,4])
     ctx.strokeRect(x1,y1,x2-x1,y2-y1)
     ctx.setLineDash([])
-    ctx.fillStyle=colS;ctx.font='8px system-ui';ctx.textAlign='left'
-    ctx.fillText('FVG',x1+3,y1+10)
+    // FVG label only if zone visible (height > 6px)
+    if(Math.abs(y2-y1)>=6){
+      ctx.fillStyle=colS+'aa';ctx.font='7px system-ui';ctx.textAlign='left'
+      ctx.fillText('FVG',x1+3,y1+9)
+    }
     ctx.fillText(z.high.toFixed(2),ML+CW+2,y1+4)
     ctx.fillText(z.low.toFixed(2),ML+CW+2,y2+4)
   })
@@ -638,6 +645,15 @@ function AIAnalysisPanel({ symbol, onZonesDetected, onActivate, onReset }) {
                         console.warn('IA: SL below entry on SELL — auto-fixing')
                         parsed.trade.sl=+(entryNum+(Math.abs(tp1Num-entryNum)*0.6)).toFixed(2)
                       }
+                      // Fix SL if too tight (less than 0.3% of price)
+                      const slDist=Math.abs(parseFloat(parsed.trade.sl)-entryNum)
+                      const minSL=entryNum*0.003 // 0.3% minimum
+                      if(slDist < minSL){
+                        console.warn(`IA: SL too tight (${slDist.toFixed(2)}) — expanding to 0.3%`)
+                        parsed.trade.sl=isBuy
+                          ? +(entryNum - minSL).toFixed(2)
+                          : +(entryNum + minSL).toFixed(2)
+                      }
                       // Fix TP direction if wrong
                       if(isBuy && tp1Num<=entryNum){
                         console.warn('IA: TP1 below entry on BUY — swapping with SL')
@@ -786,14 +802,28 @@ function AIAnalysisPanel({ symbol, onZonesDetected, onActivate, onReset }) {
 
       {/* Re-analyze button */}
       {status==='done'&&(
-        <div style={{padding:'8px 12px',borderTop:`1px solid ${C.border}`,flexShrink:0}}>
-          <button onClick={activateAI}
-            style={{width:'100%',background:'rgba(0,212,170,.06)',
-              border:`1px solid ${C.tealDark}44`,
-              color:C.teal,borderRadius:6,padding:'8px',fontSize:11,fontWeight:700,cursor:'pointer',
-              letterSpacing:'.03em'}}>
-            🔄 Re-analizar mercado
-          </button>
+        <div style={{flexShrink:0}}>
+          {/* Next action guide */}
+          {window._aiTrade&&!window._entryHit&&(
+            <div style={{margin:'0 10px 8px',background:'rgba(249,202,36,.08)',
+              border:'1px solid rgba(249,202,36,.25)',borderRadius:6,padding:'8px 10px'}}>
+              <div style={{fontSize:10,fontWeight:700,color:'#f9ca24',marginBottom:4}}>
+                ⏳ QUÉ HACER AHORA
+              </div>
+              <div style={{fontSize:10,color:'#e6edf3',lineHeight:1.6}}>
+                Espera que el precio llegue a <strong style={{color:'#f9ca24'}}>{window._aiTrade?.entry}</strong>.
+                Cuando toque esa zona, ve a M1 y confirma un BOS o CHoCH alcista antes de entrar.
+              </div>
+            </div>
+          )}
+          <div style={{padding:'6px 12px 10px'}}>
+            <button onClick={activateAI}
+              style={{width:'100%',background:'rgba(0,212,170,.06)',
+                border:`1px solid ${C.tealDark}44`,
+                color:C.teal,borderRadius:6,padding:'7px',fontSize:11,fontWeight:700,cursor:'pointer'}}>
+              🔄 Re-analizar mercado
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -1020,11 +1050,14 @@ export default function Dashboard({user,subscription,onLogout}){
     const supAll = analyze[sKey]||[]
     // M1 refinement: only show unmitigated zones within current price range ±1%
     const priceRange = analyze.price ? analyze.price * 0.01 : 999
+    // M1: show only zones within ±0.8% of price (very tight for precision)
+    // M5/M15/H1: show all active zones
+    const m1Range = priceRange * 0.8
     const demZ = aiActive ? (isM1
-      ? demAll.filter(z=>!z.mitigated&&Math.abs((z.high+z.low)/2-(analyze.price||0))<priceRange*3)
+      ? demAll.filter(z=>!z.mitigated&&Math.abs((z.high+z.low)/2-(analyze.price||0))<m1Range)
       : demAll) : []
     const supZ = aiActive ? (isM1
-      ? supAll.filter(z=>!z.mitigated&&Math.abs((z.high+z.low)/2-(analyze.price||0))<priceRange*3)
+      ? supAll.filter(z=>!z.mitigated&&Math.abs((z.high+z.low)/2-(analyze.price||0))<m1Range)
       : supAll) : []
 
     drawChart(canvasRef.current,{
@@ -1245,13 +1278,28 @@ export default function Dashboard({user,subscription,onLogout}){
                     }}>
                   {/* Header row with hide button */}
                   <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',
-                    padding:'6px 10px 4px',borderBottom:'1px solid #30363d33',cursor:'grab'}}>
-                    <span style={{fontSize:10,color:'#7d8590',fontWeight:600}}>⠿ Trade IA</span>
+                    padding:'5px 8px 3px',borderBottom:'1px solid #30363d33',cursor:'grab'}}>
+                    <div style={{display:'flex',alignItems:'center',gap:5}}>
+                      <span style={{fontSize:9,color:'#7d8590'}}>⠿</span>
+                      <span style={{fontSize:10,color:'#7d8590',fontWeight:600}}>Trade IA</span>
+                      {/* Progress dots: pending → entry → tp1 → tp2 */}
+                      <div style={{display:'flex',gap:2,marginLeft:4}}>
+                        {['entry','tp1','tp2'].map((stage,i)=>{
+                          const hit = stage==='entry'?entryHit:tradeHit===stage||tradeHit===(i===1?'tp2':null)
+                          const active = tradeHit===stage||(stage==='entry'&&entryHit)
+                          return <div key={stage} style={{
+                            width:6,height:6,borderRadius:'50%',
+                            background:active?'#2ed573':entryHit&&i<(['entry','tp1','tp2'].indexOf(tradeHit)+1)?'#2ed573':'#30363d',
+                            transition:'background .3s'
+                          }}/>
+                        })}
+                      </div>
+                    </div>
                     <button onClick={e=>{e.stopPropagation();setCardHidden(true)}}
                       style={{background:'none',border:'none',color:'#7d8590',cursor:'pointer',
                         fontSize:14,lineHeight:1,padding:'0 2px'}} title="Ocultar">×</button>
                   </div>
-                  <div style={{padding:'6px 12px 10px'}}>
+                  <div style={{padding:'5px 10px 8px'}}>
                     <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:6}}>
                       <span style={{fontSize:16}}>{aiZones.trade.side==='BUY'?'▲':'▼'}</span>
                       <span style={{fontWeight:800,fontSize:13,
@@ -1293,6 +1341,7 @@ export default function Dashboard({user,subscription,onLogout}){
                         {aiZones.trade.label}
                       </div>
                     )}
+                  </div>
                   </div>
                   </div>
                 )}
