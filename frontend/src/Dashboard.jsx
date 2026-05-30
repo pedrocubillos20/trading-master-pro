@@ -535,12 +535,12 @@ function AIAnalysisPanel({ symbol, onZonesDetected, onActivate, onReset }) {
         const col = ck ? sectionColors[ck] : '#00d4aa'
         return React.createElement('div',{key:i,style:{color:col,fontWeight:700,fontSize:12,marginTop:14,marginBottom:5,paddingBottom:4,borderBottom:`1px solid ${col}33`}},text)
       }
-      if(line.startsWith('###')||line.match(/^Escenario [12]/i)) {
-        const text = line.replace(/^###+ /,'')
+      if(line.startsWith('###')||line.startsWith('Escenario 1')||line.startsWith('Escenario 2')||line.startsWith('### Escenario')) {
+        let text = line; while(text.startsWith('#')) text=text.slice(1); text=text.trimStart()
         return React.createElement('div',{key:i,style:{color:'#f9ca24',fontWeight:700,fontSize:11.5,marginTop:8,background:'rgba(249,202,36,.06)',padding:'3px 8px',borderRadius:4,borderLeft:'3px solid #f9ca24'}},text)
       }
-      if(line.match(/^  ?[-•›] /)) {
-        const clean = line.replace(/^  ?[-•›] /,'')
+      if(line.startsWith('- ')||line.startsWith('• ')||line.startsWith('› ')||line.startsWith('  - ')||line.startsWith('  • ')||line.startsWith('  › ')||line.startsWith('›- ')) {
+        const clean = line.replace('  - ','').replace('  • ','').replace('  › ','').replace('- ','').replace('• ','').replace('› ','').replace('›- ','')
         const indent = line.startsWith('  ') ? 20 : 10
         return React.createElement('div',{key:i,style:{color:'#e6edf3',fontSize:11,lineHeight:1.65,paddingLeft:indent,position:'relative',marginTop:2}},
           React.createElement('span',{style:{color:'#00d4aa',position:'absolute',left:indent-8}},'›'),
