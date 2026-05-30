@@ -485,13 +485,18 @@ function AIAnalysisPanel({ symbol, onZonesDetected, onActivate }) {
         return <div key={i} style={{color:C.text,fontSize:11,lineHeight:1.65,
           paddingLeft:indent,position:'relative',marginTop:1}}>
           <span style={{color:C.teal,position:'absolute',left:indent-8}}>›</span>
-          {line.replace(/^  ?[•\-] /,'')}
+          {(txt=>(txt.split(/(\*\*[^*]+\*\*)/).map((p,j)=>
+            p.startsWith('**')&&p.endsWith('**')
+              ?<strong key={j} style={{color:C.teal,fontWeight:700}}>{p.slice(2,-2)}</strong>
+              :p
+          )))(line.replace(/^  ?[•\-] /,''))}
         </div>
       }
-      if(line.match(/^Escenario [12]/i)){
+      if(line.match(/^###? /)||line.match(/^Escenario [12]/i)){
+        const clean=line.replace(/^###? /,'')
         return <div key={i} style={{color:C.yellow,fontWeight:700,fontSize:11.5,marginTop:8,
           background:'rgba(249,202,36,.06)',padding:'3px 8px',borderRadius:4,
-          borderLeft:`3px solid ${C.yellow}`}}>{line}</div>
+          borderLeft:`3px solid ${C.yellow}`}}>{clean}</div>
       }
       if(line.startsWith('❌')){
         return <div key={i} style={{color:C.red,fontSize:11,lineHeight:1.65,fontWeight:600,marginTop:2}}>{line}</div>
@@ -503,7 +508,17 @@ function AIAnalysisPanel({ symbol, onZonesDetected, onActivate }) {
         return <div key={i} style={{color:C.yellow,fontSize:11,lineHeight:1.65,fontWeight:600,marginTop:2}}>{line}</div>
       }
       if(!line.trim())return <div key={i} style={{height:5}}/>
-      return <div key={i} style={{color:C.text,fontSize:11,lineHeight:1.65}}>{line}</div>
+      // Render inline **bold** markdown
+      const renderInline = (text) => {
+        const parts = text.split(/(\*\*[^*]+\*\*)/)
+        if(parts.length === 1) return text
+        return parts.map((p,j) =>
+          p.startsWith('**') && p.endsWith('**')
+            ? <strong key={j} style={{color:C.teal,fontWeight:700}}>{p.slice(2,-2)}</strong>
+            : p
+        )
+      }
+      return <div key={i} style={{color:C.text,fontSize:11,lineHeight:1.65}}>{renderInline(line)}</div>
     })
   }
 
@@ -549,8 +564,21 @@ function AIAnalysisPanel({ symbol, onZonesDetected, onActivate }) {
             }
             if(ev.type==='done'){
               // Extract AI zones
-              const m = fullText.match(/ZONAS_IA:(\{.*?\})/s)
-              if(m){try{onZonesDetected(JSON.parse(m[1]))}catch{}}
+              // Extract ZONAS_IA — handle nested JSON with balanced braces
+              const zonaStart = fullText.indexOf('ZONAS_IA:')
+              if(zonaStart !== -1){
+                let depth=0, start=zonaStart+9, end=-1
+                for(let i=start;i<fullText.length;i++){
+                  if(fullText[i]==='{') depth++
+                  else if(fullText[i]==='}'){depth--;if(depth===0){end=i+1;break}}
+                }
+                if(end>start){
+                  try{
+                    const parsed=JSON.parse(fullText.slice(start,end))
+                    onZonesDetected(parsed)
+                  }catch(e){console.warn('ZONAS_IA parse error',e)}
+                }
+              }
               setStatus('done')
               return
             }
