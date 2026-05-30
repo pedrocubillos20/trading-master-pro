@@ -32,6 +32,8 @@ import OpenAI from 'openai';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import ReportsManager from './reports-manager.js';
+import PushNotificationManager from './push-notifications.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -709,23 +711,6 @@ if (SUPABASE_URL && SUPABASE_SERVICE_KEY) {
 }
 
 // Inicializar módulo de reportes
-// ── Stubs — reports-manager.js y push-notifications.js eliminados ──
-class ReportsManager {
-  constructor() {}
-  async recordTrade() { return null }
-  async getUserSummary() { return {} }
-  async getReport() { return {} }
-  async getEquityCurve() { return [] }
-}
-class PushNotificationManager {
-  constructor() {}
-  getPublicKey() { return '' }
-  async broadcastSignal() {}
-  async saveSubscription() { return { success: false } }
-  async removeSubscription() { return { success: false } }
-  async getStats() { return {} }
-}
-
 let reportsManager = null;
 if (supabase) {
   reportsManager = new ReportsManager(supabase);
@@ -6317,6 +6302,12 @@ ESTILO DE ANÁLISIS:
 - Eres específico con precios exactos del contexto dado
 - Incluyes SIEMPRE el sesgo del día basado en la sesión y contexto macro
 
+REGLAS CRÍTICAS DE GESTIÓN DE RIESGO:
+- El SL SIEMPRE va debajo del EXTREMO del OB/FVG, nunca del mid — el institucional barre los SL ajustados antes de moverse
+- Alerta de "doble barrido": si ya hubo un sweep del low, el segundo sweep es señal de acumulación real — el SL del segundo trade debe ir más abajo aún
+- Nunca entrar en la primera vela impulsiva — esperar retroceso al OB/FVG
+- En activos sintéticos (Step Index, V100) el spread y slippage requieren SL mínimo 1.5x el rango promedio de vela
+
 ESTRUCTURA OBLIGATORIA (usa estos títulos exactos con los emojis):
 
 ## 📅 SESGO DEL DÍA
@@ -6329,12 +6320,22 @@ ESTRUCTURA OBLIGATORIA (usa estos títulos exactos con los emojis):
 
 En ZONAS QUE DEBES MARCAR lista cada zona con precio exacto, nombre SMC y por qué importa.
 En ESCENARIOS DE PRECIO escribe Escenario 1 (más probable) y Escenario 2 paso a paso con precios.
-En ENTRADA INTELIGENTE especifica: zona de entrada, SL exacto, TP1 TP2, confirmación necesaria (BOS/CHOCH en M1).
+En ENTRADA INTELIGENTE especifica con precios exactos:
+- Zona de entrada (mid del OB o FVG)
+- SL INSTITUCIONAL: colocar SIEMPRE debajo/encima del EXTREMO COMPLETO del OB o FVG (no del mid). El SL debe sobrevivir un barrido de liquidez — si el OB va de 7989 a 7992, el SL va en 7988.50, no en 7990. Nunca SL ajustado al mid.
+- TP1: primer pool de liquidez (swing high/low anterior)
+- TP2: siguiente pool de liquidez más lejano
+- R:R mínimo requerido: 1:1.5
+- Confirmación en M1: esperar BOS o CHoCH en M1 ANTES de entrar — nunca entrar sin confirmación estructural
 Al final incluye esta línea JSON con los niveles clave detectados (6-8 niveles, precios numéricos reales del contexto):
 ZONAS_IA:{"keyLevels":[{"price":NUMERO,"type":"resistance","label":"TEXTO CORTO"},{"price":NUMERO,"type":"support","label":"TEXTO CORTO"}],"trade":{"side":"BUY o SELL","entry":NUMERO,"sl":NUMERO,"tp1":NUMERO,"tp2":NUMERO,"label":"TEXTO CORTO ej: OB Demanda M5"}}
 
-El campo "trade" es la entrada inteligente exacta que describiste en ENTRADA INTELIGENTE — copia esos precios exactos.
-Si no hay entrada clara, omite el campo "trade".`;
+REGLAS CRÍTICAS para el campo "trade":
+- "entry": precio del mid del OB/FVG donde entra la posición
+- "sl": precio DEBAJO del mínimo del OB (para BUY) o ENCIMA del máximo (para SELL) — debe sobrevivir un barrido institucional
+- "tp1" y "tp2": precios de liquidez real (swings anteriores, BSL/SSL detectados)
+- Copia exactamente los precios que mencionaste en ENTRADA INTELIGENTE
+- Si no hay confluencia clara (OB + FVG + liquidez + sesión correcta), omite el campo "trade".`;
 
   const userMsg = `Analiza este mercado AHORA. Estos son los datos reales en tiempo real:
 
