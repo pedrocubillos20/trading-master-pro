@@ -709,6 +709,23 @@ if (SUPABASE_URL && SUPABASE_SERVICE_KEY) {
 }
 
 // Inicializar módulo de reportes
+// ── Stubs — reports-manager.js y push-notifications.js eliminados ──
+class ReportsManager {
+  constructor() {}
+  async recordTrade() { return null }
+  async getUserSummary() { return {} }
+  async getReport() { return {} }
+  async getEquityCurve() { return [] }
+}
+class PushNotificationManager {
+  constructor() {}
+  getPublicKey() { return '' }
+  async broadcastSignal() {}
+  async saveSubscription() { return { success: false } }
+  async removeSubscription() { return { success: false } }
+  async getStats() { return {} }
+}
+
 let reportsManager = null;
 if (supabase) {
   reportsManager = new ReportsManager(supabase);
