@@ -26,10 +26,11 @@ function drawChart(canvas, state) {
   const {
     candles=[], demandZones=[], supplyZones=[],
     fvgZones=[], liquidityLevels=[],
-    aiZones=null, // zonas extra del análisis IA
+    aiZones=null,
     choch, bos, chochM15, bosM15,
     structure={}, zoom=1, offsetX=0,
-    premiumDiscount='EQUILIBRIUM'
+    premiumDiscount='EQUILIBRIUM',
+    isM1=false  // M1 mode: thinner zones, precision drawing
   } = state
   if (!canvas || candles.length < 5) return
   const dpr  = window.devicePixelRatio || 1
@@ -107,10 +108,10 @@ function drawChart(canvas, state) {
       if(x1>=x2)return
       const y1=py(z.high),y2=py(z.low)
       const isMit=z.mitigated, isStruc=z.isStructureOB
-      ctx.fillStyle=isMit?fillS:fillA
+      ctx.fillStyle=isMit?fillS:(isM1?fillA.replace('.18','.28'):fillA)
       ctx.fillRect(x1,y1,x2-x1,y2-y1)
       ctx.strokeStyle=isMit?strokeS:stroke
-      ctx.lineWidth=isStruc?2:1.5
+      ctx.lineWidth=isM1?(isStruc?3:2):(isStruc?2:1.5)
       if(isStruc&&!isMit){
         ctx.setLineDash([])
         ctx.strokeRect(x1,y1,x2-x1,y2-y1)
@@ -172,18 +173,98 @@ function drawChart(canvas, state) {
     ;(aiZones.keyLevels||[]).forEach(lv=>{
       const y=py(lv.price)
       if(y<MT-10||y>MT+CH+10)return
-      const col=lv.type==='resistance'?'rgba(167,139,250,.8)':'rgba(167,139,250,.8)'
-      ctx.strokeStyle=col;ctx.lineWidth=2;ctx.setLineDash([8,3])
+      const isRes=lv.type==='resistance'
+      const col=isRes?'rgba(255,107,107,.75)':'rgba(167,139,250,.75)'
+      ctx.strokeStyle=col;ctx.lineWidth=1.5;ctx.setLineDash([8,3])
       ctx.beginPath();ctx.moveTo(ML,y);ctx.lineTo(ML+CW,y);ctx.stroke()
       ctx.setLineDash([])
-      // Label pill
       const lbl=lv.label||lv.type
       const lw=lbl.length*5.5+lv.price.toFixed(2).length*5+14
-      ctx.fillStyle='rgba(167,139,250,.15)';ctx.strokeStyle=col;ctx.lineWidth=1
+      ctx.fillStyle=col.replace('.75','.12');ctx.strokeStyle=col;ctx.lineWidth=1
       ctx.beginPath();ctx.roundRect(ML+4,y-9,lw,16,3);ctx.fill();ctx.stroke()
       ctx.fillStyle=col;ctx.font='bold 8px system-ui';ctx.textAlign='left'
       ctx.fillText(`${lbl} ${lv.price.toFixed(2)}`,ML+8,y+4)
     })
+
+    // ── IA Trade Setup: Entrada + SL + TP1 + TP2 ──
+    const tr=aiZones.trade
+    if(tr && tr.entry && tr.sl && tr.tp1){
+      const isBuy=tr.side==='BUY'
+      const entryY=py(tr.entry), slY=py(tr.sl), tp1Y=py(tr.tp1)
+      const tp2Y=tr.tp2?py(tr.tp2):null
+      const entryCol='#f9ca24'       // amarillo — entrada
+      const slCol   ='#ff4757'       // rojo — stop loss
+      const tpCol   ='#2ed573'       // verde — take profit
+      const xL=ML, xR=ML+CW
+
+      // SL zone (shaded area between entry and SL)
+      ctx.fillStyle=slCol+'18'
+      ctx.fillRect(xL, Math.min(entryY,slY), CW, Math.abs(entryY-slY))
+
+      // TP zones
+      if(tp2Y!==null){
+        ctx.fillStyle=tpCol+'10'
+        ctx.fillRect(xL, Math.min(entryY,tp2Y), CW, Math.abs(entryY-tp2Y))
+      } else {
+        ctx.fillStyle=tpCol+'10'
+        ctx.fillRect(xL, Math.min(entryY,tp1Y), CW, Math.abs(entryY-tp1Y))
+      }
+
+      // TP2 line
+      if(tp2Y!==null){
+        ctx.strokeStyle=tpCol;ctx.lineWidth=1.5;ctx.setLineDash([6,3])
+        ctx.beginPath();ctx.moveTo(xL,tp2Y);ctx.lineTo(xR,tp2Y);ctx.stroke()
+        ctx.setLineDash([])
+        ctx.fillStyle=tpCol+'22';ctx.strokeStyle=tpCol;ctx.lineWidth=1
+        ctx.beginPath();ctx.roundRect(xR+2,tp2Y-8,52,16,3);ctx.fill();ctx.stroke()
+        ctx.fillStyle=tpCol;ctx.font='bold 8px system-ui';ctx.textAlign='left'
+        ctx.fillText(`TP2 ${tr.tp2.toFixed(2)}`,xR+5,tp2Y+4)
+      }
+
+      // TP1 line
+      ctx.strokeStyle=tpCol;ctx.lineWidth=2;ctx.setLineDash([6,3])
+      ctx.beginPath();ctx.moveTo(xL,tp1Y);ctx.lineTo(xR,tp1Y);ctx.stroke()
+      ctx.setLineDash([])
+      ctx.fillStyle=tpCol+'22';ctx.strokeStyle=tpCol;ctx.lineWidth=1
+      ctx.beginPath();ctx.roundRect(xR+2,tp1Y-8,52,16,3);ctx.fill();ctx.stroke()
+      ctx.fillStyle=tpCol;ctx.font='bold 8px system-ui';ctx.textAlign='left'
+      ctx.fillText(`TP1 ${tr.tp1.toFixed(2)}`,xR+5,tp1Y+4)
+
+      // SL line
+      ctx.strokeStyle=slCol;ctx.lineWidth=2;ctx.setLineDash([4,3])
+      ctx.beginPath();ctx.moveTo(xL,slY);ctx.lineTo(xR,slY);ctx.stroke()
+      ctx.setLineDash([])
+      ctx.fillStyle=slCol+'22';ctx.strokeStyle=slCol;ctx.lineWidth=1
+      ctx.beginPath();ctx.roundRect(xR+2,slY-8,52,16,3);ctx.fill();ctx.stroke()
+      ctx.fillStyle=slCol;ctx.font='bold 8px system-ui';ctx.textAlign='left'
+      ctx.fillText(`SL  ${tr.sl.toFixed(2)}`,xR+5,slY+4)
+
+      // ENTRY line — solid, most prominent
+      ctx.strokeStyle=entryCol;ctx.lineWidth=2.5;ctx.setLineDash([])
+      ctx.beginPath();ctx.moveTo(xL,entryY);ctx.lineTo(xR,entryY);ctx.stroke()
+      // Entry pill
+      const rrRaw=tr.tp1&&tr.sl?Math.abs(tr.tp1-tr.entry)/Math.abs(tr.entry-tr.sl):0
+      const rrStr=rrRaw>0?` R:R ${rrRaw.toFixed(1)}`:''
+      const eLabel=`${isBuy?'▲ BUY':'▼ SELL'} ${tr.entry.toFixed(2)}${rrStr}`
+      const eW=eLabel.length*6+12
+      ctx.fillStyle=entryCol;ctx.beginPath();ctx.roundRect(xR+2,entryY-9,eW,18,4);ctx.fill()
+      ctx.fillStyle='#000';ctx.font='bold 9px system-ui';ctx.textAlign='left'
+      ctx.fillText(eLabel,xR+6,entryY+4)
+
+      // Triangle arrow at entry point
+      ctx.fillStyle=entryCol;ctx.globalAlpha=0.9
+      const arrX=xL+6, arrY=entryY, arrS=8
+      ctx.beginPath()
+      if(isBuy){ ctx.moveTo(arrX,arrY+arrS);ctx.lineTo(arrX-arrS,arrY-arrS);ctx.lineTo(arrX+arrS,arrY-arrS) }
+      else      { ctx.moveTo(arrX,arrY-arrS);ctx.lineTo(arrX-arrS,arrY+arrS);ctx.lineTo(arrX+arrS,arrY+arrS) }
+      ctx.closePath();ctx.fill();ctx.globalAlpha=1
+
+      // Label for what the trade is
+      if(tr.label){
+        ctx.fillStyle='rgba(249,202,36,.8)';ctx.font='bold 8px system-ui';ctx.textAlign='left'
+        ctx.fillText(`📍 ${tr.label}`,xL+20,entryY+(isBuy?-12:16))
+      }
+    }
   }
 
   /* Structure lines */
@@ -210,6 +291,23 @@ function drawChart(canvas, state) {
   drawLvl(choch, C.yellow,                choch?.type==='BULLISH_CHOCH'?'CHoCH↑ M5':'CHoCH↓ M5')
   drawLvl(bosM15,   'rgba(140,140,255,.9)', bosM15?.side==='BUY'?'BOS↑ M15':'BOS↓ M15')
   drawLvl(chochM15, 'rgba(255,200,60,.8)',  chochM15?.type==='BULLISH_CHOCH'?'CHoCH↑ M15':'CHoCH↓ M15')
+
+  // M1 mode: draw confirmation zone indicator
+  if(isM1&&aiZones?.trade){
+    const tr=aiZones.trade
+    const entryY=py(tr.entry)
+    // Glow effect on entry level in M1
+    const grad=ctx.createLinearGradient(ML,0,ML+CW,0)
+    grad.addColorStop(0,'rgba(249,202,36,0)')
+    grad.addColorStop(0.1,'rgba(249,202,36,.15)')
+    grad.addColorStop(0.9,'rgba(249,202,36,.15)')
+    grad.addColorStop(1,'rgba(249,202,36,0)')
+    ctx.fillStyle=grad
+    ctx.fillRect(ML,entryY-12,CW,24)
+    // "CONFIRMAR EN M1" text
+    ctx.fillStyle='rgba(249,202,36,.9)';ctx.font='bold 9px system-ui';ctx.textAlign='center'
+    ctx.fillText('◉ ZONA CONFIRMACIÓN M1',ML+CW/2,entryY-14)
+  }
 
   /* Structure fractals */
   ;(structure.labels||[]).forEach(lb=>{
@@ -633,6 +731,8 @@ export default function Dashboard({user,subscription,onLogout}){
   const[aiZones,  setAiZones] =useState(null) // zones detected by AI
   const[aiActive, setAiActive]=useState(false) // true = AI has run, show zones on chart
   const[panelW,   setPanelW]  =useState(340)  // AI panel width
+  const[alerts,   setAlerts]  =useState([])   // structure alerts
+  const[tradeHit, setTradeHit]=useState(null) // 'entry'|'sl'|'tp1'|'tp2' when price hits
 
   /* Fetch data */
   // Reset AI state when switching asset
@@ -679,6 +779,83 @@ export default function Dashboard({user,subscription,onLogout}){
     return()=>window.removeEventListener('keydown',h)
   },[])
 
+  /* Structure alert detection — runs on every price update */
+  useEffect(()=>{
+    if(!analyze||!aiActive||!aiZones)return
+    const price=analyze.price
+    if(!price)return
+    const dec=ASSETS[symbol]?.decimals||2
+
+    // Check BOS/CHoCH alerts
+    const newAlerts=[]
+    const choch=analyze.chartOverlays?.choch
+    const bos=analyze.chartOverlays?.bos
+    const chochM15=analyze.chartOverlays?.chochM15
+    const bosM15=analyze.chartOverlays?.bosM15
+
+    // Detect when price crosses structure levels
+    const lvls=[
+      {lvl:bos,  tf:'M5', type:'BOS'},
+      {lvl:choch,tf:'M5', type:'CHoCH'},
+      {lvl:bosM15,  tf:'M15',type:'BOS'},
+      {lvl:chochM15,tf:'M15',type:'CHoCH'},
+    ]
+    lvls.forEach(({lvl,tf,type})=>{
+      if(!lvl?.level)return
+      const dist=Math.abs(price-lvl.level)
+      const rng=analyze.candles?.length>5?
+        Math.abs(analyze.candles.slice(-10).reduce((mx,c)=>Math.max(mx,c.high),-Infinity)-
+                 analyze.candles.slice(-10).reduce((mn,c)=>Math.min(mn,c.low),Infinity)):10
+      if(dist<rng*0.05){ // within 5% of range = touching level
+        const side=(type==='BOS'?lvl.side:lvl.type?.includes('BULLISH')?'BUY':'SELL')
+        newAlerts.push({
+          id:`${type}-${tf}-${lvl.level}`,
+          msg:`⚡ ${type} ${tf}: ${side==='BUY'?'↑ ALCISTA':'↓ BAJISTA'} en ${lvl.level?.toFixed(dec)}`,
+          color:side==='BUY'?'#2ed573':'#ff4757',
+          ts:Date.now()
+        })
+      }
+    })
+
+    // Check trade levels hit
+    const tr=aiZones?.trade
+    if(tr?.entry){
+      const isBuy=tr.side==='BUY'
+      if(Math.abs(price-tr.entry)<(Math.abs(tr.tp1-tr.entry)*0.05)){
+        setTradeHit('entry')
+        newAlerts.push({id:'trade-entry',msg:'🎯 Precio en ZONA DE ENTRADA — Confirmar BOS/CHoCH en M1',color:'#f9ca24',ts:Date.now()})
+      }
+      if(tr.tp1&&Math.abs(price-tr.tp1)<(Math.abs(tr.tp1-tr.entry)*0.03)){
+        setTradeHit('tp1')
+        newAlerts.push({id:'trade-tp1',msg:'✅ TP1 ALCANZADO — Asegurar parcial',color:'#2ed573',ts:Date.now()})
+      }
+      if(tr.tp2&&Math.abs(price-tr.tp2)<(Math.abs(tr.tp2-tr.entry)*0.03)){
+        setTradeHit('tp2')
+        newAlerts.push({id:'trade-tp2',msg:'🏆 TP2 ALCANZADO — Objetivo completo',color:'#00d4aa',ts:Date.now()})
+      }
+      if(Math.abs(price-tr.sl)<(Math.abs(tr.entry-tr.sl)*0.03)){
+        setTradeHit('sl')
+        newAlerts.push({id:'trade-sl',msg:'⛔ STOP LOSS TOCADO — Salir de la operación',color:'#ff4757',ts:Date.now()})
+      }
+    }
+
+    if(newAlerts.length>0){
+      setAlerts(prev=>{
+        const existing=new Set(prev.map(a=>a.id))
+        const fresh=newAlerts.filter(a=>!existing.has(a.id))
+        if(!fresh.length)return prev
+        return [...fresh,...prev].slice(0,5)
+      })
+    }
+  },[analyze,aiActive,aiZones,symbol])
+
+  // Clear alerts after 8 seconds
+  useEffect(()=>{
+    if(!alerts.length)return
+    const id=setTimeout(()=>setAlerts(prev=>prev.slice(1)),8000)
+    return()=>clearTimeout(id)
+  },[alerts])
+
   /* Derived */
   const assetData=dash?.assets?.find(a=>a.symbol===symbol)
   const stats=dash?.stats||{total:0,wins:0,losses:0,pending:0}
@@ -695,20 +872,34 @@ export default function Dashboard({user,subscription,onLogout}){
     const candles=analyze[cKey]
     if(!candles?.length)return
     // Zones only drawn AFTER AI has analyzed — clean chart until then
+    // In M1: show only the most recent/precise zones (last 30 candles worth)
+    const isM1 = tf==='M1'
+    const demAll = analyze[dKey]||[]
+    const supAll = analyze[sKey]||[]
+    // M1 refinement: only show unmitigated zones within current price range ±1%
+    const priceRange = analyze.price ? analyze.price * 0.01 : 999
+    const demZ = aiActive ? (isM1
+      ? demAll.filter(z=>!z.mitigated&&Math.abs((z.high+z.low)/2-(analyze.price||0))<priceRange*3)
+      : demAll) : []
+    const supZ = aiActive ? (isM1
+      ? supAll.filter(z=>!z.mitigated&&Math.abs((z.high+z.low)/2-(analyze.price||0))<priceRange*3)
+      : supAll) : []
+
     drawChart(canvasRef.current,{
       candles,
-      demandZones:   aiActive ? (analyze[dKey]||[])     : [],
-      supplyZones:   aiActive ? (analyze[sKey]||[])     : [],
-      fvgZones:      aiActive && tf==='M5' ? (analyze.fvgZones||[])         : [],
-      liquidityLevels: aiActive && tf==='M5' ? (analyze.liquidityLevels||[]) : [],
-      aiZones:       aiActive ? aiZones : null,
-      choch:         aiActive ? analyze.chartOverlays?.choch   : null,
-      bos:           aiActive ? analyze.chartOverlays?.bos     : null,
-      chochM15:      aiActive ? analyze.chartOverlays?.chochM15: null,
-      bosM15:        aiActive ? analyze.chartOverlays?.bosM15  : null,
-      structure:     aiActive ? (analyze.structureM5Data||{})  : {},
+      demandZones:     demZ,
+      supplyZones:     supZ,
+      fvgZones:        aiActive && (tf==='M5'||tf==='M1') ? (analyze.fvgZones||[]) : [],
+      liquidityLevels: aiActive && (tf==='M5'||tf==='M1') ? (analyze.liquidityLevels||[]) : [],
+      aiZones:         aiActive ? aiZones : null,
+      choch:           aiActive ? analyze.chartOverlays?.choch   : null,
+      bos:             aiActive ? analyze.chartOverlays?.bos     : null,
+      chochM15:        aiActive ? analyze.chartOverlays?.chochM15: null,
+      bosM15:          aiActive ? analyze.chartOverlays?.bosM15  : null,
+      structure:       aiActive ? (analyze.structureM5Data||{})  : {},
       zoom, offsetX,
-      premiumDiscount: aiActive ? (analyze.premiumDiscount||'EQUILIBRIUM') : 'EQUILIBRIUM'
+      premiumDiscount: aiActive ? (analyze.premiumDiscount||'EQUILIBRIUM') : 'EQUILIBRIUM',
+      isM1
     })
   },[analyze,tf,assetData,zoom,offsetX,aiZones,aiActive])
 
@@ -724,6 +915,8 @@ export default function Dashboard({user,subscription,onLogout}){
     <div style={{display:'flex',flexDirection:'column',height:'100dvh',background:C.bg0,overflow:'hidden'}}>
       <style>{`
         @keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}
+        @keyframes slideIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
+        @keyframes glowPulse{0%,100%{box-shadow:0 0 8px currentColor}50%{box-shadow:0 0 18px currentColor}}
         .btn-ghost{background:none;border:1px solid transparent;color:${C.muted};border-radius:5px;cursor:pointer;transition:all .15s}
         .btn-ghost:hover{background:${C.bg3};border-color:${C.border};color:${C.text}}
         .btn-ghost.active{background:${C.tealBg};border-color:${C.tealDark};color:${C.teal}}
@@ -868,6 +1061,79 @@ export default function Dashboard({user,subscription,onLogout}){
                     </div>
                   </div>
                 )}
+                {/* ── Structure Alerts ── */}
+                {alerts.length>0&&(
+                  <div style={{position:'absolute',top:8,left:'50%',transform:'translateX(-50%)',
+                    display:'flex',flexDirection:'column',gap:4,zIndex:10,pointerEvents:'none',minWidth:320,maxWidth:500}}>
+                    {alerts.map(a=>(
+                      <div key={a.id} style={{
+                        background:'rgba(13,17,23,.95)',
+                        border:`2px solid ${a.color}`,
+                        borderRadius:8,padding:'7px 14px',
+                        display:'flex',alignItems:'center',gap:8,
+                        boxShadow:`0 0 16px ${a.color}44`,
+                        animation:'slideIn .3s ease'
+                      }}>
+                        <div style={{width:8,height:8,borderRadius:'50%',background:a.color,
+                          boxShadow:`0 0 6px ${a.color}`,flexShrink:0,
+                          animation:'pulse 1s ease-in-out infinite'}}/>
+                        <span style={{fontSize:12,fontWeight:700,color:a.color}}>{a.msg}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* ── AI Trade Card (when trade active) ── */}
+                {aiActive&&aiZones?.trade&&(
+                  <div style={{position:'absolute',top:8,right:8,
+                    background:'rgba(13,17,23,.92)',
+                    border:`1px solid ${aiZones.trade.side==='BUY'?'#2ed573':'#ff4757'}`,
+                    borderRadius:8,padding:'8px 12px',zIndex:9,minWidth:160,
+                    boxShadow:`0 0 12px ${aiZones.trade.side==='BUY'?'#2ed57322':'#ff475722'}`}}>
+                    <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:6}}>
+                      <span style={{fontSize:16}}>{aiZones.trade.side==='BUY'?'▲':'▼'}</span>
+                      <span style={{fontWeight:800,fontSize:13,
+                        color:aiZones.trade.side==='BUY'?'#2ed573':'#ff4757'}}>
+                        {aiZones.trade.side} — IA
+                      </span>
+                      {tradeHit&&<span style={{fontSize:10,fontWeight:700,
+                        color:tradeHit==='sl'?'#ff4757':tradeHit.startsWith('tp')?'#2ed573':'#f9ca24',
+                        background:'rgba(0,0,0,.4)',padding:'1px 5px',borderRadius:3}}>
+                        {tradeHit.toUpperCase()} ⚡
+                      </span>}
+                    </div>
+                    {[
+                      {l:'Entrada',v:aiZones.trade.entry,c:'#f9ca24'},
+                      {l:'SL',     v:aiZones.trade.sl,   c:'#ff4757'},
+                      {l:'TP1',    v:aiZones.trade.tp1,  c:'#2ed573'},
+                      aiZones.trade.tp2&&{l:'TP2',v:aiZones.trade.tp2,c:'#00d4aa'},
+                    ].filter(Boolean).map(({l,v,c})=>(
+                      <div key={l} style={{display:'flex',justifyContent:'space-between',
+                        gap:12,marginBottom:2}}>
+                        <span style={{fontSize:10,color:'#7d8590'}}>{l}</span>
+                        <span style={{fontSize:11,fontWeight:700,color:c,fontVariantNumeric:'tabular-nums'}}>
+                          {v?.toFixed(ASSETS[symbol]?.decimals||2)}
+                        </span>
+                      </div>
+                    ))}
+                    {aiZones.trade.tp1&&aiZones.trade.sl&&aiZones.trade.entry&&(()=>{
+                      const rr=Math.abs(aiZones.trade.tp1-aiZones.trade.entry)/Math.abs(aiZones.trade.entry-aiZones.trade.sl)
+                      return <div style={{borderTop:'1px solid #30363d',marginTop:4,paddingTop:4,
+                        display:'flex',justifyContent:'space-between'}}>
+                        <span style={{fontSize:9,color:'#7d8590'}}>R:R</span>
+                        <span style={{fontSize:10,fontWeight:800,color:rr>=1.5?'#2ed573':'#f9ca24'}}>
+                          1:{rr.toFixed(1)}
+                        </span>
+                      </div>
+                    })()}
+                    {aiZones.trade.label&&(
+                      <div style={{fontSize:9,color:'#7d8590',marginTop:4,borderTop:'1px solid #30363d',paddingTop:3}}>
+                        {aiZones.trade.label}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {analyze&&!aiActive&&(
                   <div style={{position:'absolute',bottom:40,left:'50%',transform:'translateX(-50%)',
                     background:'rgba(13,17,23,.85)',border:`1px solid ${C.teal}44`,
@@ -880,21 +1146,44 @@ export default function Dashboard({user,subscription,onLogout}){
               </ChartContainer>
 
               {/* Legend row — only show after AI activated */}
-              {aiActive&&<div style={{display:'flex',gap:8,flexShrink:0,flexWrap:'wrap',padding:'2px 0'}}>
+              {aiActive&&<div style={{display:'flex',gap:8,flexShrink:0,flexWrap:'wrap',padding:'2px 0',alignItems:'center'}}>
                 {[
-                  {col:C.green,label:'OB Demanda'},
-                  {col:C.red,label:'OB Oferta'},
-                  {col:C.blue,label:'FVG Alcista'},
+                  {col:C.green, label:'OB Demanda'},
+                  {col:C.red,   label:'OB Oferta'},
+                  {col:C.blue,  label:'FVG Alcista'},
                   {col:C.orange,label:'FVG Bajista'},
-                  {col:'rgba(255,107,107,.7)',label:'BSL (liquidez compra)'},
-                  {col:'rgba(63,185,80,.7)',label:'SSL (liquidez venta)'},
-                  {col:C.purple,label:'Zonas IA'},
+                  {col:'rgba(255,107,107,.7)',label:'BSL'},
+                  {col:'rgba(63,185,80,.7)',  label:'SSL'},
                 ].map(({col,label})=>(
                   <div key={label} style={{display:'flex',alignItems:'center',gap:4}}>
-                    <div style={{width:10,height:10,borderRadius:2,background:col+'44',border:`1px solid ${col}`}}/>
+                    <div style={{width:8,height:8,borderRadius:2,background:col+'44',border:`1px solid ${col}`}}/>
                     <span style={{fontSize:9,color:C.muted}}>{label}</span>
                   </div>
                 ))}
+                {aiZones?.trade&&(
+                  <div style={{display:'flex',alignItems:'center',gap:4,
+                    background:'rgba(249,202,36,.08)',borderRadius:4,padding:'2px 6px',
+                    border:'1px solid rgba(249,202,36,.3)'}}>
+                    <div style={{width:8,height:8,borderRadius:'50%',background:'#f9ca24',
+                      boxShadow:'0 0 4px #f9ca24'}}/>
+                    <span style={{fontSize:9,color:'#f9ca24',fontWeight:700}}>
+                      {aiZones.trade.side==='BUY'?'▲ COMPRA':'▼ VENTA'} IA — R:R {
+                        aiZones.trade.tp1&&aiZones.trade.sl&&aiZones.trade.entry
+                          ?(Math.abs(aiZones.trade.tp1-aiZones.trade.entry)/Math.abs(aiZones.trade.entry-aiZones.trade.sl)).toFixed(1)
+                          :'?'
+                      }
+                    </span>
+                  </div>
+                )}
+                {tf==='M1'&&aiActive&&(
+                  <div style={{display:'flex',alignItems:'center',gap:4,
+                    background:'rgba(0,212,170,.08)',borderRadius:4,padding:'2px 6px',
+                    border:'1px solid rgba(0,212,170,.3)'}}>
+                    <div style={{width:6,height:6,borderRadius:'50%',background:C.teal,
+                      animation:'pulse 1s ease-in-out infinite'}}/>
+                    <span style={{fontSize:9,color:C.teal,fontWeight:700}}>M1 — Modo Confirmación</span>
+                  </div>
+                )}
               </div>}
             </div>
 
