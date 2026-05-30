@@ -517,61 +517,40 @@ function AIAnalysisPanel({ symbol, onZonesDetected, onActivate, onReset }) {
 
   // Format markdown-like text
   const renderText = (raw) => {
-    if(!raw)return null
-    return raw.split('\n').map((line,i)=>{
-      if(line.startsWith('## ')){
-        const icons = {
-          '📅':'#f9ca24','📊':'#60a5fa','🎯':C.teal,
-          '📈':'#2ed573','📉':'#ff6b6b','⏰':'#a78bfa',
-          '💡':C.yellow,'❌':C.red,'🔍':C.purple
-        }
-        const col = Object.keys(icons).find(k=>line.includes(k))
-        return <div key={i} style={{color:col?icons[col]:C.teal,fontWeight:700,fontSize:12,
-          marginTop:14,marginBottom:5,borderBottom:`1px solid ${col?icons[col]+'33':C.tealDark+'33'}`,
-          paddingBottom:4,letterSpacing:'.02em'}}>{line.slice(3)}</div>
+    if(!raw) return null
+    const lines = raw.split('\n')
+    const sectionColors = {'📅':'#f9ca24','📊':'#60a5fa','🎯':'#00d4aa','📈':'#3fb950','📉':'#ff6b6b','⏰':'#a78bfa','💡':'#f9ca24','❌':'#ff6b6b','🔍':'#a78bfa'}
+    return lines.map((line, i) => {
+      if(!line.trim()) return React.createElement('div', {key:i, style:{height:5}})
+      if(line.startsWith('ZONAS_IA:')||line.startsWith('```')||line.startsWith('...')) return null
+      // Bold parser: split on ** pairs
+      const bold = (txt) => {
+        if(!txt || !txt.includes('**')) return txt
+        const parts = txt.split('**')
+        return parts.map((s,j) => j%2===1 ? React.createElement('strong',{key:j,style:{color:'#00d4aa',fontWeight:700}},s) : s)
       }
-      if(line.startsWith('ZONAS_IA:'))return null
-      if(line.match(/^[•\-] /)||line.match(/^  [•\-] /)){
+      if(line.startsWith('## ')) {
+        const text = line.slice(3)
+        const ck = Object.keys(sectionColors).find(k=>text.includes(k))
+        const col = ck ? sectionColors[ck] : '#00d4aa'
+        return React.createElement('div',{key:i,style:{color:col,fontWeight:700,fontSize:12,marginTop:14,marginBottom:5,paddingBottom:4,borderBottom:`1px solid ${col}33`}},text)
+      }
+      if(line.startsWith('###')||line.match(/^Escenario [12]/i)) {
+        const text = line.replace(/^###+ /,'')
+        return React.createElement('div',{key:i,style:{color:'#f9ca24',fontWeight:700,fontSize:11.5,marginTop:8,background:'rgba(249,202,36,.06)',padding:'3px 8px',borderRadius:4,borderLeft:'3px solid #f9ca24'}},text)
+      }
+      if(line.match(/^  ?[-•›] /)) {
+        const clean = line.replace(/^  ?[-•›] /,'')
         const indent = line.startsWith('  ') ? 20 : 10
-        return <div key={i} style={{color:C.text,fontSize:11,lineHeight:1.65,
-          paddingLeft:indent,position:'relative',marginTop:1}}>
-          <span style={{color:C.teal,position:'absolute',left:indent-8}}>›</span>
-          {(txt=>(txt.split(/(\*\*[^*]+\*\*)/).map((p,j)=>
-            p.startsWith('**')&&p.endsWith('**')
-              ?<strong key={j} style={{color:C.teal,fontWeight:700}}>{p.slice(2,-2)}</strong>
-              :p
-          )))(line.replace(/^  ?[•\-] /,''))}
-        </div>
-      }
-      if(line.match(/^###? /)||line.match(/^Escenario [12]/i)){
-        const clean=line.replace(/^###? /,'')
-        return <div key={i} style={{color:C.yellow,fontWeight:700,fontSize:11.5,marginTop:8,
-          background:'rgba(249,202,36,.06)',padding:'3px 8px',borderRadius:4,
-          borderLeft:`3px solid ${C.yellow}`}}>{clean}</div>
-      }
-      if(line.startsWith('❌')){
-        return <div key={i} style={{color:C.red,fontSize:11,lineHeight:1.65,fontWeight:600,marginTop:2}}>{line}</div>
-      }
-      if(line.startsWith('✅')){
-        return <div key={i} style={{color:C.green,fontSize:11,lineHeight:1.65,fontWeight:600,marginTop:2}}>{line}</div>
-      }
-      if(line.startsWith('⚠️')){
-        return <div key={i} style={{color:C.yellow,fontSize:11,lineHeight:1.65,fontWeight:600,marginTop:2}}>{line}</div>
-      }
-      if(!line.trim())return <div key={i} style={{height:5}}/>
-      // Render inline **bold** markdown
-      const renderInline = (text) => {
-        const parts = text.split(/(\*\*[^*]+\*\*)/)
-        if(parts.length === 1) return text
-        return parts.map((p,j) =>
-          p.startsWith('**') && p.endsWith('**')
-            ? <strong key={j} style={{color:C.teal,fontWeight:700}}>{p.slice(2,-2)}</strong>
-            : p
+        return React.createElement('div',{key:i,style:{color:'#e6edf3',fontSize:11,lineHeight:1.65,paddingLeft:indent,position:'relative',marginTop:2}},
+          React.createElement('span',{style:{color:'#00d4aa',position:'absolute',left:indent-8}},'›'),
+          bold(clean)
         )
       }
-      // Hide JSON code blocks
-      if(line.startsWith('```')||line.startsWith('ZONAS_IA:')||line.startsWith('...'))return null
-      return <div key={i} style={{color:C.text,fontSize:11,lineHeight:1.65}}>{renderInline(line)}</div>
+      if(line.startsWith('❌')) return React.createElement('div',{key:i,style:{color:'#ff6b6b',fontSize:11,lineHeight:1.65,fontWeight:600,marginTop:2}},bold(line))
+      if(line.startsWith('✅')) return React.createElement('div',{key:i,style:{color:'#3fb950',fontSize:11,lineHeight:1.65,fontWeight:600,marginTop:2}},bold(line))
+      if(line.startsWith('⚠️')) return React.createElement('div',{key:i,style:{color:'#f9ca24',fontSize:11,lineHeight:1.65,fontWeight:600,marginTop:2}},line)
+      return React.createElement('div',{key:i,style:{color:'#e6edf3',fontSize:11,lineHeight:1.65}},bold(line))
     }).filter(Boolean)
   }
 
