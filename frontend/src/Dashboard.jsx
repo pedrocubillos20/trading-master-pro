@@ -493,6 +493,12 @@ function AIAnalysisPanel({symbol, onZonesDetected, onActivate, onReset}){
                       const slDist=Math.abs(parseFloat(t.sl)-eN)
                       const minSL=eN*0.003
                       if(slDist<minSL) t.sl=isBuy?+(eN-minSL).toFixed(2):+(eN+minSL).toFixed(2)
+                      // Reject trade if R:R < 1 (invalid setup)
+                      const rrCheck=Math.abs(tp1N-eN)/Math.abs(parseFloat(t.sl)-eN)
+                      if(rrCheck<1.0){
+                        console.warn('IA: R:R '+rrCheck.toFixed(2)+' < 1.0 — trade rejected')
+                        delete parsed.trade // remove invalid trade from zones
+                      }
                     }
                     onZonesDetected(parsed)
                   }catch(e2){console.warn('ZONAS_IA parse',e2)}
@@ -598,6 +604,11 @@ function M1Monitor({ symbol, aiZones, active, onEntryAlert, pos, setPos, hidden,
   const [lastAlert, setLastAlert] = useState(null)
   const intervalRef = useRef(null)
 
+  // Track confirmation state across polls — once confirmed, stays confirmed
+  const confirmedRef = React.useRef(false)
+  const confirmTypeRef = React.useRef('')
+  const zoneVisitedRef = React.useRef(false)
+
   const pollM1 = useCallback(async () => {
     if (!active || !aiZones?.trade) return
     try {
@@ -609,46 +620,86 @@ function M1Monitor({ symbol, aiZones, active, onEntryAlert, pos, setPos, hidden,
       const tr = aiZones.trade
       const price = d.price
       const entry = parseFloat(tr.entry)
+      const sl    = parseFloat(tr.sl)
+      const tp1   = parseFloat(tr.tp1)
       const isBuy = tr.side === 'BUY'
-      const zoneRange = Math.abs(parseFloat(tr.tp1) - entry) * 0.08 // 8% of trade range
 
-      // Phase detection
+      // Zone range: price within 0.5% of entry price (tighter = more precise)
+      const zoneRange = Math.abs(price) * 0.005
       const inZone = Math.abs(price - entry) < zoneRange
-      const choch = d.chochM1
-      const bos = d.bosM1
-      const hasConfirmation = (isBuy && (choch?.type === 'BULLISH_CHOCH_M1' || bos?.side === 'BUY')) ||
-                              (!isBuy && (choch?.type === 'BEARISH_CHOCH_M1' || bos?.side === 'SELL'))
 
-      if (inZone && hasConfirmation) {
-        const confirmType = bos ? 'BOS M1' : 'CHoCH M1'
-        const newPhase = 'ENTER'
-        if (phase !== 'ENTER') {
-          setPhase('ENTER')
-          const alert = {
-            type: 'ENTRY',
-            side: tr.side,
-            price: entry,
-            confirm: confirmType,
-            sl: tr.sl,
-            tp1: tr.tp1,
-            tp2: tr.tp2,
-            msg: `🎯 ENTRADA CONFIRMADA — ${tr.side} @ ${entry}
-${confirmType} detectado en M1
-SL: ${tr.sl} | TP1: ${tr.tp1}`,
-            ts: Date.now()
-          }
-          setLastAlert(alert)
-          onEntryAlert(alert)
+      // Valid SL distance check (reject if R:R < 1)
+      const slDist = Math.abs(entry - sl)
+      const tp1Dist = Math.abs(tp1 - entry)
+      const rrValid = tp1Dist / slDist >= 1.0
+
+      const choch = d.chochM1
+      const bos   = d.bosM1
+
+      // M1 confirmation: CHoCH or BOS in trade direction
+      const bullishConfirm = choch?.type === 'BULLISH_CHOCH_M1' || bos?.side === 'BUY'
+      const bearishConfirm = choch?.type === 'BEARISH_CHOCH_M1' || bos?.side === 'SELL'
+      const hasConfirmation = isBuy ? bullishConfirm : bearishConfirm
+
+      // ── SMC ENTRY SEQUENCE ──
+      // Step 1: Price must visit the zone first
+      if (inZone) zoneVisitedRef.current = true
+
+      // Step 2: Once in zone, CHoCH/BOS locks in the confirmation
+      if (zoneVisitedRef.current && hasConfirmation && !confirmedRef.current) {
+        confirmedRef.current = true
+        confirmTypeRef.current = bos ? 'BOS M1' : 'CHoCH M1'
+      }
+
+      // Step 3: After confirmation, price pulls back INTO zone = ENTER
+      // (price returns to entry zone after having moved away for CHoCH/BOS)
+      const confirmed = confirmedRef.current
+
+      if (phase === 'ENTER') {
+        // Already fired — keep showing
+      } else if (confirmed && inZone && rrValid) {
+        // Pullback to zone after confirmation = ENTRY
+        setPhase('ENTER')
+        const alert = {
+          type: 'ENTRY',
+          side: tr.side,
+          price: entry,
+          confirm: confirmTypeRef.current,
+          sl: tr.sl,
+          tp1: tr.tp1,
+          tp2: tr.tp2,
+          ts: Date.now()
         }
-      } else if (inZone && !hasConfirmation) {
-        setPhase('zone_reached')
-      } else if (hasConfirmation && !inZone) {
+        setLastAlert(alert)
+        onEntryAlert(alert)
+      } else if (confirmed && !inZone) {
+        // Confirmed but waiting for pullback back to zone
+        setPhase('pullback')
+      } else if (!confirmed && hasConfirmation && !zoneVisitedRef.current) {
+        // CHoCH/BOS seen but zone not visited yet
         setPhase(bos ? 'bos_detected' : 'choch_detected')
+      } else if (inZone && !confirmed) {
+        // In zone, no confirmation yet
+        setPhase('zone_reached')
+      } else if (zoneVisitedRef.current && hasConfirmation && !confirmed) {
+        // Was in zone, now has confirmation
+        confirmedRef.current = true
+        confirmTypeRef.current = bos ? 'BOS M1' : 'CHoCH M1'
+        setPhase('choch_detected')
       } else {
         setPhase('waiting')
       }
     } catch(e) {}
   }, [active, aiZones, symbol, phase, onEntryAlert])
+
+  // Reset confirmation state when analysis changes
+  useEffect(() => {
+    confirmedRef.current = false
+    confirmTypeRef.current = ''
+    zoneVisitedRef.current = false
+    setPhase('waiting')
+    setM1Data(null)
+  }, [aiZones, symbol])
 
   useEffect(() => {
     if (!active || !aiZones?.trade) { setPhase('waiting'); setM1Data(null); return }
@@ -664,12 +715,12 @@ SL: ${tr.sl} | TP1: ${tr.tp1}`,
   const tradeCol = isBuy ? '#2ed573' : '#ff4757'
 
   const phaseInfo = {
-    waiting:       { icon: '⏳', text: 'Esperando que el precio llegue a la zona', col: '#7d8590' },
-    zone_reached:  { icon: '🎯', text: 'Precio en ZONA — Esperando CHoCH/BOS en M1', col: '#f9ca24', pulse: true },
-    choch_detected:{ icon: '🔄', text: 'CHoCH M1 detectado — Esperando pullback', col: '#60a5fa', pulse: true },
-    bos_detected:  { icon: '💥', text: 'BOS M1 detectado — Esperando pullback', col: '#a78bfa', pulse: true },
-    pullback:      { icon: '↩️', text: 'Pullback detectado — Posicionarse', col: '#fb923c', pulse: true },
-    ENTER:         { icon: '⚡', text: 'ENTRADA CONFIRMADA', col: tradeCol, pulse: true, glow: true },
+    waiting:       { icon: '⏳', text: `Esperando precio en zona entrada: ${tr.entry}`, col: '#7d8590' },
+    zone_reached:  { icon: '🎯', text: 'EN ZONA — Esperando CHoCH/BOS en M1', col: '#f9ca24', pulse: true },
+    choch_detected:{ icon: '🔄', text: `${confirmTypeRef.current||'CHoCH'} ✓ — Esperando pullback a ${tr.entry}`, col: '#60a5fa', pulse: true },
+    bos_detected:  { icon: '💥', text: `BOS M1 ✓ — Esperando pullback a ${tr.entry}`, col: '#a78bfa', pulse: true },
+    pullback:      { icon: '↩️', text: `Pullback en progreso → PREPARAR ENTRADA @ ${tr.entry}`, col: '#fb923c', pulse: true, glow: true },
+    ENTER:         { icon: '⚡', text: `ENTRAR AHORA — ${isBuy?'BUY':'SELL'} @ ${tr.entry}`, col: tradeCol, pulse: true, glow: true },
   }
 
   const info = phaseInfo[phase] || phaseInfo.waiting
@@ -772,11 +823,18 @@ SL: ${tr.sl} | TP1: ${tr.tp1}`,
       )}
 
       {/* Waiting instructions */}
-      {phase === 'waiting' && (
+      {(phase === 'waiting' || phase === 'zone_reached' || phase === 'choch_detected' || phase === 'pullback') && (
         <div style={{marginTop:6,fontSize:9,color:'#7d8590',lineHeight:1.6,borderTop:'1px solid #30363d',paddingTop:6}}>
-          Zona entrada: <strong style={{color:tradeCol}}>{tr.entry}</strong><br/>
-          Confirmar: CHoCH o BOS en M1<br/>
-          Luego pullback → entrada
+          <div style={{marginBottom:3,fontWeight:700,color:phase==='pullback'?'#fb923c':'#7d8590'}}>
+            {phase==='waiting'&&'Secuencia SMC esperada:'}
+            {phase==='zone_reached'&&'En zona — buscar en M1:'}
+            {phase==='choch_detected'&&'✓ Estructura cambiada:'}
+            {phase==='pullback'&&'⚡ Pullback activo — preparar entrada:'}
+          </div>
+          <div style={{opacity: phase==='waiting'?1:0.5}}>1. Precio llega a {tr.entry}</div>
+          <div style={{opacity: phase==='zone_reached'||phase==='choch_detected'||phase==='pullback'?1:0.4}}>2. CHoCH o BOS en M1 {phase==='choch_detected'||phase==='pullback'?'✓':''}</div>
+          <div style={{opacity: phase==='pullback'?1:0.4}}>3. Pullback al OB/FVG {phase==='pullback'?'← aquí':''}</div>
+          <div style={{fontWeight:700,color:tradeCol,opacity:phase==='pullback'?1:0.3}}>4. Entrada {tr.side} @ {tr.entry} | SL {tr.sl}</div>
         </div>
       )}
       </div>
