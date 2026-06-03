@@ -871,7 +871,17 @@ function calculateExpirationDate(periodo) {
 // Activos operados — definido aquí para uso en toda la app
 const MY_ASSETS = ['stpRNG', 'frxXAUUSD', '1HZ100V'];
 
+// In-memory subscription cache — avoids hammering Supabase on every request
+const subCache = new Map(); // userId → { sub, ts }
+const SUB_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
 async function getSubscription(userId) {
+  // Return cached if fresh
+  const cached = subCache.get(userId);
+  if (cached && Date.now() - cached.ts < SUB_CACHE_TTL) {
+    return cached.sub;
+  }
+
   if (supabase) {
     try {
       // Leer de tabla 'users' que tiene email + plan
@@ -882,7 +892,7 @@ async function getSubscription(userId) {
         .single();
 
       if (error && error.code !== 'PGRST116') {
-        console.log('getSubscription error:', error.message);
+        if (!subCache.has(userId)) console.log('⚠️ Supabase subscription error (using defaults)');
       }
 
       if (data) {
@@ -897,7 +907,7 @@ async function getSubscription(userId) {
           elite:   MY_ASSETS,
         };
 
-        return {
+        const subResult = {
           id:                  data.id,
           email:               data.email,
           plan:                plan,
@@ -911,10 +921,12 @@ async function getSubscription(userId) {
           trial_ends_at:       new Date(Date.now() + 3650*86400000).toISOString(),
           subscription_ends_at: new Date(Date.now() + 3650*86400000).toISOString(),
         };
+        subCache.set(userId, { sub: subResult, ts: Date.now() });
+        return subResult;
       }
       return null;
     } catch (e) {
-      console.log('getSubscription error:', e.message);
+      // getSubscription fallback — Supabase unavailable
       return null;
     }
   }
@@ -4149,18 +4161,7 @@ const SMC = {
       else if (choch && !pullback) reason = `CHoCH ${choch.type} detectado pero sin pullback a zona`;
       else if (!choch && pullback) reason = `Pullback ${pullback.side} detectado pero sin CHoCH`;
       
-      // Log detallado cada 30 segundos para debug
-      const now = Date.now();
-      if (!this._lastDebugLog || now - this._lastDebugLog > 30000) {
-        this._lastDebugLog = now;
-        // [SEÑALES DESACTIVADAS] debug
-        console.log(`   M5=${structureM5.trend} H1=${structureH1.trend} MTF=${mtfConfluence ? 'SÍ' : 'NO'}`);
-        console.log(`   CHoCH=${choch ? choch.type + ' @' + choch.level : 'NO'}`);
-        console.log(`   Pullback=${pullback ? pullback.side + ' @' + pullback.entry : 'NO'}`);
-        console.log(`   BOS=${bos?.type || 'NO'}`);
-        console.log(`   Zonas: Demand=${demandZones.length} Supply=${supplyZones.length}`);
-        console.log(`   P/D=${premiumDiscount} | Razón: ${reason}`);
-      }
+      // Debug logs eliminados — señales automáticas desactivadas
       
       return {
         action: 'WAIT',
@@ -4184,7 +4185,7 @@ const SMC = {
     // Log cuando SÍ hay señales potenciales
     // Filtrar modelos deshabilitados
     const enabledSignals = signals.filter(s => !(SIGNAL_CONFIG.DISABLED_MODELS||[]).includes(s.model));
-    if (enabledSignals.length !== signals.length) console.log(`🚫 [${config.shortName}] ${signals.length - enabledSignals.length} modelos deshabilitados filtrados`);
+    // modelos disabled log removed
     signals.length = 0; enabledSignals.forEach(s => signals.push(s));
     // [SEÑALES DESACTIVADAS] candidatas log
     
