@@ -6039,15 +6039,15 @@ En CONFIRMACIÓN M1 escribir SIEMPRE:
 3. Vela de confirmación con cuerpo sólido
 4. Entrada en [precio] — SL en [precio]"
 
-JSON final en UNA LÍNEA sin markdown:
+---DATOS_GRAFICO_JSON---
+Escribe EXACTAMENTE esta línea al final (sin explicaciones, sin markdown, sin salto de línea antes):
 ZONAS_IA:{"keyLevels":[{"price":N,"type":"resistance","label":"T"},{"price":N,"type":"support","label":"T"}],"trade":{"side":"BUY o SELL","entry":N,"sl":N,"tp1":N,"tp2":N,"label":"T"},"scenarios":{"s1":{"activation":N,"direction":"UP o DOWN","label":"T","probability":N},"s2":{"activation":N,"direction":"UP o DOWN","label":"T","probability":N}},"m1confirm":{"waiting":"CHoCH alcista / BOS alcista","zone":N,"action":"Entrar en pullback al OB M1"}}
 
-ANTES DE ESCRIBIR EL JSON — CHECKLIST:
+CHECKLIST ANTES DEL JSON:
 □ SELL: sl > entry > tp1 > tp2 ¿OK?
 □ BUY: sl < entry < tp1 < tp2 ¿OK?
-□ R:R >= 1.5 ¿OK?
-□ tp2 en MISMA dirección que tp1 ¿OK?
-□ Activaciones de escenarios son precios FUTUROS ¿OK?`;
+□ R:R = |tp1-entry|/|entry-sl| >= 1.5 ¿OK?
+□ tp2 más allá de tp1 en misma dirección ¿OK?`;
 
   const userMsg = `Analiza este mercado AHORA. Estos son los datos reales en tiempo real:
 
@@ -6113,11 +6113,11 @@ Impulso calculado de: ${lastLow || 'N/A'} a ${lastHigh || 'N/A'}
 ${candles20.map((c, i) => `  ${String(i+1).padStart(2,'0')}: O:${c.o} H:${c.h} L:${c.l} C:${c.c}`).join('\n')}
 
 ━━━ INSTRUCCIÓN ━━━
-Con todos estos datos reales, escribe el análisis SMC institucional completo.
-Usa los PRECIOS EXACTOS del contexto en cada sección.
-El sesgo del día debe reflejar la sesión activa (${mktCtx.sesionActual}) y contexto macro.
-Incluye al final la línea JSON con 6-8 niveles clave reales:
-ZONAS_IA:{"keyLevels":[{"price":NUMERO,"type":"resistance","label":"TEXTO CORTO"},{"price":NUMERO,"type":"support","label":"TEXTO CORTO"}],"trade":{"side":"BUY o SELL","entry":NUMERO,"sl":NUMERO,"tp1":NUMERO,"tp2":NUMERO,"label":"TEXTO CORTO"}}`; 
+Escribe el análisis completo con las 7 capas institucionales.
+Usa PRECIOS EXACTOS del contexto. Sesión activa: ${mktCtx.sesionActual}.
+
+Al terminar el análisis escribe la línea de datos (SIN explicaciones antes ni después):
+ZONAS_IA:{"keyLevels":[{"price":NUMERO,"type":"resistance","label":"T"},{"price":NUMERO,"type":"support","label":"T"}],"trade":{"side":"BUY o SELL","entry":NUMERO,"sl":NUMERO,"tp1":NUMERO,"tp2":NUMERO,"label":"T"},"scenarios":{"s1":{"activation":NUMERO,"direction":"UP o DOWN","label":"T","probability":NUMERO},"s2":{"activation":NUMERO,"direction":"UP o DOWN","label":"T","probability":NUMERO}},"m1confirm":{"waiting":"CHoCH bajista / BOS bajista","zone":NUMERO,"action":"T"}}`; 
 
   // ── Streaming con Server-Sent Events ──
   res.setHeader('Content-Type', 'text/event-stream');

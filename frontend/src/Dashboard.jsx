@@ -399,7 +399,7 @@ function AIAnalysisPanel({symbol, onZonesDetected, onActivate, onReset}){
     return raw.split('\n').map((line, i) => {
       if(!line.trim()) return React.createElement('div',{key:i,style:{height:5}})
       // Hide raw JSON/code
-      if(line.startsWith('ZONAS_IA:')||line.startsWith('```')||line.startsWith('...')) return null
+      if(line.startsWith('ZONAS_IA:')||line.startsWith('```')||line.startsWith('...')||line.startsWith('---DATOS')||line.startsWith('JSON final')||line.startsWith('Escribe EXACTAMENTE')||line.startsWith('CHECKLIST ANTES')) return null
       // Section headers ## 
       if(line.startsWith('## ')){
         const text2 = line.slice(3)
@@ -493,11 +493,14 @@ function AIAnalysisPanel({symbol, onZonesDetected, onActivate, onReset}){
                       const slDist=Math.abs(parseFloat(t.sl)-eN)
                       const minSL=eN*0.003
                       if(slDist<minSL) t.sl=isBuy?+(eN-minSL).toFixed(2):+(eN+minSL).toFixed(2)
-                      // Reject trade if R:R < 1 (invalid setup)
-                      const rrCheck=Math.abs(tp1N-eN)/Math.abs(parseFloat(t.sl)-eN)
-                      if(rrCheck<1.0){
-                        console.warn('IA: R:R '+rrCheck.toFixed(2)+' < 1.0 — trade rejected')
-                        delete parsed.trade // remove invalid trade from zones
+                      // Fix R:R if too low — adjust SL to achieve minimum 1:1
+                      const slAfterFix=Math.abs(parseFloat(t.sl)-eN)
+                      const rrCheck=Math.abs(tp1N-eN)/slAfterFix
+                      if(rrCheck<1.0 && rrCheck>0){
+                        console.warn('IA: R:R '+rrCheck.toFixed(2)+' < 1.0 — expanding SL to fix')
+                        // Shrink SL to match TP1 distance (1:1 minimum)
+                        const tp1Dist=Math.abs(tp1N-eN)
+                        t.sl=isBuy?+(eN-tp1Dist).toFixed(2):+(eN+tp1Dist).toFixed(2)
                       }
                     }
                     onZonesDetected(parsed)
