@@ -482,6 +482,13 @@ function AIAnalysisPanel({symbol, onZonesDetected, onActivate, onReset}){
                       if(!isBuy&&sN<=eN) t.sl=+(eN+(Math.abs(tp1N-eN)*0.6)).toFixed(2)
                       if(isBuy&&tp1N<=eN) t.tp1=+(eN+(Math.abs(eN-parseFloat(t.sl))*1.5)).toFixed(2)
                       if(!isBuy&&tp1N>=eN) t.tp1=+(eN-(Math.abs(eN-parseFloat(t.sl))*1.5)).toFixed(2)
+                      // Fix TP2 direction — CRITICAL: tp2 must be beyond tp1 in same direction
+                      if(t.tp2){
+                        const tp2N=parseFloat(t.tp2)
+                        const tp1Fixed=parseFloat(t.tp1)
+                        if(isBuy&&tp2N<=tp1Fixed) t.tp2=+(tp1Fixed+(Math.abs(tp1Fixed-eN)*0.8)).toFixed(2)
+                        if(!isBuy&&tp2N>=tp1Fixed) t.tp2=+(tp1Fixed-(Math.abs(tp1Fixed-eN)*0.8)).toFixed(2)
+                      }
                       // Min SL distance 0.3% of price
                       const slDist=Math.abs(parseFloat(t.sl)-eN)
                       const minSL=eN*0.003
@@ -580,6 +587,178 @@ function AIAnalysisPanel({symbol, onZonesDetected, onActivate, onReset}){
   )
 }
 
+
+/* ═══════════════════════════════════════════════════════════════
+   M1 MONITOR — Confirmación de entrada en tiempo real
+   Detecta CHoCH/BOS en M1 y lanza alerta cuando hay pullback
+   ═══════════════════════════════════════════════════════════════ */
+function M1Monitor({ symbol, aiZones, active, onEntryAlert }) {
+  const [m1Data, setM1Data] = useState(null)
+  const [phase, setPhase] = useState('waiting') // waiting | zone_reached | choch_detected | bos_detected | pullback | ENTER
+  const [lastAlert, setLastAlert] = useState(null)
+  const intervalRef = useRef(null)
+
+  const pollM1 = useCallback(async () => {
+    if (!active || !aiZones?.trade) return
+    try {
+      const r = await fetch(`${API_URL}/api/m1/status/${symbol}`)
+      const d = await r.json()
+      if (!d.ready) return
+      setM1Data(d)
+
+      const tr = aiZones.trade
+      const price = d.price
+      const entry = parseFloat(tr.entry)
+      const isBuy = tr.side === 'BUY'
+      const zoneRange = Math.abs(parseFloat(tr.tp1) - entry) * 0.08 // 8% of trade range
+
+      // Phase detection
+      const inZone = Math.abs(price - entry) < zoneRange
+      const choch = d.chochM1
+      const bos = d.bosM1
+      const hasConfirmation = (isBuy && (choch?.type === 'BULLISH_CHOCH_M1' || bos?.side === 'BUY')) ||
+                              (!isBuy && (choch?.type === 'BEARISH_CHOCH_M1' || bos?.side === 'SELL'))
+
+      if (inZone && hasConfirmation) {
+        const confirmType = bos ? 'BOS M1' : 'CHoCH M1'
+        const newPhase = 'ENTER'
+        if (phase !== 'ENTER') {
+          setPhase('ENTER')
+          const alert = {
+            type: 'ENTRY',
+            side: tr.side,
+            price: entry,
+            confirm: confirmType,
+            sl: tr.sl,
+            tp1: tr.tp1,
+            tp2: tr.tp2,
+            msg: `🎯 ENTRADA CONFIRMADA — ${tr.side} @ ${entry}
+${confirmType} detectado en M1
+SL: ${tr.sl} | TP1: ${tr.tp1}`,
+            ts: Date.now()
+          }
+          setLastAlert(alert)
+          onEntryAlert(alert)
+        }
+      } else if (inZone && !hasConfirmation) {
+        setPhase('zone_reached')
+      } else if (hasConfirmation && !inZone) {
+        setPhase(bos ? 'bos_detected' : 'choch_detected')
+      } else {
+        setPhase('waiting')
+      }
+    } catch(e) {}
+  }, [active, aiZones, symbol, phase, onEntryAlert])
+
+  useEffect(() => {
+    if (!active || !aiZones?.trade) { setPhase('waiting'); setM1Data(null); return }
+    pollM1()
+    intervalRef.current = setInterval(pollM1, 3000) // poll every 3s
+    return () => clearInterval(intervalRef.current)
+  }, [active, aiZones, symbol, pollM1])
+
+  if (!active || !aiZones?.trade) return null
+
+  const tr = aiZones.trade
+  const isBuy = tr.side === 'BUY'
+  const tradeCol = isBuy ? '#2ed573' : '#ff4757'
+
+  const phaseInfo = {
+    waiting:       { icon: '⏳', text: 'Esperando que el precio llegue a la zona', col: '#7d8590' },
+    zone_reached:  { icon: '🎯', text: 'Precio en ZONA — Esperando CHoCH/BOS en M1', col: '#f9ca24', pulse: true },
+    choch_detected:{ icon: '🔄', text: 'CHoCH M1 detectado — Esperando pullback', col: '#60a5fa', pulse: true },
+    bos_detected:  { icon: '💥', text: 'BOS M1 detectado — Esperando pullback', col: '#a78bfa', pulse: true },
+    pullback:      { icon: '↩️', text: 'Pullback detectado — Posicionarse', col: '#fb923c', pulse: true },
+    ENTER:         { icon: '⚡', text: 'ENTRADA CONFIRMADA', col: tradeCol, pulse: true, glow: true },
+  }
+
+  const info = phaseInfo[phase] || phaseInfo.waiting
+
+  return (
+    <div style={{
+      position: 'absolute', bottom: 44, right: 8, zIndex: 25,
+      background: 'rgba(13,17,23,.97)',
+      border: `2px solid ${info.col}`,
+      borderRadius: 10, padding: '10px 14px', minWidth: 230, maxWidth: 280,
+      boxShadow: info.glow ? `0 0 24px ${info.col}55` : `0 4px 16px rgba(0,0,0,.5)`,
+      transition: 'all .3s'
+    }}>
+      {/* Header */}
+      <div style={{display:'flex',alignItems:'center',gap:7,marginBottom:8}}>
+        <div style={{width:8,height:8,borderRadius:'50%',background:info.col,flexShrink:0,
+          animation: info.pulse ? 'pulse 1s ease-in-out infinite' : 'none'}}/>
+        <span style={{fontSize:10,fontWeight:700,color:'#7d8590',letterSpacing:'.05em'}}>MONITOR M1</span>
+        <span style={{marginLeft:'auto',fontSize:10,fontWeight:700,color:tradeCol}}>
+          {isBuy ? '▲ BUY' : '▼ SELL'} @ {tr.entry}
+        </span>
+      </div>
+
+      {/* Phase status */}
+      <div style={{
+        background: info.col + '18', border: `1px solid ${info.col}44`,
+        borderRadius: 6, padding: '6px 10px', marginBottom: 8
+      }}>
+        <div style={{fontSize:13,marginBottom:2}}>{info.icon}</div>
+        <div style={{fontSize:11,fontWeight:700,color:info.col,lineHeight:1.4}}>{info.text}</div>
+      </div>
+
+      {/* M1 structure */}
+      {m1Data && (
+        <div style={{display:'flex',flexDirection:'column',gap:3}}>
+          <div style={{display:'flex',justifyContent:'space-between',fontSize:10}}>
+            <span style={{color:'#7d8590'}}>Estructura M1</span>
+            <span style={{fontWeight:700,color:m1Data.m1Structure==='BULLISH'?'#2ed573':m1Data.m1Structure==='BEARISH'?'#ff4757':'#7d8590'}}>
+              {m1Data.m1Structure} {m1Data.m1Structure==='BULLISH'?'↑':m1Data.m1Structure==='BEARISH'?'↓':'·'}
+            </span>
+          </div>
+          {m1Data.chochM1 && (
+            <div style={{display:'flex',justifyContent:'space-between',fontSize:10}}>
+              <span style={{color:'#7d8590'}}>CHoCH M1</span>
+              <span style={{color:'#f9ca24',fontWeight:700}}>
+                {m1Data.chochM1.type.includes('BULL') ? '↑ Alcista' : '↓ Bajista'} en {m1Data.chochM1.level}
+              </span>
+            </div>
+          )}
+          {m1Data.bosM1 && (
+            <div style={{display:'flex',justifyContent:'space-between',fontSize:10}}>
+              <span style={{color:'#7d8590'}}>BOS M1</span>
+              <span style={{color:'#a78bfa',fontWeight:700}}>
+                {m1Data.bosM1.side === 'BUY' ? '↑ Alcista' : '↓ Bajista'} en {m1Data.bosM1.level}
+              </span>
+            </div>
+          )}
+          <div style={{display:'flex',justifyContent:'space-between',fontSize:10}}>
+            <span style={{color:'#7d8590'}}>Precio actual</span>
+            <span style={{fontWeight:700,color:'#e6edf3'}}>{m1Data.price?.toFixed(2)}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Entry details when confirmed */}
+      {phase === 'ENTER' && (
+        <div style={{marginTop:8,borderTop:'1px solid #30363d',paddingTop:8}}>
+          <div style={{fontSize:10,fontWeight:800,color:tradeCol,marginBottom:4}}>⚡ ENTRAR AHORA</div>
+          {[{l:'Entry',v:tr.entry,c:tradeCol},{l:'SL',v:tr.sl,c:'#ff4757'},{l:'TP1',v:tr.tp1,c:'#2ed573'}].map(({l,v,c})=>(
+            <div key={l} style={{display:'flex',justifyContent:'space-between',fontSize:11}}>
+              <span style={{color:'#7d8590'}}>{l}</span>
+              <span style={{fontWeight:700,color:c}}>{parseFloat(v).toFixed(2)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Waiting instructions */}
+      {phase === 'waiting' && (
+        <div style={{marginTop:6,fontSize:9,color:'#7d8590',lineHeight:1.6,borderTop:'1px solid #30363d',paddingTop:6}}>
+          Zona entrada: <strong style={{color:tradeCol}}>{tr.entry}</strong><br/>
+          Confirmar: CHoCH o BOS en M1<br/>
+          Luego pullback → entrada
+        </div>
+      )}
+    </div>
+  )
+}
+
 /* ─────────────── Constants */
 const ASSETS={
   stpRNG:{name:'Step Index',shortName:'Step',emoji:'📊',decimals:2},
@@ -628,9 +807,11 @@ export default function Dashboard({user,subscription,onLogout}){
   const[entryHit,setEntryHit]=useState(false)
   const[cardHidden,setCardHidden]=useState(false)
   const[cardPos,setCardPos]=useState({x:8,y:8})
+  const[entryAlerts,setEntryAlerts]=useState([])  // M1 entry alerts
+  const[m1MonitorActive,setM1MonitorActive]=useState(false) // M1 monitor running
 
   // Reset on symbol change
-  useEffect(()=>{setAiZones(null);setAiActive(false);setTradeHit(null);setEntryHit(false);setAlerts([]);setCardHidden(false);setCardPos({x:8,y:8})},[symbol])
+  useEffect(()=>{setAiZones(null);setAiActive(false);setTradeHit(null);setEntryHit(false);setAlerts([]);setCardHidden(false);setCardPos({x:8,y:8});setEntryAlerts([]);setM1MonitorActive(false)},[symbol])
 
   const fetchDash=useCallback(async()=>{
     try{const r=await fetch(`${API_URL}/api/dashboard/${encodeURIComponent(user.email)}`);setDash(await r.json())}catch{}
@@ -883,7 +1064,30 @@ export default function Dashboard({user,subscription,onLogout}){
                   </div>
                 )}
                 {/* Alerts */}
-                {alerts.length>0&&(
+                {/* Entry alerts from M1 monitor */}
+                {entryAlerts.length>0&&(
+                  <div style={{position:'absolute',top:8,left:'50%',transform:'translateX(-50%)',
+                    display:'flex',flexDirection:'column',gap:4,zIndex:30,pointerEvents:'none',minWidth:340}}>
+                    {entryAlerts.slice(0,2).map((a,i)=>(
+                      <div key={i} style={{background:'rgba(13,17,23,.98)',
+                        border:`3px solid ${a.side==='BUY'?'#2ed573':'#ff4757'}`,
+                        borderRadius:10,padding:'10px 16px',
+                        boxShadow:`0 0 30px ${a.side==='BUY'?'#2ed57355':'#ff475755'}`,
+                        animation:'slideIn .3s ease'}}>
+                        <div style={{display:'flex',alignItems:'center',gap:8}}>
+                          <span style={{fontSize:20}}>{a.side==='BUY'?'▲':'▼'}</span>
+                          <div>
+                            <div style={{fontSize:13,fontWeight:800,color:a.side==='BUY'?'#2ed573':'#ff4757'}}>
+                              ⚡ ENTRADA CONFIRMADA — {a.side}
+                            </div>
+                            <div style={{fontSize:11,color:'#e6edf3'}}>{a.confirm} en M1 | @ {a.price}</div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                                {alerts.length>0&&(
                   <div style={{position:'absolute',top:8,left:'50%',transform:'translateX(-50%)',
                     display:'flex',flexDirection:'column',gap:4,zIndex:10,pointerEvents:'none',minWidth:320,maxWidth:500}}>
                     {alerts.map(a=>(
@@ -950,7 +1154,21 @@ export default function Dashboard({user,subscription,onLogout}){
                     </div>
                   </div>
                 )}
-                {/* Show card button when hidden */}
+                <M1Monitor
+                  symbol={symbol}
+                  aiZones={aiZones}
+                  active={m1MonitorActive&&aiActive}
+                  onEntryAlert={alert=>{
+                    setEntryAlerts(prev=>[alert,...prev].slice(0,3))
+                    setAlerts(prev=>[{
+                      id:'m1-entry-'+Date.now(),
+                      msg:alert.side==='BUY'?'⚡ M1 CONFIRMADO — ENTRADA BUY LISTA':'⚡ M1 CONFIRMADO — ENTRADA SELL LISTA',
+                      color:alert.side==='BUY'?'#2ed573':'#ff4757',
+                      ts:Date.now()
+                    },...prev].slice(0,5))
+                  }}
+                />
+                {/* Show card button when hidden */}}
                 {aiActive&&aiZones?.trade&&cardHidden&&(
                   <button onClick={()=>setCardHidden(false)}
                     style={{position:'absolute',top:8,right:8,zIndex:20,background:'rgba(13,17,23,.92)',
@@ -995,8 +1213,8 @@ export default function Dashboard({user,subscription,onLogout}){
               <AIAnalysisPanel
                 symbol={symbol}
                 onZonesDetected={setAiZones}
-                onActivate={()=>setAiActive(true)}
-                onReset={()=>{setAiActive(false);setTradeHit(null);setEntryHit(false);setAlerts([]);setCardHidden(false);setCardPos({x:8,y:8})}}
+                onActivate={()=>{setAiActive(true);setM1MonitorActive(true)}}
+                onReset={()=>{setAiActive(false);setTradeHit(null);setEntryHit(false);setAlerts([]);setCardHidden(false);setCardPos({x:8,y:8});setEntryAlerts([]);setM1MonitorActive(false)}}
               />
             </div>
           </div>

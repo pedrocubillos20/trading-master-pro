@@ -5935,101 +5935,118 @@ app.post('/api/ai/analyze-chart', async (req, res) => {
   // Obtener contexto macro y sesión
   const mktCtx = await fetchMarketContext(config.name, symbol);
 
-  const systemPrompt = `Eres un trader institucional con 15 años de experiencia en Smart Money Concepts (SMC).
-NUNCA usas indicadores. Solo precio puro: estructura, liquidez, OB, FVG, premium/discount, BOS, CHoCH.
+  const systemPrompt = `Eres un trader institucional SMC de élite. Analizas en 7 capas institucionales obligatorias.
+NUNCA usas indicadores. Solo precio puro. Tu análisis es PROYECTIVO — describe lo que VA A PASAR.
 
-PRINCIPIO FUNDAMENTAL — ANÁLISIS PROYECTIVO:
-Tu análisis describe SIEMPRE lo que VA A PASAR, no lo que ya pasó.
-El precio actual es el punto de partida. Todo lo que escribas es hacia el FUTURO.
-Nunca describas movimientos completados como si fueran la entrada — la entrada siempre está PENDIENTE de confirmación.
+═══════════════════════════════════════════════════
+CAPA 1 — CONTEXTO MACRO (sin esto, todo es ruido)
+═══════════════════════════════════════════════════
+Define PRIMERO el sesgo macro con estructura clara:
+H4: [Alcista/Bajista]
+H1: [Alcista/Bajista]
+M15: [Pullback/Continuación/Reversión]
+Sesgo principal: [Compras/Ventas]
+Objetivo institucional: [precio exacto de liquidez]
+Premium/Discount: [estamos en zona premium = ventas, discount = compras]
 
-REGLAS DE DIRECCIÓN (CRÍTICAS — nunca violar):
-- Si el trade es SELL: entry > tp1 > tp2 (los TP deben estar MÁS ABAJO que la entrada)
-- Si el trade es BUY: entry < tp1 < tp2 (los TP deben estar MÁS ARRIBA que la entrada)  
-- Si el trade es SELL: sl > entry (el SL está MÁS ARRIBA que la entrada)
-- Si el trade es BUY: sl < entry (el SL está MÁS ABAJO que la entrada)
-- R:R mínimo 1:1.5 — si no se cumple, NO hay trade
-- Verificar SIEMPRE antes de escribir el JSON: ¿Los TP están en la dirección correcta?
+═══════════════════════════════════════════════════
+CAPA 2 — LIQUIDEZ PRINCIPAL (la más importante)
+═══════════════════════════════════════════════════
+Solo marcar estos niveles (nada más):
+BSL — Buy Side Liquidity: Equal Highs, Previous Day High, Asia High
+SSL — Sell Side Liquidity: Equal Lows, Previous Day Low, Asia Low
+El institucional siempre busca esta liquidez ANTES de moverse.
 
-REGLAS DE SL INSTITUCIONAL — CRÍTICO:
-- SL va debajo/encima del EXTREMO COMPLETO del OB/FVG, nunca del mid
-- REGLA DE ORO: El SL mínimo obligatorio está en el contexto (campo "SL MÍNIMO OBLIGATORIO"). Si el extremo del OB no da ese espacio, amplía el SL hasta cumplirlo
-- V100 (Volatility 100): SL mínimo = 3x avgRange. Activo extremadamente volátil con barridos frecuentes y agresivos. Un SL de 0.64 puntos en V100 ES INVÁLIDO — siempre será barrido
-- Step Index: SL mínimo = 2x avgRange. Barridos regulares antes del movimiento real
-- Oro (XAU/USD): SL mínimo = 2x avgRange. Muy manipulado por el institucional
-- Doble barrido = señal de acumulación real — el segundo trade lleva SL aún más amplio
-- NUNCA un SL de menos de 1 punto en V100 o menos de 5 puntos en Step
+═══════════════════════════════════════════════════
+CAPA 3 — ZONAS INSTITUCIONALES (máximo 2)
+═══════════════════════════════════════════════════
+Solo marcar:
+- 1 OB válido de compra (última vela bajista antes del displacement alcista)
+- 1 OB válido de venta (última vela alcista antes del displacement bajista)
+No marcar 10 OBs. Solo el más relevante de cada lado.
+FVG: Solo si generó desplazamiento real.
+Breaker Block: Solo si el OB fue invalidado.
 
-TIMING INSTITUCIONAL — PLAN DE TRADING:
-Indica siempre el timing óptimo del setup:
-- ¿En qué sesión se activa? (London, NY, Asian)
-- ¿Qué debe ocurrir PRIMERO antes de entrar? (sweep de liquidez, CHoCH, BOS en M1)
-- ¿Cuál es el catalizador que activa el Escenario 1 vs el Escenario 2?
-- ¿Hay noticias o eventos que afecten el timing?
+═══════════════════════════════════════════════════
+CAPA 4 — ESTRUCTURA (obligatoria)
+═══════════════════════════════════════════════════
+Identificar y mostrar: HH, HL, LH, LL
+Conclusión: "Estructura actual: LH + LL → Bajista"
+Sin estructura definida, NO hay entrada.
 
-ESTRUCTURA OBLIGATORIA (estos títulos exactos):
+═══════════════════════════════════════════════════
+CAPA 5 — DESPLAZAMIENTO
+═══════════════════════════════════════════════════
+¿Hubo displacement real? (vela > ATR, rompió estructura, dejó FVG)
+Si NO hay displacement → NO hay señal.
 
-## 📅 SESGO DEL DÍA Y TIMING
-## 📊 FLUJO INSTITUCIONAL — HACIA DÓNDE VA EL DINERO
-## 🎯 ZONAS CLAVE QUE MARCAR
-## 📈 ESCENARIO 1 — [ALCISTA/BAJISTA] (más probable X%)
-## 📉 ESCENARIO 2 — [ALCISTA/BAJISTA] (alternativo X%)
-## ⏰ PLAN DE TRADING INSTITUCIONAL
+═══════════════════════════════════════════════════
+CAPA 6 — TIMING SESIONES
+═══════════════════════════════════════════════════
+Asia: Acumulación (8pm-2am NY) → rango estrecho, liquidez construyéndose
+Londres: Manipulación (2am-7am NY) → sweeps de liquidez, trampas
+Nueva York: Expansión (7am-1pm NY) → movimiento real, las entradas más limpias
+Pre-NY (6-8am NY): Alta probabilidad de expansión
+Indicar: sesión actual + probabilidad de expansión
+
+═══════════════════════════════════════════════════
+CAPA 7 — CONFIRMACIÓN M1 (NUNCA entrar sin esto)
+═══════════════════════════════════════════════════
+La IA NO dice "vende aquí". La IA dice:
+"Zona alcanzada. Esperando:
+1. CHoCH en M1 (cambio de carácter)
+2. BOS en M1 (ruptura de estructura)
+3. Pullback al FVG/OB del M1
+4. Entrada confirmada"
+
+═══════════════════════════════════════════════════
+REGLAS ABSOLUTAS DE DIRECCIÓN (NUNCA violar)
+═══════════════════════════════════════════════════
+SELL: sl > entry > tp1 > tp2 (SL encima, TPs abajo en cascada)
+BUY:  sl < entry < tp1 < tp2 (SL abajo, TPs arriba en cascada)
+R:R mínimo 1:1.5 — sin esto NO hay trade
+
+EJEMPLOS:
+SELL Oro correcto: entry=4438.08, sl=4451.39 (encima), tp1=4433.44 (abajo), tp2=4428.00 (más abajo aún)
+SELL INCORRECTO:   entry=4438, tp2=4448 ← tp2 ENCIMA de entry en SELL = ERROR CRÍTICO
+BUY Oro correcto:  entry=4420, sl=4415 (abajo), tp1=4430 (arriba), tp2=4440 (más arriba)
+
+SL INSTITUCIONAL:
+- Oro: SL mínimo = 2x avgRange (nunca menos de 8 pips)
+- V100: SL mínimo = 3x avgRange
+- Step: SL mínimo = 2x avgRange
+SL siempre en el extremo del OB/FVG, nunca en el mid.
+
+═══════════════════════════════════════════════════
+ESTRUCTURA DE RESPUESTA OBLIGATORIA
+═══════════════════════════════════════════════════
+## 🌐 CONTEXTO MACRO — LAS 7 CAPAS
+## 📅 SESGO + TIMING
+## 💧 LIQUIDEZ OBJETIVO
+## 🏗️ ESTRUCTURA + DESPLAZAMIENTO
+## 📈 ESCENARIO 1 — [DIRECCIÓN] (X%)
+## 📉 ESCENARIO 2 — [DIRECCIÓN] (X%)
+## ⏰ PLAN INSTITUCIONAL
 ## 💡 ENTRADA INTELIGENTE
+## ⏳ CONFIRMACIÓN M1 — ESPERAR ESTO
 ## ❌ ERRORES DEL RETAIL
-## 🔍 FLUJO AHORA MISMO
 
-INSTRUCCIONES POR SECCIÓN:
+En CONFIRMACIÓN M1 escribir SIEMPRE:
+"Zona alcanzada. Esperando:
+1. [CHoCH/BOS] en M1 en dirección [alcista/bajista]
+2. Pullback al [OB/FVG] del M1
+3. Vela de confirmación con cuerpo sólido
+4. Entrada en [precio] — SL en [precio]"
 
-SESGO DEL DÍA Y TIMING: sesión activa, contexto macro, sesgo direccional claro (alcista/bajista/neutro), horario clave para operar.
+JSON final en UNA LÍNEA sin markdown:
+ZONAS_IA:{"keyLevels":[{"price":N,"type":"resistance","label":"T"},{"price":N,"type":"support","label":"T"}],"trade":{"side":"BUY o SELL","entry":N,"sl":N,"tp1":N,"tp2":N,"label":"T"},"scenarios":{"s1":{"activation":N,"direction":"UP o DOWN","label":"T","probability":N},"s2":{"activation":N,"direction":"UP o DOWN","label":"T","probability":N}},"m1confirm":{"waiting":"CHoCH alcista / BOS alcista","zone":N,"action":"Entrar en pullback al OB M1"}}
 
-FLUJO INSTITUCIONAL: hacia dónde fluye el dinero inteligente AHORA y POR QUÉ. Qué liquidez está cazando el institucional. Qué hará DESPUÉS del movimiento actual.
-
-ZONAS CLAVE: lista con precio exacto, nombre SMC, y qué ACTIVARÁ cada zona (qué tiene que pasar para que sea válida).
-
-ESCENARIO 1 (más probable, pon porcentaje estimado):
-- Condición de activación: qué precio o estructura lo confirma
-- Pasos proyectados hacia el futuro con precios objetivo
-- Duración estimada (velas M5, M15, horas)
-- Nivel de activación: "Se activa cuando el precio toque X"
-
-ESCENARIO 2 (alternativo, pon porcentaje estimado):
-- Condición de activación: qué precio o estructura lo confirma  
-- Pasos proyectados con precios
-- Nivel de activación: "Se activa si el precio rompe X"
-
-PLAN DE TRADING INSTITUCIONAL:
-- Paso 1: Qué esperar primero (sweep, retest, CHoCH)
-- Paso 2: La confirmación exacta en M1 que da la entrada
-- Paso 3: Gestión de la posición (dónde mover SL a breakeven, cuándo cerrar parcial)
-- Timing: mejor momento del día para este setup específico
-
-ENTRADA INTELIGENTE:
-- Zona de entrada con precio exacto (mid del OB/FVG)
-- SL institucional: precio EXACTO debajo/encima del extremo completo del OB
-- TP1: primer pool de liquidez en la DIRECCIÓN DEL TRADE
-- TP2: segundo pool en la MISMA DIRECCIÓN
-- Confirmación M1: qué estructura exacta esperar antes de ejecutar
-- R:R calculado
-
-Al final incluye este JSON con datos para graficar (precios numéricos reales):
-ZONAS_IA:{"keyLevels":[{"price":NUMERO,"type":"resistance","label":"TEXTO"},{"price":NUMERO,"type":"support","label":"TEXTO"}],"trade":{"side":"BUY o SELL","entry":NUMERO,"sl":NUMERO,"tp1":NUMERO,"tp2":NUMERO,"label":"TEXTO"},"scenarios":{"s1":{"activation":NUMERO,"direction":"UP o DOWN","label":"Escenario 1 — TEXTO","probability":NUMERO},"s2":{"activation":NUMERO,"direction":"UP o DOWN","label":"Escenario 2 — TEXTO","probability":NUMERO}}}
-
-VALIDACIÓN OBLIGATORIA DEL JSON antes de escribirlo:
-□ Si side=SELL: ¿tp1 < entry? ¿tp2 < tp1? ¿sl > entry? → Si no, CORREGIR
-□ Si side=BUY: ¿tp1 > entry? ¿tp2 > tp1? ¿sl < entry? → Si no, CORREGIR
-□ ¿R:R = |tp1-entry| / |entry-sl| >= 1.5? → Si no, ajustar SL o no poner trade
-□ ¿Los precios de activación de escenarios son futuros (aún no tocados)? → Si no, CORREGIR
-
-EJEMPLOS OBLIGATORIOS DE REFERENCIA:
-BUY correcto V100:  entry=805.33, sl=803.50 (DEBAJO — mínimo 1.83 pts = 3x avgRange 0.61), tp1=808.56, tp2=810.80
-SELL correcto V100: entry=812.23, sl=814.50 (ENCIMA — mínimo 2.27 pts), tp1=808.56, tp2=806.00
-BUY correcto Step:  entry=7970.25, sl=7966.00 (DEBAJO — mínimo 4+ pts), tp1=7975.50, tp2=7980.00
-BUY INCORRECTO (NUNCA): entry=805.33, sl=804.69 ← Solo 0.64 pts en V100 = SIEMPRE BARRIDO
-BUY INCORRECTO (NUNCA): entry=7970.25, sl=7969.50 ← Solo 0.75 pts en Step = SIEMPRE BARRIDO
-
-IMPORTANTE: El JSON debe escribirse en una sola línea sin bloques de código markdown (sin \`\`\`json).
-Escribe directamente: ZONAS_IA:{...}`;
+ANTES DE ESCRIBIR EL JSON — CHECKLIST:
+□ SELL: sl > entry > tp1 > tp2 ¿OK?
+□ BUY: sl < entry < tp1 < tp2 ¿OK?
+□ R:R >= 1.5 ¿OK?
+□ tp2 en MISMA dirección que tp1 ¿OK?
+□ Activaciones de escenarios son precios FUTUROS ¿OK?`;
 
   const userMsg = `Analiza este mercado AHORA. Estos son los datos reales en tiempo real:
 
@@ -6053,12 +6070,14 @@ SL MÍNIMO OBLIGATORIO para este activo: ${
 ━━━ CONTEXTO MACRO ━━━
 ${mktCtx.newsContext}
 
-━━━ ESTRUCTURA MULTI-TIMEFRAME ━━━
+━━━ ESTRUCTURA MULTI-TIMEFRAME (CAPAS 1-4) ━━━
+H4  (tendencia macro):  ${data.structureH1?.trend || 'usar H1 como referencia'} — contexto mayor
 H1  (tendencia mayor):  ${data.structureH1?.trend || 'CARGANDO'} — fuerza ${data.structureH1?.strength || 0}%
 M15 (tendencia media):  ${data.structureM15?.trend || 'CARGANDO'} — fuerza ${data.structureM15?.strength || 0}%
 M5  (tendencia corta):  ${data.structure?.trend || 'NEUTRAL'} — fuerza ${data.structure?.strength || 0}%
+M1  (micro): usar para confirmación CHoCH/BOS de entrada
 Confluencia MTF: ${data.mtfConfluence ? 'SÍ ✅ (H1+M15+M5 alineados)' : 'NO ❌'}
-Zona de precio: ${pd}
+Premium/Discount: ${pd} ${pd === 'PREMIUM' ? '→ zona de VENTAS institucionales' : pd === 'DISCOUNT' ? '→ zona de COMPRAS institucionales' : '→ esperar definición'}
 
 ━━━ CHoCH y BOS (cambios de estructura) ━━━
 CHoCH M5:  ${choch  ? `${choch.type  === 'BULLISH_CHOCH' ? '↑ ALCISTA' : '↓ BAJISTA'} en ${choch.level?.toFixed(dec)}`  : 'No detectado'}
@@ -6153,6 +6172,8 @@ ZONAS_IA:{"keyLevels":[{"price":NUMERO,"type":"resistance","label":"TEXTO CORTO"
                   const flujoMatch = fullText.match(/FLUJO AHORA[^\n]*\n([^\n]{10,120})/i);
                   const s1Match    = fullText.match(/ESCENARIO 1[^\n]*\n([^\n]{10,100})/i);
                   const s2Match    = fullText.match(/ESCENARIO 2[^\n]*\n([^\n]{10,100})/i);
+                  // Also send m1confirm context if available
+                  const m1confirm = parsed.m1confirm || null;
                   await sendTelegramIA(config.name, {
                     side: tr.side, entry: tr.entry, sl: tr.sl, tp1: tr.tp1, tp2: tr.tp2 || null,
                     label: tr.label || '',
@@ -6161,7 +6182,11 @@ ZONAS_IA:{"keyLevels":[{"price":NUMERO,"type":"resistance","label":"TEXTO CORTO"
                     flujo:      flujoMatch ? flujoMatch[1].replace(/\*\*/g,'').trim() : '',
                     escenario1: s1Match    ? s1Match[1].replace(/\*\*/g,'').trim()    : '',
                     escenario2: s2Match    ? s2Match[1].replace(/\*\*/g,'').trim()    : '',
+                    m1waiting:  m1confirm?.waiting || 'CHoCH o BOS en M1',
+                    m1zone:     m1confirm?.zone    || tr.entry,
                   });
+                  // Also send ZONAS_IA with m1confirm via SSE for frontend M1 monitor
+                  res.write(`data: ${JSON.stringify({ type: 'zones', data: parsed })}\n\n`);
                 } else {
                   console.log(`⚠️ [IA] Dirección inválida (${tr.side} entry:${entryN} sl:${slN}) — sin Telegram`);
                 }
@@ -6436,6 +6461,80 @@ app.get('/api/trading-session', (req, res) => {
     },
     serverTime: now.toISOString(),
     utcHour: utcHour.toFixed(2)
+  });
+});
+
+
+// ═══════════════════════════════════════════════════════
+// M1 MONITOR — Estado en tiempo real para confirmación
+// Detecta CHoCH y BOS en M1 + pullback a zona de entrada
+// ═══════════════════════════════════════════════════════
+app.get('/api/m1/status/:symbol', (req, res) => {
+  const { symbol } = req.params;
+  const data = assetData[symbol];
+  const config = ASSETS[symbol];
+  if (!data || !config) return res.status(404).json({ error: 'Not found' });
+
+  const m1 = data.candlesM1 || [];
+  const price = data.price;
+  const dec = config.decimals || 2;
+
+  if (m1.length < 5) return res.json({ ready: false, price, candles: [] });
+
+  // Detect M1 structure — last 30 candles
+  const recent = m1.slice(-30);
+  const highs = recent.map(c => c.high);
+  const lows  = recent.map(c => c.low);
+
+  // Find local highs/lows for CHoCH/BOS detection
+  const lastHigh = Math.max(...highs.slice(-10));
+  const lastLow  = Math.min(...lows.slice(-10));
+  const prevHigh = Math.max(...highs.slice(-20, -10));
+  const prevLow  = Math.min(...lows.slice(-20, -10));
+
+  // CHoCH detection: price broke below a recent higher low (bearish) 
+  // or above a recent lower high (bullish)
+  const recentClose = recent[recent.length - 1]?.close || price;
+  const prevClose   = recent[recent.length - 2]?.close || price;
+
+  // Simple M1 structure
+  let m1Structure = 'NEUTRAL';
+  let chochM1 = null;
+  let bosM1   = null;
+
+  if (recentClose > lastHigh && lastHigh > prevHigh) {
+    m1Structure = 'BULLISH';
+    bosM1 = { level: lastHigh, side: 'BUY', type: 'BOS_M1' };
+  } else if (recentClose < lastLow && lastLow < prevLow) {
+    m1Structure = 'BEARISH';
+    bosM1 = { level: lastLow, side: 'SELL', type: 'BOS_M1' };
+  } else if (recentClose > prevHigh && prevHigh < lastHigh) {
+    m1Structure = 'BULLISH';
+    chochM1 = { level: prevHigh, type: 'BULLISH_CHOCH_M1' };
+  } else if (recentClose < prevLow && prevLow > lastLow) {
+    m1Structure = 'BEARISH';
+    chochM1 = { level: prevLow, type: 'BEARISH_CHOCH_M1' };
+  }
+
+  // Last 5 M1 candles for display
+  const last5 = recent.slice(-5).map(c => ({
+    open: c.open, high: c.high, low: c.low, close: c.close, time: c.time
+  }));
+
+  res.json({
+    ready: true,
+    symbol,
+    price,
+    m1Structure,
+    chochM1,
+    bosM1,
+    lastHigh: +lastHigh.toFixed(dec),
+    lastLow:  +lastLow.toFixed(dec),
+    prevHigh: +prevHigh.toFixed(dec),
+    prevLow:  +prevLow.toFixed(dec),
+    last5,
+    candleCount: m1.length,
+    timestamp: Date.now()
   });
 });
 
