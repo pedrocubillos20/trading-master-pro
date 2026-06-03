@@ -592,7 +592,7 @@ function AIAnalysisPanel({symbol, onZonesDetected, onActivate, onReset}){
    M1 MONITOR — Confirmación de entrada en tiempo real
    Detecta CHoCH/BOS en M1 y lanza alerta cuando hay pullback
    ═══════════════════════════════════════════════════════════════ */
-function M1Monitor({ symbol, aiZones, active, onEntryAlert }) {
+function M1Monitor({ symbol, aiZones, active, onEntryAlert, pos, setPos, hidden, setHidden }) {
   const [m1Data, setM1Data] = useState(null)
   const [phase, setPhase] = useState('waiting') // waiting | zone_reached | choch_detected | bos_detected | pullback | ENTER
   const [lastAlert, setLastAlert] = useState(null)
@@ -674,24 +674,48 @@ SL: ${tr.sl} | TP1: ${tr.tp1}`,
 
   const info = phaseInfo[phase] || phaseInfo.waiting
 
+  if (hidden) return (
+    <button onClick={()=>setHidden(false)}
+      style={{position:'absolute',bottom:8,right:8,zIndex:25,
+        background:'rgba(13,17,23,.92)',border:`2px solid ${tradeCol}`,
+        borderRadius:6,padding:'4px 10px',cursor:'pointer',
+        color:tradeCol,fontSize:11,fontWeight:700}}>
+      📡 M1 Monitor
+    </button>
+  )
+
   return (
     <div style={{
-      position: 'absolute', bottom: 44, right: 8, zIndex: 25,
+      position: 'absolute',
+      top: pos?.y ?? 44, left: pos?.x ?? 8,
+      zIndex: 25,
       background: 'rgba(13,17,23,.97)',
       border: `2px solid ${info.col}`,
-      borderRadius: 10, padding: '10px 14px', minWidth: 230, maxWidth: 280,
+      borderRadius: 10, minWidth: 230, maxWidth: 280,
       boxShadow: info.glow ? `0 0 24px ${info.col}55` : `0 4px 16px rgba(0,0,0,.5)`,
-      transition: 'all .3s'
+      cursor: 'grab', userSelect: 'none',
+      transition: 'border-color .3s, box-shadow .3s'
+    }}
+    onMouseDown={e=>{
+      const sx=e.clientX-(pos?.x??8), sy=e.clientY-(pos?.y??44)
+      const mv=ev=>setPos({x:ev.clientX-sx, y:ev.clientY-sy})
+      const up=()=>{window.removeEventListener('mousemove',mv);window.removeEventListener('mouseup',up)}
+      window.addEventListener('mousemove',mv);window.addEventListener('mouseup',up)
     }}>
       {/* Header */}
-      <div style={{display:'flex',alignItems:'center',gap:7,marginBottom:8}}>
+      <div style={{display:'flex',alignItems:'center',gap:7,padding:'8px 12px 6px',
+        borderBottom:`1px solid ${info.col}33`,cursor:'grab'}}>
         <div style={{width:8,height:8,borderRadius:'50%',background:info.col,flexShrink:0,
           animation: info.pulse ? 'pulse 1s ease-in-out infinite' : 'none'}}/>
-        <span style={{fontSize:10,fontWeight:700,color:'#7d8590',letterSpacing:'.05em'}}>MONITOR M1</span>
+        <span style={{fontSize:9,color:'#7d8590'}}>⠿ MONITOR M1</span>
         <span style={{marginLeft:'auto',fontSize:10,fontWeight:700,color:tradeCol}}>
           {isBuy ? '▲ BUY' : '▼ SELL'} @ {tr.entry}
         </span>
+        <button onClick={e=>{e.stopPropagation();setHidden(true)}}
+          style={{background:'none',border:'none',color:'#7d8590',cursor:'pointer',
+            fontSize:14,lineHeight:1,padding:'0 2px',marginLeft:4}}>×</button>
       </div>
+      <div style={{padding:'8px 12px 10px'}}>
 
       {/* Phase status */}
       <div style={{
@@ -755,6 +779,7 @@ SL: ${tr.sl} | TP1: ${tr.tp1}`,
           Luego pullback → entrada
         </div>
       )}
+      </div>
     </div>
   )
 }
@@ -809,9 +834,11 @@ export default function Dashboard({user,subscription,onLogout}){
   const[cardPos,setCardPos]=useState({x:8,y:8})
   const[entryAlerts,setEntryAlerts]=useState([])  // M1 entry alerts
   const[m1MonitorActive,setM1MonitorActive]=useState(false) // M1 monitor running
+  const[m1Pos,setM1Pos]=useState({x:8,y:44})    // M1 monitor position
+  const[m1Hidden,setM1Hidden]=useState(false)    // M1 monitor hidden
 
   // Reset on symbol change
-  useEffect(()=>{setAiZones(null);setAiActive(false);setTradeHit(null);setEntryHit(false);setAlerts([]);setCardHidden(false);setCardPos({x:8,y:8});setEntryAlerts([]);setM1MonitorActive(false)},[symbol])
+  useEffect(()=>{setAiZones(null);setAiActive(false);setTradeHit(null);setEntryHit(false);setAlerts([]);setCardHidden(false);setCardPos({x:8,y:8});setEntryAlerts([]);setM1MonitorActive(false);setM1Pos({x:8,y:44});setM1Hidden(false)},[symbol])
 
   const fetchDash=useCallback(async()=>{
     try{const r=await fetch(`${API_URL}/api/dashboard/${encodeURIComponent(user.email)}`);setDash(await r.json())}catch{}
@@ -1158,6 +1185,10 @@ export default function Dashboard({user,subscription,onLogout}){
                   symbol={symbol}
                   aiZones={aiZones}
                   active={m1MonitorActive&&aiActive}
+                  pos={m1Pos}
+                  setPos={setM1Pos}
+                  hidden={m1Hidden}
+                  setHidden={setM1Hidden}
                   onEntryAlert={alert=>{
                     setEntryAlerts(prev=>[alert,...prev].slice(0,3))
                     setAlerts(prev=>[{
@@ -1214,7 +1245,7 @@ export default function Dashboard({user,subscription,onLogout}){
                 symbol={symbol}
                 onZonesDetected={setAiZones}
                 onActivate={()=>{setAiActive(true);setM1MonitorActive(true)}}
-                onReset={()=>{setAiActive(false);setTradeHit(null);setEntryHit(false);setAlerts([]);setCardHidden(false);setCardPos({x:8,y:8});setEntryAlerts([]);setM1MonitorActive(false)}}
+                onReset={()=>{setAiActive(false);setTradeHit(null);setEntryHit(false);setAlerts([]);setCardHidden(false);setCardPos({x:8,y:8});setEntryAlerts([]);setM1MonitorActive(false);setM1Pos({x:8,y:44});setM1Hidden(false)}}
               />
             </div>
           </div>
