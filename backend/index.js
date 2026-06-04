@@ -6467,8 +6467,9 @@ app.get('/api/trading-session', (req, res) => {
 
 
 // ═══════════════════════════════════════════════════════
-// M1 MONITOR — Estado en tiempo real para confirmación
-// Detecta CHoCH y BOS en M1 + pullback a zona de entrada
+// M1 MONITOR — Estado en tiempo real con detección SMC real
+// Usa SMC.findSwings + detectCHoCH/BOS igual que M5/M15
+// Detecta: estructura, CHoCH, BOS, liquidez barrida, pullback
 // ═══════════════════════════════════════════════════════
 app.get('/api/m1/status/:symbol', (req, res) => {
   const { symbol } = req.params;
@@ -6480,47 +6481,89 @@ app.get('/api/m1/status/:symbol', (req, res) => {
   const price = data.price;
   const dec = config.decimals || 2;
 
-  if (m1.length < 5) return res.json({ ready: false, price, candles: [] });
+  if (m1.length < 10) return res.json({ ready: false, price, candles: [] });
 
-  // Detect M1 structure — last 30 candles
-  const recent = m1.slice(-30);
-  const highs = recent.map(c => c.high);
-  const lows  = recent.map(c => c.low);
+  // Use last 40 M1 candles for structure detection
+  const recent = m1.slice(-40);
 
-  // Find local highs/lows for CHoCH/BOS detection
-  const lastHigh = Math.max(...highs.slice(-10));
-  const lastLow  = Math.min(...lows.slice(-10));
-  const prevHigh = Math.max(...highs.slice(-20, -10));
-  const prevLow  = Math.min(...lows.slice(-20, -10));
+  // ── SMC real swing detection (lookback=2 for M1 precision) ──
+  const swingsM1 = SMC.findSwings(recent, 2);
+  const swingHighs = swingsM1.filter(s => s.type === 'high').slice(-6);
+  const swingLows  = swingsM1.filter(s => s.type === 'low').slice(-6);
 
-  // CHoCH detection: price broke below a recent higher low (bearish) 
-  // or above a recent lower high (bullish)
-  const recentClose = recent[recent.length - 1]?.close || price;
-  const prevClose   = recent[recent.length - 2]?.close || price;
+  // ── Real CHoCH and BOS detection using SMC engine ──
+  const rawChoch = SMC.detectCHoCH(recent, swingsM1);
+  const structureM1 = SMC.detectStructure(recent);
+  const rawBos = SMC.detectBOS(recent, swingsM1, structureM1);
 
-  // Simple M1 structure
-  let m1Structure = 'NEUTRAL';
   let chochM1 = null;
   let bosM1   = null;
+  let m1Structure = structureM1?.trend || 'NEUTRAL';
 
-  if (recentClose > lastHigh && lastHigh > prevHigh) {
-    m1Structure = 'BULLISH';
-    bosM1 = { level: lastHigh, side: 'BUY', type: 'BOS_M1' };
-  } else if (recentClose < lastLow && lastLow < prevLow) {
-    m1Structure = 'BEARISH';
-    bosM1 = { level: lastLow, side: 'SELL', type: 'BOS_M1' };
-  } else if (recentClose > prevHigh && prevHigh < lastHigh) {
-    m1Structure = 'BULLISH';
-    chochM1 = { level: prevHigh, type: 'BULLISH_CHOCH_M1' };
-  } else if (recentClose < prevLow && prevLow > lastLow) {
-    m1Structure = 'BEARISH';
-    chochM1 = { level: prevLow, type: 'BEARISH_CHOCH_M1' };
+  if (rawChoch) {
+    chochM1 = {
+      level:  +(rawChoch.level || rawChoch.breakLevel || 0).toFixed(dec),
+      type:   rawChoch.type === 'BULLISH_CHOCH' ? 'BULLISH_CHOCH_M1' : 'BEARISH_CHOCH_M1',
+      side:   rawChoch.type === 'BULLISH_CHOCH' ? 'BUY' : 'SELL',
+      breakIndex: rawChoch.breakIndex
+    };
+  }
+  if (rawBos) {
+    bosM1 = {
+      level:  +(rawBos.level || rawBos.breakLevel || 0).toFixed(dec),
+      side:   rawBos.side || (rawBos.type?.includes('BULL') ? 'BUY' : 'SELL'),
+      type:   'BOS_M1',
+      breakIndex: rawBos.breakIndex
+    };
   }
 
-  // Last 5 M1 candles for display
-  const last5 = recent.slice(-5).map(c => ({
-    open: c.open, high: c.high, low: c.low, close: c.close, time: c.time
-  }));
+  // ── Liquidity sweep detection ──
+  // A liquidity sweep = price went above a recent swing high then reversed
+  // or below a swing low then reversed
+  const currentClose = recent[recent.length - 1]?.close || price;
+  const prevClose    = recent[recent.length - 2]?.close || price;
+  let liquiditySweep = null;
+
+  if (swingHighs.length >= 2) {
+    const lastSH = swingHighs[swingHighs.length - 1];
+    const prevSH = swingHighs[swingHighs.length - 2];
+    // Price swept above last swing high then closed below it
+    if (price > lastSH.price && prevClose > lastSH.price && currentClose < lastSH.price) {
+      liquiditySweep = { type: 'BSL_SWEPT', level: +lastSH.price.toFixed(dec), direction: 'bearish_reversal' };
+    }
+  }
+  if (swingLows.length >= 2) {
+    const lastSL = swingLows[swingLows.length - 1];
+    // Price swept below last swing low then closed above it
+    if (price < lastSL.price && prevClose < lastSL.price && currentClose > lastSL.price) {
+      liquiditySweep = { type: 'SSL_SWEPT', level: +lastSL.price.toFixed(dec), direction: 'bullish_reversal' };
+    }
+  }
+
+  // ── Internal CHoCH (micro — between candles) ──
+  // Detects smaller structure shifts even before full CHoCH
+  let internalChoch = null;
+  if (swingHighs.length >= 2 && swingLows.length >= 2) {
+    const lastSH = swingHighs[swingHighs.length - 1];
+    const lastSL = swingLows[swingLows.length - 1];
+    const prevSH = swingHighs[swingHighs.length - 2];
+    const prevSL = swingLows[swingLows.length - 2];
+
+    // Bearish internal CHoCH: LH formed after LL (price making lower highs)
+    if (lastSH.price < prevSH.price && lastSL.price < prevSL.price && currentClose < lastSL.price) {
+      internalChoch = { type: 'INTERNAL_BEARISH', level: +lastSL.price.toFixed(dec) };
+    }
+    // Bullish internal CHoCH: HL formed after HH
+    if (lastSH.price > prevSH.price && lastSL.price > prevSL.price && currentClose > lastSH.price) {
+      internalChoch = { type: 'INTERNAL_BULLISH', level: +lastSH.price.toFixed(dec) };
+    }
+  }
+
+  // Key levels
+  const lastSH = swingHighs.length ? swingHighs[swingHighs.length - 1] : null;
+  const lastSL = swingLows.length  ? swingLows[swingLows.length - 1]   : null;
+  const prevSH = swingHighs.length >= 2 ? swingHighs[swingHighs.length - 2] : null;
+  const prevSL = swingLows.length  >= 2 ? swingLows[swingLows.length - 2]   : null;
 
   res.json({
     ready: true,
@@ -6529,12 +6572,78 @@ app.get('/api/m1/status/:symbol', (req, res) => {
     m1Structure,
     chochM1,
     bosM1,
-    lastHigh: +lastHigh.toFixed(dec),
-    lastLow:  +lastLow.toFixed(dec),
-    prevHigh: +prevHigh.toFixed(dec),
-    prevLow:  +prevLow.toFixed(dec),
-    last5,
+    internalChoch,
+    liquiditySweep,
+    swingHighs: swingHighs.slice(-3).map(s => ({ price: +s.price.toFixed(dec), index: s.index })),
+    swingLows:  swingLows.slice(-3).map(s => ({ price: +s.price.toFixed(dec), index: s.index })),
+    lastSwingHigh: lastSH ? +lastSH.price.toFixed(dec) : null,
+    lastSwingLow:  lastSL ? +lastSL.price.toFixed(dec) : null,
+    prevSwingHigh: prevSH ? +prevSH.price.toFixed(dec) : null,
+    prevSwingLow:  prevSL ? +prevSL.price.toFixed(dec) : null,
     candleCount: m1.length,
+    timestamp: Date.now()
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// M1 CONTEXT — Evaluates active scenario vs invalidated
+// Returns: scenarioActive(1|2|null), reason, nextAction
+// ═══════════════════════════════════════════════════════
+app.post('/api/m1/context', (req, res) => {
+  const { symbol, trade, scenarios } = req.body;
+  if (!symbol || !trade) return res.status(400).json({ error: 'Missing params' });
+
+  const data = assetData[symbol];
+  if (!data) return res.status(404).json({ error: 'Not found' });
+
+  const price = data.price;
+  const dec   = (ASSETS[symbol]?.decimals) || 2;
+  const isBuy = trade.side === 'BUY';
+  const entry = parseFloat(trade.entry);
+  const sl    = parseFloat(trade.sl);
+  const tp1   = parseFloat(trade.tp1);
+
+  // Check if SL was hit → scenario invalidated
+  const slHit = isBuy ? price < sl : price > sl;
+  // Check if TP1 was reached → scenario 1 succeeded  
+  const tp1Hit = isBuy ? price >= tp1 : price <= tp1;
+  // Check if price went past entry significantly in wrong direction
+  const entryRange = Math.abs(tp1 - entry);
+  const wrongDirection = isBuy ? price < entry - entryRange * 0.5 : price > entry + entryRange * 0.5;
+
+  let activeScenario = 1;
+  let status = 'active';
+  let reason = '';
+  let nextAction = '';
+
+  if (slHit) {
+    activeScenario = null;
+    status = 'invalidated';
+    reason = `SL tocado @ ${price.toFixed(dec)} — Escenario 1 inválido`;
+    nextAction = scenarios?.s2 ? 'Activar Escenario 2' : 'Re-analizar';
+  } else if (tp1Hit) {
+    status = 'tp1_reached';
+    reason = `TP1 alcanzado @ ${price.toFixed(dec)}`;
+    nextAction = 'Asegurar parcial, mover SL a breakeven';
+  } else if (wrongDirection && scenarios?.s2) {
+    activeScenario = 2;
+    status = 'scenario2';
+    reason = `Precio se alejó de entrada — evaluando Escenario 2`;
+    nextAction = `Esperar zona S2: ${scenarios.s2.activation}`;
+  } else {
+    reason = 'Escenario 1 activo — precio en rango';
+    nextAction = `Esperar retorno a zona entrada ${entry.toFixed(dec)}`;
+  }
+
+  // M1 structural context
+  const m1 = data.candlesM1 || [];
+  const m1Structure = data.structure?.trend || 'NEUTRAL';
+
+  res.json({
+    symbol, price: +price.toFixed(dec),
+    activeScenario, status, reason, nextAction,
+    m1Structure,
+    slHit, tp1Hit, wrongDirection,
     timestamp: Date.now()
   });
 });

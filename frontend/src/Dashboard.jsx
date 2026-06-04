@@ -55,19 +55,27 @@ function drawChart(canvas, state) {
   for(let p=Math.ceil(PN/gs)*gs;p<=PX;p+=gs){
     ctx.beginPath();ctx.moveTo(ML,py(p));ctx.lineTo(ML+CW,py(p));ctx.stroke()
   }
-  // Premium/Discount
-  if(premiumDiscount!=='EQUILIBRIUM'){
-    const midP=(PN+PX)/2
-    if(premiumDiscount==='PREMIUM'){
-      ctx.fillStyle='rgba(255,107,107,.04)';ctx.fillRect(ML,MT,CW,CH/2)
-    } else {
-      ctx.fillStyle='rgba(63,185,80,.04)';ctx.fillRect(ML,MT+CH/2,CW,CH/2)
-    }
-    ctx.strokeStyle='rgba(255,255,255,.12)';ctx.lineWidth=1;ctx.setLineDash([4,4])
-    ctx.beginPath();ctx.moveTo(ML,py(midP));ctx.lineTo(ML+CW,py(midP));ctx.stroke()
-    ctx.setLineDash([])
+  // Premium/Discount — prominent zone visualization
+  const midPrice=(PN+PX)/2
+  const midY=py(midPrice)
+  ctx.strokeStyle='rgba(255,255,255,.18)';ctx.lineWidth=1;ctx.setLineDash([5,4])
+  ctx.beginPath();ctx.moveTo(ML,midY);ctx.lineTo(ML+CW,midY);ctx.stroke();ctx.setLineDash([])
+  ctx.fillStyle='rgba(255,255,255,.25)';ctx.font='8px system-ui';ctx.textAlign='right'
+  ctx.fillText('50% EQ',ML+CW-4,midY-3)
+  if(premiumDiscount==='PREMIUM'){
+    ctx.fillStyle='rgba(255,107,107,.08)';ctx.fillRect(ML,MT,CW,midY-MT)
+    ctx.fillStyle='rgba(255,107,107,.55)';ctx.font='bold 10px system-ui';ctx.textAlign='right'
+    ctx.fillText('PREMIUM - VENTAS',ML+CW-8,MT+14)
+  } else if(premiumDiscount==='DISCOUNT'){
+    ctx.fillStyle='rgba(63,185,80,.08)';ctx.fillRect(ML,midY,CW,MT+CH-midY)
+    ctx.fillStyle='rgba(63,185,80,.55)';ctx.font='bold 10px system-ui';ctx.textAlign='right'
+    ctx.fillText('DISCOUNT - COMPRAS',ML+CW-8,MT+CH-5)
+  } else {
+    ctx.fillStyle='rgba(255,255,255,.18)';ctx.font='bold 9px system-ui';ctx.textAlign='right'
+    ctx.fillText('EQUILIBRIUM',ML+CW-8,MT+14)
   }
-  // OB Zones
+
+    // OB Zones
   ;[
     {zones:demandZones,fillA:'rgba(63,185,80,.18)',fillS:'rgba(63,185,80,.06)',stroke:C.green,strokeS:'rgba(63,185,80,.25)',label:'OB Demanda'},
     {zones:supplyZones,fillA:'rgba(255,107,107,.18)',fillS:'rgba(255,107,107,.06)',stroke:C.red,strokeS:'rgba(255,107,107,.25)',label:'OB Oferta'}
@@ -615,10 +623,23 @@ function M1Monitor({ symbol, aiZones, active, onEntryAlert, pos, setPos, hidden,
   const pollM1 = useCallback(async () => {
     if (!active || !aiZones?.trade) return
     try {
-      const r = await fetch(`${API_URL}/api/m1/status/${symbol}`)
-      const d = await r.json()
+      // Fetch M1 status + scenario context in parallel
+      const [statusRes, ctxRes] = await Promise.all([
+        fetch(`${API_URL}/api/m1/status/${symbol}`),
+        fetch(`${API_URL}/api/m1/context`, {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            symbol,
+            trade: aiZones.trade,
+            scenarios: aiZones.scenarios
+          })
+        })
+      ])
+      const d = await statusRes.json()
+      const ctx = ctxRes.ok ? await ctxRes.json() : null
       if (!d.ready) return
-      setM1Data(d)
+      setM1Data({...d, ctx})
 
       const tr = aiZones.trade
       const price = d.price
@@ -627,21 +648,60 @@ function M1Monitor({ symbol, aiZones, active, onEntryAlert, pos, setPos, hidden,
       const tp1   = parseFloat(tr.tp1)
       const isBuy = tr.side === 'BUY'
 
-      // Zone range: price within 0.5% of entry price (tighter = more precise)
-      const zoneRange = Math.abs(price) * 0.005
+      // Zone range: 0.4% of price
+      const zoneRange = Math.abs(price) * 0.004
       const inZone = Math.abs(price - entry) < zoneRange
 
-      // Valid SL distance check (reject if R:R < 1)
       const slDist = Math.abs(entry - sl)
       const tp1Dist = Math.abs(tp1 - entry)
       const rrValid = tp1Dist / slDist >= 1.0
 
+      // Use real SMC detections
       const choch = d.chochM1
       const bos   = d.bosM1
+      const internalChoch = d.internalChoch
+      const liquiditySweep = d.liquiditySweep
 
-      // M1 confirmation: CHoCH or BOS in trade direction
-      const bullishConfirm = choch?.type === 'BULLISH_CHOCH_M1' || bos?.side === 'BUY'
-      const bearishConfirm = choch?.type === 'BEARISH_CHOCH_M1' || bos?.side === 'SELL'
+      // Scenario invalidated?
+      if (ctx?.status === 'invalidated') {
+        setPhase('invalidated')
+        if (phase !== 'invalidated') {
+          onEntryAlert({
+            type: 'INVALIDATED', side: tr.side, price,
+            confirm: ctx.reason,
+            sl: tr.sl, tp1: tr.tp1,
+            ts: Date.now()
+          })
+        }
+        return
+      }
+
+      // TP1 reached
+      if (ctx?.status === 'tp1_reached' && phase !== 'tp1_reached') {
+        setPhase('tp1_reached')
+        onEntryAlert({
+          type: 'TP1', side: tr.side, price,
+          confirm: 'TP1 ALCANZADO',
+          sl: tr.sl, tp1: tr.tp1, tp2: tr.tp2,
+          ts: Date.now()
+        })
+        return
+      }
+
+      // Scenario 2 switch
+      if (ctx?.activeScenario === 2 && phase !== 'scenario2') {
+        setPhase('scenario2')
+        return
+      }
+
+      // M1 confirmation: real CHoCH or BOS in trade direction
+      // Also accept internal CHoCH (micro structure shift)  
+      const bullishConfirm = choch?.type === 'BULLISH_CHOCH_M1' || bos?.side === 'BUY' ||
+                             internalChoch?.type === 'INTERNAL_BULLISH' ||
+                             liquiditySweep?.direction === 'bullish_reversal'
+      const bearishConfirm = choch?.type === 'BEARISH_CHOCH_M1' || bos?.side === 'SELL' ||
+                             internalChoch?.type === 'INTERNAL_BEARISH' ||
+                             liquiditySweep?.direction === 'bearish_reversal'
       const hasConfirmation = isBuy ? bullishConfirm : bearishConfirm
 
       // ── SMC ENTRY SEQUENCE ──
@@ -718,12 +778,15 @@ function M1Monitor({ symbol, aiZones, active, onEntryAlert, pos, setPos, hidden,
   const tradeCol = isBuy ? '#2ed573' : '#ff4757'
 
   const phaseInfo = {
-    waiting:       { icon: '⏳', text: `Esperando precio en zona entrada: ${tr.entry}`, col: '#7d8590' },
-    zone_reached:  { icon: '🎯', text: 'EN ZONA — Esperando CHoCH/BOS en M1', col: '#f9ca24', pulse: true },
-    choch_detected:{ icon: '🔄', text: `${confirmTypeRef.current||'CHoCH'} ✓ — Esperando pullback a ${tr.entry}`, col: '#60a5fa', pulse: true },
-    bos_detected:  { icon: '💥', text: `BOS M1 ✓ — Esperando pullback a ${tr.entry}`, col: '#a78bfa', pulse: true },
-    pullback:      { icon: '↩️', text: `Pullback en progreso → PREPARAR ENTRADA @ ${tr.entry}`, col: '#fb923c', pulse: true, glow: true },
+    waiting:       { icon: '⏳', text: `Esperando precio en zona: ${tr.entry}`, col: '#7d8590' },
+    zone_reached:  { icon: '🎯', text: 'EN ZONA — Esperando CHoCH/BOS/Sweep en M1', col: '#f9ca24', pulse: true },
+    choch_detected:{ icon: '🔄', text: `${confirmTypeRef.current||'CHoCH'} ✓ — Pullback a ${tr.entry}`, col: '#60a5fa', pulse: true },
+    bos_detected:  { icon: '💥', text: `BOS M1 ✓ — Pullback a ${tr.entry}`, col: '#a78bfa', pulse: true },
+    pullback:      { icon: '↩️', text: `PULLBACK ACTIVO → ENTRADA @ ${tr.entry}`, col: '#fb923c', pulse: true, glow: true },
     ENTER:         { icon: '⚡', text: `ENTRAR AHORA — ${isBuy?'BUY':'SELL'} @ ${tr.entry}`, col: tradeCol, pulse: true, glow: true },
+    invalidated:   { icon: '❌', text: 'Escenario 1 INVALIDADO — SL tocado', col: '#ff4757' },
+    tp1_reached:   { icon: '✅', text: 'TP1 ALCANZADO — Asegurar parcial', col: '#2ed573', pulse: true },
+    scenario2:     { icon: '🔀', text: `ESCENARIO 2 ACTIVO — ${aiZones?.scenarios?.s2?.label||'Alternativo'}`, col: '#f9ca24', pulse: true },
   }
 
   const info = phaseInfo[phase] || phaseInfo.waiting
@@ -789,20 +852,44 @@ function M1Monitor({ symbol, aiZones, active, onEntryAlert, pos, setPos, hidden,
               {m1Data.m1Structure} {m1Data.m1Structure==='BULLISH'?'↑':m1Data.m1Structure==='BEARISH'?'↓':'·'}
             </span>
           </div>
-          {m1Data.chochM1 && (
-            <div style={{display:'flex',justifyContent:'space-between',fontSize:10}}>
+              {m1Data.chochM1 && (
+            <div style={{display:'flex',justifyContent:'space-between',fontSize:10,marginBottom:2}}>
               <span style={{color:'#7d8590'}}>CHoCH M1</span>
               <span style={{color:'#f9ca24',fontWeight:700}}>
-                {m1Data.chochM1.type.includes('BULL') ? '↑ Alcista' : '↓ Bajista'} en {m1Data.chochM1.level}
+                {m1Data.chochM1.type.includes('BULL') ? '↑ Alcista' : '↓ Bajista'} @ {m1Data.chochM1.level}
               </span>
             </div>
           )}
           {m1Data.bosM1 && (
-            <div style={{display:'flex',justifyContent:'space-between',fontSize:10}}>
+            <div style={{display:'flex',justifyContent:'space-between',fontSize:10,marginBottom:2}}>
               <span style={{color:'#7d8590'}}>BOS M1</span>
               <span style={{color:'#a78bfa',fontWeight:700}}>
-                {m1Data.bosM1.side === 'BUY' ? '↑ Alcista' : '↓ Bajista'} en {m1Data.bosM1.level}
+                {m1Data.bosM1.side === 'BUY' ? '↑' : '↓'} @ {m1Data.bosM1.level}
               </span>
+            </div>
+          )}
+          {m1Data.internalChoch && (
+            <div style={{display:'flex',justifyContent:'space-between',fontSize:10,marginBottom:2}}>
+              <span style={{color:'#7d8590'}}>CHoCH Interno</span>
+              <span style={{color:'#fb923c',fontWeight:700}}>
+                {m1Data.internalChoch.type.includes('BULL') ? '↑ Micro Bull' : '↓ Micro Bear'} @ {m1Data.internalChoch.level}
+              </span>
+            </div>
+          )}
+          {m1Data.liquiditySweep && (
+            <div style={{display:'flex',justifyContent:'space-between',fontSize:10,marginBottom:2,
+              background:'rgba(249,202,36,.08)',borderRadius:3,padding:'2px 4px'}}>
+              <span style={{color:'#f9ca24',fontWeight:700}}>⚡ SWEEP</span>
+              <span style={{color:'#f9ca24',fontWeight:700}}>
+                {m1Data.liquiditySweep.type} @ {m1Data.liquiditySweep.level}
+              </span>
+            </div>
+          )}
+          {m1Data.ctx?.status === 'scenario2' && (
+            <div style={{display:'flex',justifyContent:'space-between',fontSize:10,marginBottom:2,
+              background:'rgba(249,202,36,.1)',borderRadius:3,padding:'2px 4px'}}>
+              <span style={{color:'#f9ca24'}}>→ S2</span>
+              <span style={{color:'#f9ca24',fontSize:9}}>{m1Data.ctx.nextAction?.slice(0,30)}</span>
             </div>
           )}
           <div style={{display:'flex',justifyContent:'space-between',fontSize:10}}>
