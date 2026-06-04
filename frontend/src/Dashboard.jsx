@@ -20,7 +20,8 @@ function drawChart(canvas, state) {
     choch, bos, chochM15, bosM15,
     structure={}, zoom=1, offsetX=0,
     premiumDiscount='EQUILIBRIUM',
-    isM1=false
+    isM1=false,
+    m1MonitorData=null
   } = state
   if (!canvas || candles.length < 5) return
   const dpr = window.devicePixelRatio || 1
@@ -235,6 +236,27 @@ function drawChart(canvas, state) {
           ctx.fillText(lbl,ML+8,y+4)
         }
       }
+    }
+    // ── M1 Structure lines from live monitor ──
+    if(isM1 && m1MonitorData){
+      const drawML = (lvl, col, lbl) => {
+        if(!lvl) return
+        const y=py(lvl); if(y<MT-5||y>MT+CH+5) return
+        ctx.strokeStyle=col; ctx.lineWidth=2; ctx.setLineDash([8,3])
+        ctx.beginPath(); ctx.moveTo(ML,y); ctx.lineTo(ML+CW,y); ctx.stroke()
+        ctx.setLineDash([])
+        const lw=lbl.length*6+10
+        ctx.fillStyle=col+'22'; ctx.strokeStyle=col; ctx.lineWidth=1.5
+        ctx.beginPath(); ctx.roundRect(ML+4,y-10,lw,18,4); ctx.fill(); ctx.stroke()
+        ctx.fillStyle=col; ctx.font='bold 9px system-ui'; ctx.textAlign='left'
+        ctx.fillText(lbl, ML+8, y+5)
+      }
+      if(m1MonitorData.chochM1?.level) drawML(m1MonitorData.chochM1.level,'#f9ca24', m1MonitorData.chochM1.type?.includes('BULL')?'CHoCH M1 ↑':'CHoCH M1 ↓')
+      if(m1MonitorData.bosM1?.level)   drawML(m1MonitorData.bosM1.level,'#00d4aa',   m1MonitorData.bosM1.side==='BUY'?'BOS M1 ↑':'BOS M1 ↓')
+      if(m1MonitorData.internalChoch?.level) drawML(m1MonitorData.internalChoch.level,'#fb923c', m1MonitorData.internalChoch.type?.includes('BULL')?'CHoCH Int ↑':'CHoCH Int ↓')
+      if(m1MonitorData.liquiditySweep?.level) drawML(m1MonitorData.liquiditySweep.level,'#a78bfa', m1MonitorData.liquiditySweep.direction==='bullish_reversal'?'SSL Swept ⚡':'BSL Swept ⚡')
+      ;(m1MonitorData.swingHighs||[]).forEach(sh=>{const y=py(sh.price);if(y>=MT&&y<=MT+CH){ctx.fillStyle='rgba(255,107,107,.8)';ctx.beginPath();ctx.arc(ML+CW-10,y,3,0,Math.PI*2);ctx.fill()}})
+      ;(m1MonitorData.swingLows||[]).forEach(s2=>{const y=py(s2.price);if(y>=MT&&y<=MT+CH){ctx.fillStyle='rgba(63,185,80,.8)';ctx.beginPath();ctx.arc(ML+CW-10,y,3,0,Math.PI*2);ctx.fill()}})
     }
     // M1 confirmation glow
     if(isM1&&aiZones.trade){
@@ -609,7 +631,7 @@ function AIAnalysisPanel({symbol, onZonesDetected, onActivate, onReset}){
    M1 MONITOR — Confirmación de entrada en tiempo real
    Detecta CHoCH/BOS en M1 y lanza alerta cuando hay pullback
    ═══════════════════════════════════════════════════════════════ */
-function M1Monitor({ symbol, aiZones, active, onEntryAlert, pos, setPos, hidden, setHidden }) {
+function M1Monitor({ symbol, aiZones, active, onEntryAlert, pos, setPos, hidden, setHidden, onM1Data }) {
   const [m1Data, setM1Data] = useState(null)
   const [phase, setPhase] = useState('waiting') // waiting | zone_reached | choch_detected | bos_detected | pullback | ENTER
   const [lastAlert, setLastAlert] = useState(null)
@@ -639,7 +661,9 @@ function M1Monitor({ symbol, aiZones, active, onEntryAlert, pos, setPos, hidden,
       const d = await statusRes.json()
       const ctx = ctxRes.ok ? await ctxRes.json() : null
       if (!d.ready) return
-      setM1Data({...d, ctx})
+      const fullM1 = {...d, ctx}
+      setM1Data(fullM1)
+      onM1Data?.(fullM1)
 
       const tr = aiZones.trade
       const price = d.price
@@ -705,13 +729,34 @@ function M1Monitor({ symbol, aiZones, active, onEntryAlert, pos, setPos, hidden,
       const hasConfirmation = isBuy ? bullishConfirm : bearishConfirm
 
       // ── SMC ENTRY SEQUENCE ──
-      // Step 1: Price must visit the zone first
+      // On first poll after IA activation: check if M1 ALREADY has confirmation
+      // This catches CHoCH/BOS that happened BEFORE IA was activated
+      if (isFirstPollRef.current) {
+        isFirstPollRef.current = false
+        // If M1 already shows confirmation in trade direction, auto-confirm
+        if (hasConfirmation) {
+          confirmedRef.current = true
+          confirmTypeRef.current = bos ? 'BOS M1 (previo)' : 'CHoCH M1 (previo)'
+          console.log('M1: Confirmación previa detectada —', confirmTypeRef.current)
+        }
+        // If price is already at/near zone, mark as visited
+        if (inZone || Math.abs(price - entry) < Math.abs(entry) * 0.008) {
+          zoneVisitedRef.current = true
+        }
+      }
+
+      // Step 1: Price visits zone
       if (inZone) zoneVisitedRef.current = true
 
-      // Step 2: Once in zone, CHoCH/BOS locks in the confirmation
+      // Step 2: CHoCH/BOS locks confirmation (persists even if price moves away)
       if (zoneVisitedRef.current && hasConfirmation && !confirmedRef.current) {
         confirmedRef.current = true
-        confirmTypeRef.current = bos ? 'BOS M1' : 'CHoCH M1'
+        confirmTypeRef.current = bos ? 'BOS M1' : internalChoch ? 'CHoCH Interno M1' : 'CHoCH M1'
+      }
+      // Also confirm if CHoCH/BOS detected even without zone visit (pre-activation case)
+      if (hasConfirmation && !confirmedRef.current) {
+        confirmedRef.current = true
+        confirmTypeRef.current = bos ? 'BOS M1' : internalChoch ? 'CHoCH Interno M1' : 'CHoCH M1'
       }
 
       // Step 3: After confirmation, price pulls back INTO zone = ENTER
@@ -755,14 +800,24 @@ function M1Monitor({ symbol, aiZones, active, onEntryAlert, pos, setPos, hidden,
     } catch(e) {}
   }, [active, aiZones, symbol, phase, onEntryAlert])
 
-  // Reset confirmation state when analysis changes
+  // When analysis changes: do NOT reset confirmed state if M1 already has structure
+  // Instead, evaluate current M1 state immediately on first poll
+  const isFirstPollRef = React.useRef(true)
   useEffect(() => {
+    // Reset only when SYMBOL changes, not when aiZones updates
     confirmedRef.current = false
     confirmTypeRef.current = ''
     zoneVisitedRef.current = false
+    isFirstPollRef.current = true
     setPhase('waiting')
     setM1Data(null)
-  }, [aiZones, symbol])
+  }, [symbol])
+
+  // When aiZones changes (new IA analysis), mark as first poll
+  // but keep any existing M1 confirmation state
+  useEffect(() => {
+    isFirstPollRef.current = true
+  }, [aiZones])
 
   useEffect(() => {
     if (!active || !aiZones?.trade) { setPhase('waiting'); setM1Data(null); return }
@@ -983,6 +1038,7 @@ export default function Dashboard({user,subscription,onLogout}){
   const[entryAlerts,setEntryAlerts]=useState([])  // M1 entry alerts
   const[m1MonitorActive,setM1MonitorActive]=useState(false) // M1 monitor running
   const[m1Pos,setM1Pos]=useState({x:8,y:44})    // M1 monitor position
+  const[m1LiveData,setM1LiveData]=useState(null)  // live M1 data for chart
   const[m1Hidden,setM1Hidden]=useState(false)    // M1 monitor hidden
 
   // Reset on symbol change
@@ -1102,7 +1158,8 @@ export default function Dashboard({user,subscription,onLogout}){
       structure:aiActive?(analyze.structureM5Data||{}):{},
       zoom,offsetX,
       premiumDiscount:aiActive?(analyze.premiumDiscount||'EQUILIBRIUM'):'EQUILIBRIUM',
-      isM1
+      isM1,
+      m1MonitorData: isM1 && m1LiveData ? m1LiveData : null
     })
   },[analyze,tf,zoom,offsetX,aiZones,aiActive])
 
@@ -1337,6 +1394,7 @@ export default function Dashboard({user,subscription,onLogout}){
                   setPos={setM1Pos}
                   hidden={m1Hidden}
                   setHidden={setM1Hidden}
+                  onM1Data={d=>setM1LiveData(d)}
                   onEntryAlert={alert=>{
                     setEntryAlerts(prev=>[alert,...prev].slice(0,3))
                     setAlerts(prev=>[{
