@@ -302,6 +302,10 @@ const TRADING_PLAN = {
   ASSET_SESSION_MAP: {
     stpRNG:    ['NY_OPEN', 'LONDON_OPEN', 'LONDON_CLOSE', 'NIGHT'], // 24h sintético
     '1HZ100V': ['NY_OPEN', 'LONDON_OPEN', 'LONDON_CLOSE', 'NIGHT'], // 24h sintético
+    '1HZ75V':  ['NY_OPEN', 'LONDON_OPEN', 'LONDON_CLOSE', 'NIGHT'], // 24h sintético
+    'BOOM1000':  ['NY_OPEN', 'LONDON_OPEN', 'LONDON_CLOSE', 'NIGHT'], // 24h — solo BUY
+    'CRASH1000': ['NY_OPEN', 'LONDON_OPEN', 'LONDON_CLOSE', 'NIGHT'], // 24h — solo SELL
+    'JD75':      ['NY_OPEN', 'LONDON_OPEN', 'LONDON_CLOSE', 'NIGHT'], // 24h sintético
     frxXAUUSD: ['LONDON_OPEN', 'NY_OPEN'],  // Oro: solo London+NY (mayor volumen)
   },
 
@@ -869,7 +873,7 @@ function calculateExpirationDate(periodo) {
 }
 
 // Activos operados — definido aquí para uso en toda la app
-const MY_ASSETS = ['stpRNG', 'frxXAUUSD', '1HZ100V'];
+const MY_ASSETS = ['stpRNG', 'frxXAUUSD', '1HZ100V', '1HZ75V', 'BOOM1000', 'CRASH1000', 'JD75'];
 
 // In-memory subscription cache — avoids hammering Supabase on every request
 const subCache = new Map(); // userId → { sub, ts }
@@ -1070,7 +1074,8 @@ const ASSETS = {
   // 🎰 SINTÉTICOS - VOLATILITY
   // ═══════════════════════════════════════════════
   'stpRNG': { name: 'Step Index', shortName: 'Step', emoji: '📊', decimals: 2, pip: 0.01, plan: 'free', type: 'standard', category: 'sinteticos' },
-  'R_75': { name: 'Volatility 75', shortName: 'V75', emoji: '📈', decimals: 2, pip: 0.01, plan: 'basico', type: 'standard', category: 'sinteticos' },
+  'R_75':    { name: 'Volatility 75', shortName: 'V75',  emoji: '📈', decimals: 2, pip: 0.01, plan: 'basico',   type: 'standard', category: 'sinteticos' },
+  '1HZ75V':  { name: 'Volatility 75 (1HZ)', shortName: 'V75', emoji: '🔶', decimals: 2, pip: 0.01, plan: 'free', type: 'standard', category: 'sinteticos' },
   '1HZ100V': { name: 'Volatility 100', shortName: 'V100', emoji: '🔥', decimals: 2, pip: 0.01, plan: 'premium', type: 'standard', category: 'sinteticos' },
   'JD75': { name: 'Jump 75', shortName: 'Jump75', emoji: '⚡', decimals: 2, pip: 0.01, plan: 'premium', type: 'standard', category: 'sinteticos' },
   
@@ -6017,6 +6022,7 @@ REGLAS ABSOLUTAS DE DIRECCIÓN (NUNCA violar)
 SELL: sl > entry > tp1 > tp2 (SL encima, TPs abajo en cascada)
 BUY:  sl < entry < tp1 < tp2 (SL abajo, TPs arriba en cascada)
 R:R mínimo 1:1.5 — sin esto NO hay trade
+BOOM 1000/500: SIEMPRE side=BUY. CRASH 1000/500: SIEMPRE side=SELL
 
 EJEMPLOS:
 SELL Oro correcto: entry=4438.08, sl=4451.39 (encima), tp1=4433.44 (abajo), tp2=4428.00 (más abajo aún)
@@ -6024,10 +6030,19 @@ SELL INCORRECTO:   entry=4438, tp2=4448 ← tp2 ENCIMA de entry en SELL = ERROR 
 BUY Oro correcto:  entry=4420, sl=4415 (abajo), tp1=4430 (arriba), tp2=4440 (más arriba)
 
 SL INSTITUCIONAL:
-- Oro: SL mínimo = 2x avgRange (nunca menos de 8 pips)
-- V100: SL mínimo = 3x avgRange
+- Oro (frxXAUUSD): SL mínimo = 2x avgRange
+- V100 (1HZ100V): SL mínimo = 3x avgRange — muy volátil
+- V75 (1HZ75V): SL mínimo = 2.5x avgRange — similar al Oro en SMC
+- Jump 75 (JD75): SL mínimo = 3x avgRange — spikes/gaps frecuentes
+- Boom 1000 (BOOM1000): SOLO BUY — SL mínimo = 2x avgRange
+- Crash 1000 (CRASH1000): SOLO SELL — SL mínimo = 2x avgRange
 - Step: SL mínimo = 2x avgRange
 SL siempre en el extremo del OB/FVG, nunca en el mid.
+
+BOOM/CRASH — REGLA DE DIRECCIÓN:
+- BOOM: los spikes son alcistas → solo buscar entradas BUY en OB de demanda
+- CRASH: los spikes son bajistas → solo buscar entradas SELL en OB de oferta
+- Nunca operar Boom en dirección SELL ni Crash en dirección BUY
 
 ═══════════════════════════════════════════════════
 ESTRUCTURA DE RESPUESTA OBLIGATORIA
@@ -6074,7 +6089,11 @@ Precio actual: ${price?.toFixed(dec)}
 Tipo: ${config.type === 'standard' ? 'Par estándar' : config.type || 'Sintético Deriv'}
 Rango promedio vela M5 (avgRange): ${data.avgRange ? data.avgRange.toFixed(dec) : 'N/A'}
 SL MÍNIMO OBLIGATORIO para este activo: ${
-  symbol === '1HZ100V' ? (data.avgRange ? (data.avgRange * 3).toFixed(dec) + ' (3x avgRange — V100 muy volátil)' : '~3.00')
+  symbol === '1HZ100V' ? (data.avgRange ? (data.avgRange * 3).toFixed(dec) + ' (3x avgRange — V100)' : '~3.00')
+  : symbol === '1HZ75V' ? (data.avgRange ? (data.avgRange * 2.5).toFixed(dec) + ' (2.5x avgRange — V75)' : '~2.00')
+  : symbol === 'JD75'   ? (data.avgRange ? (data.avgRange * 3).toFixed(dec) + ' (3x avgRange — Jump75 spikes)' : '~3.00')
+  : symbol === 'BOOM1000'  ? (data.avgRange ? (data.avgRange * 2).toFixed(dec) + ' (2x avgRange — solo BUY)' : '~2.00')
+  : symbol === 'CRASH1000' ? (data.avgRange ? (data.avgRange * 2).toFixed(dec) + ' (2x avgRange — solo SELL)' : '~2.00')
   : symbol === 'stpRNG' ? (data.avgRange ? (data.avgRange * 2).toFixed(dec) + ' (2x avgRange — Step Index)' : '~8.00')
   : (data.avgRange ? (data.avgRange * 2).toFixed(dec) + ' (2x avgRange)' : 'calcular')
 } puntos desde la entrada

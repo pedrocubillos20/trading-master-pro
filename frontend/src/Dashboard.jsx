@@ -1025,9 +1025,13 @@ function M1Monitor({ symbol, aiZones, active, onEntryAlert, pos, setPos, hidden,
 
 /* ─────────────── Constants */
 const ASSETS={
-  stpRNG:{name:'Step Index',shortName:'Step',emoji:'📊',decimals:2},
-  frxXAUUSD:{name:'Oro (XAU/USD)',shortName:'Oro',emoji:'🥇',decimals:2},
-  '1HZ100V':{name:'Volatility 100',shortName:'V100',emoji:'🔥',decimals:2}
+  stpRNG:    {name:'Step Index',         shortName:'Step',     emoji:'📊', decimals:2},
+  frxXAUUSD: {name:'Oro (XAU/USD)',      shortName:'Oro',      emoji:'🥇', decimals:2},
+  '1HZ100V': {name:'Volatility 100',     shortName:'V100',     emoji:'🔥', decimals:2},
+  '1HZ75V':  {name:'Volatility 75',      shortName:'V75',      emoji:'🔶', decimals:2},
+  BOOM1000:  {name:'Boom 1000',          shortName:'Boom1K',   emoji:'🚀', decimals:2, onlyBuy:true},
+  CRASH1000: {name:'Crash 1000',         shortName:'Crash1K',  emoji:'📉', decimals:2, onlySell:true},
+  JD75:      {name:'Jump 75 Index',      shortName:'Jump75',   emoji:'⚡', decimals:2},
 }
 const TFS=['M1','M5','M15','H1']
 
@@ -1268,25 +1272,42 @@ export default function Dashboard({user,subscription,onLogout}){
           overflow:'hidden',background:C.bg1,borderRight:`1px solid ${C.border}`,display:'flex',flexDirection:'column',
           flexShrink:0,transition:'width .2s,min-width .2s'}}>
           <div style={{padding:'7px 10px',fontSize:10,fontWeight:600,color:C.muted,letterSpacing:'.05em',marginTop:6}}>MERCADOS</div>
-          {Object.entries(ASSETS).map(([sym,cfg])=>{
-            const ad=dash?.assets?.find(a=>a.symbol===sym)
-            const isAct=sym===symbol
-            const trend=ad?.structureM5||'LOADING'
-            const tc=trend==='BULLISH'?C.teal:trend==='BEARISH'?C.red:C.muted
-            return(
-              <div key={sym} onClick={()=>setSymbol(sym)}
-                style={{display:'flex',alignItems:'center',gap:7,padding:'7px 10px',fontSize:11,cursor:'pointer',
-                  borderRadius:6,margin:'1px 5px',background:isAct?C.bg3:'transparent',
-                  border:`1px solid ${isAct?C.border:'transparent'}`}}>
-                <div style={{width:25,height:25,borderRadius:5,background:isAct?'#1a3a2a':C.bg2,
-                  display:'flex',alignItems:'center',justifyContent:'center',fontSize:13,flexShrink:0}}>{cfg.emoji}</div>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontWeight:600,color:C.text,fontSize:11}}>{cfg.shortName}</div>
-                  <div style={{fontSize:9,color:tc,fontWeight:700}}>{trend}</div>
-                </div>
-              </div>
-            )
-          })}
+          {/* Group assets by category */}
+          {[
+            {label:'Sintéticos', syms:['stpRNG','1HZ75V','1HZ100V','JD75']},
+            {label:'Boom/Crash', syms:['BOOM1000','CRASH1000']},
+            {label:'Commodities', syms:['frxXAUUSD']},
+          ].map(({label,syms})=>(
+            <div key={label}>
+              <div style={{fontSize:8,color:C.border,letterSpacing:'.08em',padding:'6px 10px 2px',
+                textTransform:'uppercase',fontWeight:700}}>{label}</div>
+              {syms.filter(sym=>ASSETS[sym]).map(sym=>{
+                const cfg=ASSETS[sym]
+                const ad=dash?.assets?.find(a=>a.symbol===sym)
+                const isAct=sym===symbol
+                const trend=ad?.structureM5||'···'
+                const tc=trend==='BULLISH'?C.teal:trend==='BEARISH'?C.red:C.muted
+                return(
+                  <div key={sym} onClick={()=>setSymbol(sym)}
+                    style={{display:'flex',alignItems:'center',gap:7,padding:'6px 10px',fontSize:11,cursor:'pointer',
+                      borderRadius:6,margin:'1px 5px',background:isAct?C.bg3:'transparent',
+                      border:`1px solid ${isAct?C.border:'transparent'}`}}>
+                    <div style={{width:24,height:24,borderRadius:5,
+                      background:isAct?'#1a3a2a':C.bg2,
+                      display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,flexShrink:0}}>
+                      {cfg.emoji}
+                    </div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontWeight:600,color:C.text,fontSize:10}}>{cfg.shortName}</div>
+                      <div style={{fontSize:9,fontWeight:700,color:tc}}>
+                        {cfg.onlyBuy?'Solo BUY':cfg.onlySell?'Solo SELL':trend}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          ))}
         </aside>
 
         {/* MAIN */}
