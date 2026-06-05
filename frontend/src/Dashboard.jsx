@@ -56,27 +56,53 @@ function drawChart(canvas, state) {
   for(let p=Math.ceil(PN/gs)*gs;p<=PX;p+=gs){
     ctx.beginPath();ctx.moveTo(ML,py(p));ctx.lineTo(ML+CW,py(p));ctx.stroke()
   }
-  // Premium/Discount — prominent zone visualization
-  const midPrice=(PN+PX)/2
-  const midY=py(midPrice)
-  ctx.strokeStyle='rgba(255,255,255,.18)';ctx.lineWidth=1;ctx.setLineDash([5,4])
-  ctx.beginPath();ctx.moveTo(ML,midY);ctx.lineTo(ML+CW,midY);ctx.stroke();ctx.setLineDash([])
-  ctx.fillStyle='rgba(255,255,255,.25)';ctx.font='8px system-ui';ctx.textAlign='right'
-  ctx.fillText('50% EQ',ML+CW-4,midY-3)
-  if(premiumDiscount==='PREMIUM'){
-    ctx.fillStyle='rgba(255,107,107,.08)';ctx.fillRect(ML,MT,CW,midY-MT)
-    ctx.fillStyle='rgba(255,107,107,.55)';ctx.font='bold 10px system-ui';ctx.textAlign='right'
-    ctx.fillText('PREMIUM - VENTAS',ML+CW-8,MT+14)
-  } else if(premiumDiscount==='DISCOUNT'){
-    ctx.fillStyle='rgba(63,185,80,.08)';ctx.fillRect(ML,midY,CW,MT+CH-midY)
-    ctx.fillStyle='rgba(63,185,80,.55)';ctx.font='bold 10px system-ui';ctx.textAlign='right'
-    ctx.fillText('DISCOUNT - COMPRAS',ML+CW-8,MT+CH-5)
-  } else {
-    ctx.fillStyle='rgba(255,255,255,.18)';ctx.font='bold 9px system-ui';ctx.textAlign='right'
-    ctx.fillText('EQUILIBRIUM',ML+CW-8,MT+14)
+  // ── Premium/Discount con Fractal Macro de la IA ──
+  const hasFractal = aiZones?.pd?.fractalHigh && aiZones?.pd?.fractalLow
+  const fractalHigh = hasFractal ? parseFloat(aiZones.pd.fractalHigh) : null
+  const fractalLow  = hasFractal ? parseFloat(aiZones.pd.fractalLow)  : null
+  const eq50Price = hasFractal ? parseFloat(aiZones.pd.eq50) : (PN+PX)/2
+  const midY = py(eq50Price)
+  const pdZone = hasFractal ? (aiZones.pd.zone||premiumDiscount) : premiumDiscount
+
+  // Fractal high line
+  if(hasFractal && fractalHigh) {
+    const fhY=py(fractalHigh)
+    if(fhY>=MT&&fhY<=MT+CH){
+      ctx.strokeStyle='rgba(255,107,107,.45)';ctx.lineWidth=1.5;ctx.setLineDash([8,3])
+      ctx.beginPath();ctx.moveTo(ML,fhY);ctx.lineTo(ML+CW,fhY);ctx.stroke();ctx.setLineDash([])
+      ctx.fillStyle='rgba(255,107,107,.6)';ctx.font='8px system-ui';ctx.textAlign='left'
+      ctx.fillText('Fractal H '+fractalHigh.toFixed(2),ML+4,fhY-3)
+    }
+  }
+  // Fractal low line
+  if(hasFractal && fractalLow) {
+    const flY=py(fractalLow)
+    if(flY>=MT&&flY<=MT+CH){
+      ctx.strokeStyle='rgba(63,185,80,.45)';ctx.lineWidth=1.5;ctx.setLineDash([8,3])
+      ctx.beginPath();ctx.moveTo(ML,flY);ctx.lineTo(ML+CW,flY);ctx.stroke();ctx.setLineDash([])
+      ctx.fillStyle='rgba(63,185,80,.6)';ctx.font='8px system-ui';ctx.textAlign='left'
+      ctx.fillText('Fractal L '+fractalLow.toFixed(2),ML+4,flY+10)
+    }
+  }
+  // Premium zone shading (above EQ)
+  if(midY>MT&&midY<MT+CH){
+    ctx.fillStyle='rgba(255,107,107,.07)';ctx.fillRect(ML,MT,CW,midY-MT)
+    ctx.fillStyle='rgba(63,185,80,.07)';ctx.fillRect(ML,midY,CW,MT+CH-midY)
+  }
+  // 50% EQ line
+  if(midY>=MT&&midY<=MT+CH){
+    ctx.strokeStyle='rgba(255,255,255,.22)';ctx.lineWidth=1.5;ctx.setLineDash([5,4])
+    ctx.beginPath();ctx.moveTo(ML,midY);ctx.lineTo(ML+CW,midY);ctx.stroke();ctx.setLineDash([])
+    const pdCol=pdZone==='PREMIUM'?'rgba(255,107,107,.8)':pdZone==='DISCOUNT'?'rgba(63,185,80,.8)':'rgba(255,255,255,.45)'
+    ctx.fillStyle=pdCol;ctx.font='bold 9px system-ui';ctx.textAlign='right'
+    ctx.fillText('50% EQ '+eq50Price.toFixed(2)+' — '+(pdZone==='PREMIUM'?'PREMIUM':pdZone==='DISCOUNT'?'DISCOUNT':'EQ'),ML+CW-4,midY-3)
+    ctx.fillStyle='rgba(255,107,107,.45)';ctx.font='8px system-ui';ctx.textAlign='left'
+    ctx.fillText('PREMIUM',ML+4,MT+12)
+    ctx.fillStyle='rgba(63,185,80,.45)';ctx.textAlign='left'
+    ctx.fillText('DISCOUNT',ML+4,MT+CH-4)
   }
 
-    // OB Zones
+  // OB Zones
   ;[
     {zones:demandZones,fillA:'rgba(63,185,80,.18)',fillS:'rgba(63,185,80,.06)',stroke:C.green,strokeS:'rgba(63,185,80,.25)',label:'OB Demanda'},
     {zones:supplyZones,fillA:'rgba(255,107,107,.18)',fillS:'rgba(255,107,107,.06)',stroke:C.red,strokeS:'rgba(255,107,107,.25)',label:'OB Oferta'}
