@@ -641,6 +641,7 @@ function M1Monitor({ symbol, aiZones, active, onEntryAlert, pos, setPos, hidden,
   const confirmedRef = React.useRef(false)
   const confirmTypeRef = React.useRef('')
   const zoneVisitedRef = React.useRef(false)
+  const alertFiredRef = React.useRef({})  // tracks which alerts already sent
 
   const pollM1 = useCallback(async () => {
     if (!active || !aiZones?.trade) return
@@ -687,27 +688,28 @@ function M1Monitor({ symbol, aiZones, active, onEntryAlert, pos, setPos, hidden,
       const liquiditySweep = d.liquiditySweep
 
       // Scenario invalidated?
+      // Helper: fire alert only once per type
+      const fireOnce = (key, alertObj) => {
+        if (alertFiredRef.current[key]) return
+        alertFiredRef.current[key] = true
+        onEntryAlert(alertObj)
+      }
+
       if (ctx?.status === 'invalidated') {
         setPhase('invalidated')
-        if (phase !== 'invalidated') {
-          onEntryAlert({
-            type: 'INVALIDATED', side: tr.side, price,
-            confirm: ctx.reason,
-            sl: tr.sl, tp1: tr.tp1,
-            ts: Date.now()
-          })
-        }
+        fireOnce('invalidated', {
+          type: 'INVALIDATED', side: tr.side, price,
+          confirm: ctx.reason, sl: tr.sl, tp1: tr.tp1, ts: Date.now()
+        })
         return
       }
 
       // TP1 reached
-      if (ctx?.status === 'tp1_reached' && phase !== 'tp1_reached') {
+      if (ctx?.status === 'tp1_reached') {
         setPhase('tp1_reached')
-        onEntryAlert({
+        fireOnce('tp1', {
           type: 'TP1', side: tr.side, price,
-          confirm: 'TP1 ALCANZADO',
-          sl: tr.sl, tp1: tr.tp1, tp2: tr.tp2,
-          ts: Date.now()
+          confirm: 'TP1 ALCANZADO', sl: tr.sl, tp1: tr.tp1, tp2: tr.tp2, ts: Date.now()
         })
         return
       }
@@ -769,17 +771,12 @@ function M1Monitor({ symbol, aiZones, active, onEntryAlert, pos, setPos, hidden,
         // Pullback to zone after confirmation = ENTRY
         setPhase('ENTER')
         const alert = {
-          type: 'ENTRY',
-          side: tr.side,
-          price: entry,
+          type: 'ENTRY', side: tr.side, price: entry,
           confirm: confirmTypeRef.current,
-          sl: tr.sl,
-          tp1: tr.tp1,
-          tp2: tr.tp2,
-          ts: Date.now()
+          sl: tr.sl, tp1: tr.tp1, tp2: tr.tp2, ts: Date.now()
         }
         setLastAlert(alert)
-        onEntryAlert(alert)
+        fireOnce('entry', alert)
       } else if (confirmed && !inZone) {
         // Confirmed but waiting for pullback back to zone
         setPhase('pullback')
@@ -809,14 +806,16 @@ function M1Monitor({ symbol, aiZones, active, onEntryAlert, pos, setPos, hidden,
     confirmTypeRef.current = ''
     zoneVisitedRef.current = false
     isFirstPollRef.current = true
+    alertFiredRef.current = {}
     setPhase('waiting')
     setM1Data(null)
   }, [symbol])
 
-  // When aiZones changes (new IA analysis), mark as first poll
-  // but keep any existing M1 confirmation state
+  // When aiZones changes (new IA analysis), reset alert tracking
   useEffect(() => {
     isFirstPollRef.current = true
+    alertFiredRef.current = {}
+    setPhase('waiting')
   }, [aiZones])
 
   useEffect(() => {
@@ -1154,19 +1153,32 @@ export default function Dashboard({user,subscription,onLogout}){
       }
     }
     if(newAlerts.length>0){
+      const now=Date.now()
       setAlerts(prev=>{
-        const existing=new Set(prev.map(a=>a.id))
-        const fresh=newAlerts.filter(a=>!existing.has(a.id))
-        return fresh.length?[...fresh,...prev].slice(0,5):prev
+        // Deduplicate: same id not allowed within 60 seconds
+        const existing=new Map(prev.map(a=>[a.id, a.ts]))
+        const fresh=newAlerts.filter(a=>{
+          const lastTs=existing.get(a.id)
+          return !lastTs || (now-lastTs > 60000)
+        })
+        if(!fresh.length) return prev
+        return [...fresh,...prev].slice(0,3) // max 3 structure alerts
       })
     }
   },[analyze,aiActive,aiZones,symbol,entryHit])
 
   useEffect(()=>{
     if(!alerts.length)return
-    const id=setTimeout(()=>setAlerts(p=>p.slice(1)),8000)
+    const id=setTimeout(()=>setAlerts(p=>p.slice(1)),5000)
     return()=>clearTimeout(id)
   },[alerts])
+
+  // Auto-dismiss entry alerts after 6s
+  useEffect(()=>{
+    if(!entryAlerts.length)return
+    const id=setTimeout(()=>setEntryAlerts([]),6000)
+    return()=>clearTimeout(id)
+  },[entryAlerts])
 
   // Render chart
   const renderChart=useCallback(()=>{
@@ -1334,28 +1346,33 @@ export default function Dashboard({user,subscription,onLogout}){
                 )}
                 {/* Alerts */}
                 {/* Entry alerts from M1 monitor */}
-                {entryAlerts.length>0&&(
-                  <div style={{position:'absolute',top:8,left:'50%',transform:'translateX(-50%)',
-                    display:'flex',flexDirection:'column',gap:4,zIndex:30,pointerEvents:'none',minWidth:340}}>
-                    {entryAlerts.slice(0,2).map((a,i)=>(
-                      <div key={i} style={{background:'rgba(13,17,23,.98)',
-                        border:`3px solid ${a.side==='BUY'?'#2ed573':'#ff4757'}`,
-                        borderRadius:10,padding:'10px 16px',
-                        boxShadow:`0 0 30px ${a.side==='BUY'?'#2ed57355':'#ff475755'}`,
-                        animation:'slideIn .3s ease'}}>
-                        <div style={{display:'flex',alignItems:'center',gap:8}}>
-                          <span style={{fontSize:20}}>{a.side==='BUY'?'▲':'▼'}</span>
-                          <div>
-                            <div style={{fontSize:13,fontWeight:800,color:a.side==='BUY'?'#2ed573':'#ff4757'}}>
-                              ⚡ ENTRADA CONFIRMADA — {a.side}
-                            </div>
-                            <div style={{fontSize:11,color:'#e6edf3'}}>{a.confirm} en M1 | @ {a.price}</div>
-                          </div>
+                {entryAlerts.length>0&&(()=>{
+                  const a=entryAlerts[0]
+                  const isGood=a.type==='ENTRY'||a.type==='TP1'
+                  const col=a.type==='TP1'?'#2ed573':a.type==='INVALIDATED'?'#ff4757':a.side==='BUY'?'#2ed573':'#ff4757'
+                  const icon=a.type==='TP1'?'✅':a.type==='INVALIDATED'?'❌':a.side==='BUY'?'▲':'▼'
+                  const title=a.type==='TP1'?'TP1 ALCANZADO — Asegurar parcial':
+                               a.type==='INVALIDATED'?'ESCENARIO INVALIDADO':
+                               `ENTRADA ${a.side} CONFIRMADA`
+                  return(
+                    <div style={{position:'absolute',top:8,left:'50%',transform:'translateX(-50%)',
+                      zIndex:30,minWidth:300,maxWidth:420}}>
+                      <div style={{background:'rgba(13,17,23,.98)',border:`2px solid ${col}`,
+                        borderRadius:10,padding:'10px 14px',
+                        boxShadow:`0 0 24px ${col}44`,animation:'slideIn .3s ease',
+                        display:'flex',alignItems:'center',gap:10,position:'relative'}}>
+                        <span style={{fontSize:22,flexShrink:0}}>{icon}</span>
+                        <div style={{flex:1}}>
+                          <div style={{fontSize:12,fontWeight:800,color:col}}>{title}</div>
+                          <div style={{fontSize:10,color:'#e6edf3',marginTop:2}}>{a.confirm} | @ {parseFloat(a.price).toFixed(2)}</div>
                         </div>
+                        <button onClick={()=>setEntryAlerts([])}
+                          style={{background:'none',border:'none',color:'#7d8590',cursor:'pointer',
+                            fontSize:16,flexShrink:0,padding:'0 2px'}}>×</button>
                       </div>
-                    ))}
-                  </div>
-                )}
+                    </div>
+                  )
+                })()}
                                 {alerts.length>0&&(
                   <div style={{position:'absolute',top:8,left:'50%',transform:'translateX(-50%)',
                     display:'flex',flexDirection:'column',gap:4,zIndex:10,pointerEvents:'none',minWidth:320,maxWidth:500}}>
@@ -1433,13 +1450,21 @@ export default function Dashboard({user,subscription,onLogout}){
                   setHidden={setM1Hidden}
                   onM1Data={d=>setM1LiveData(d)}
                   onEntryAlert={alert=>{
-                    setEntryAlerts(prev=>[alert,...prev].slice(0,3))
-                    setAlerts(prev=>[{
-                      id:'m1-entry-'+Date.now(),
-                      msg:alert.side==='BUY'?'⚡ M1 CONFIRMADO — ENTRADA BUY LISTA':'⚡ M1 CONFIRMADO — ENTRADA SELL LISTA',
-                      color:alert.side==='BUY'?'#2ed573':'#ff4757',
-                      ts:Date.now()
-                    },...prev].slice(0,5))
+                    // Replace — never stack multiple entry alerts
+                    setEntryAlerts([alert])
+                    // Add to structure alerts only if not duplicate type
+                    setAlerts(prev=>{
+                      const key = 'm1-' + alert.type
+                      if(prev.some(a=>a.id===key)) return prev
+                      return [{
+                        id: key,
+                        msg: alert.type==='TP1' ? '✅ TP1 ALCANZADO — Asegurar parcial' :
+                             alert.type==='INVALIDATED' ? '❌ Escenario invalidado' :
+                             alert.side==='BUY' ? '⚡ M1 CONFIRMADO — ENTRADA BUY' : '⚡ M1 CONFIRMADO — ENTRADA SELL',
+                        color: alert.type==='TP1'?'#2ed573':alert.type==='INVALIDATED'?'#ff4757':alert.side==='BUY'?'#2ed573':'#ff4757',
+                        ts: Date.now()
+                      }, ...prev].slice(0,2)
+                    })
                   }}
                 />
                 {/* Show card button when hidden */}}
