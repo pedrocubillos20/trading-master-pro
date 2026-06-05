@@ -1430,7 +1430,7 @@ async function loadHistoryFromSupabase() {
         console.log(`⏰ Señal #${s.id} expirada (${Math.round(age/60000)}min sin cerrar)`);
       } else if (assetData[s.symbol]) {
         // Restaurar en el asset para que el gráfico la muestre
-        assetData[s.symbol].lockedSignal = { ...s };
+        // lockedSignal assignment removed — IA-only mode
         console.log(`🔄 Señal #${s.id} restaurada en ${s.symbol} (${s.action} @ ${s.entry})`);
       }
     });
@@ -4155,7 +4155,7 @@ const SMC = {
 
     if (signals.length === 0) {
       let reason = 'Esperando setup';
-      if (!pullback) reason = 'Sin pullback a zona';
+      if (!pullback) reason = '';
       else if (structureM5.trend === 'NEUTRAL') reason = 'Estructura M5 neutral';
       else if (!mtfConfluence && !choch) reason = 'Sin MTF Confluence ni CHoCH';
       else if (choch && !pullback) reason = `CHoCH ${choch.type} detectado pero sin pullback a zona`;
@@ -5111,7 +5111,7 @@ function connectDeriv() {
           // Actualizar estado del mercado
           marketStatus[symbol].lastDataReceived = Date.now();
           marketStatus[symbol].isActive = true;
-          checkSignalHits();
+          // checkSignalHits() removed — IA-only mode
         }
       }
       
@@ -5122,7 +5122,7 @@ function connectDeriv() {
           // Actualizar estado del mercado
           marketStatus[symbol].lastDataReceived = Date.now();
           marketStatus[symbol].isActive = true;
-          checkSignalHits();
+          // checkSignalHits() removed — IA-only mode
         }
       }
       
@@ -5203,26 +5203,37 @@ async function analyzeAsset(symbol) {
   const config = ASSETS[symbol];
   if (!data || !config || data.candles.length < 30) return;
 
-  // Cooldown 30s — no spamear el análisis
   const now = Date.now();
   if (now - (data.lastAnalysis||0) < 30000) return;
   data.lastAnalysis = now;
 
-  // Log de estructura — sin generar señales
-  const logS = (tf,s) => s?.trend ? `${tf}:${s.trend.slice(0,4)}(${s.strength||0}%)` : `${tf}:---`;
-  console.log(
-    `📈 [${config.shortName}] ${logS('H1',data.structureH1)} | ${logS('M15',data.structureM15)} | ${logS('M5',data.structure)}` +
-    ` | OBs:D${(data.demandZones||[]).filter(z=>!z.mitigated).length}/S${(data.supplyZones||[]).filter(z=>!z.mitigated).length}` +
-    ` | Price:${(data.price||0).toFixed(config.decimals)} | ${data.premiumDiscount||'EQ'}`
-  );
-
-  // Solo detección de zonas SMC — sin señales automáticas, sin Telegram, sin BD
+  // ── Run full SMC analysis — updates OBs, FVGs, structure, liquidity ──
+  // This runs every 30s keeping zones fresh for live M1 monitoring
   await SMC.analyze(data.candles, data.candlesH1, config, data, data.candlesM15, data.candlesM1);
 
-  // Calcular y guardar avgRange para que la IA lo use en el SL
+  // ── Update avgRange (last 20 M5 candles) ──
   if (data.candles.length >= 20) {
-    const recent = data.candles.slice(-20);
-    data.avgRange = recent.reduce((sum, c) => sum + Math.abs(c.high - c.low), 0) / recent.length;
+    const recent20 = data.candles.slice(-20);
+    data.avgRange = recent20.reduce((sum, c) => sum + Math.abs(c.high - c.low), 0) / 20;
+  }
+
+  // ── Update M1 avgRange separately (more precise for entry timing) ──
+  if (data.candlesM1 && data.candlesM1.length >= 20) {
+    const m1recent = data.candlesM1.slice(-20);
+    data.avgRangeM1 = m1recent.reduce((sum, c) => sum + Math.abs(c.high - c.low), 0) / 20;
+  }
+
+  // ── Mark premium/discount with updated structure ──
+  if (data.candles.length >= 2) {
+    const structureLog = `📈 [${config.shortName}]` +
+      ` H1:${data.structureH1?.trend?.slice(0,4)||'----'}` +
+      ` M15:${data.structureM15?.trend?.slice(0,4)||'----'}` +
+      ` M5:${data.structure?.trend?.slice(0,4)||'----'}` +
+      ` | OBs:D${(data.demandZones||[]).filter(z=>!z.mitigated).length}` +
+      `/S${(data.supplyZones||[]).filter(z=>!z.mitigated).length}` +
+      ` | ${(data.price||0).toFixed(config.decimals)}` +
+      ` | ${data.premiumDiscount||'EQ'}`;
+    console.log(structureLog);
   }
 }
 
@@ -6493,7 +6504,7 @@ app.get('/api/m1/status/:symbol', (req, res) => {
 
   // ── Real CHoCH and BOS detection using SMC engine ──
   const rawChoch = SMC.detectCHoCH(recent, swingsM1);
-  const structureM1 = SMC.detectStructure(recent);
+  const structureM1 = SMC.analyzeStructure ? SMC.analyzeStructure(recent) : null;
   const rawBos = SMC.detectBOS(recent, swingsM1, structureM1);
 
   let chochM1 = null;

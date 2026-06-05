@@ -841,7 +841,7 @@ function M1Monitor({ symbol, aiZones, active, onEntryAlert, pos, setPos, hidden,
     ENTER:         { icon: '⚡', text: `ENTRAR AHORA — ${isBuy?'BUY':'SELL'} @ ${tr.entry}`, col: tradeCol, pulse: true, glow: true },
     invalidated:   { icon: '❌', text: 'Escenario 1 INVALIDADO — SL tocado', col: '#ff4757' },
     tp1_reached:   { icon: '✅', text: 'TP1 ALCANZADO — Asegurar parcial', col: '#2ed573', pulse: true },
-    scenario2:     { icon: '🔀', text: `ESCENARIO 2 ACTIVO — ${aiZones?.scenarios?.s2?.label||'Alternativo'}`, col: '#f9ca24', pulse: true },
+    scenario2:     { icon: '🔀', text: `S2 ACTIVO${aiZones?.scenarios?.s2?.activation?' — activación: '+aiZones.scenarios.s2.activation:''}`, col: '#f9ca24', pulse: true, glow: true },
   }
 
   const info = phaseInfo[phase] || phaseInfo.waiting
@@ -947,10 +947,47 @@ function M1Monitor({ symbol, aiZones, active, onEntryAlert, pos, setPos, hidden,
               <span style={{color:'#f9ca24',fontSize:9}}>{m1Data.ctx.nextAction?.slice(0,30)}</span>
             </div>
           )}
-          <div style={{display:'flex',justifyContent:'space-between',fontSize:10}}>
+          <div style={{display:'flex',justifyContent:'space-between',fontSize:10,marginBottom:2}}>
             <span style={{color:'#7d8590'}}>Precio actual</span>
             <span style={{fontWeight:700,color:'#e6edf3'}}>{m1Data.price?.toFixed(2)}</span>
           </div>
+          {m1Data.ctx && (
+            <div style={{display:'flex',justifyContent:'space-between',fontSize:10,
+              background:m1Data.ctx.status==='active'?'rgba(63,185,80,.08)':
+                         m1Data.ctx.status==='tp1_reached'?'rgba(63,185,80,.15)':
+                         m1Data.ctx.status==='invalidated'?'rgba(255,71,87,.1)':
+                         'rgba(249,202,36,.08)',
+              borderRadius:3,padding:'2px 4px'}}>
+              <span style={{color:'#7d8590',fontSize:9}}>Escenario</span>
+              <span style={{fontWeight:700,fontSize:9,
+                color:m1Data.ctx.status==='active'?'#3fb950':
+                      m1Data.ctx.status==='tp1_reached'?'#2ed573':
+                      m1Data.ctx.status==='invalidated'?'#ff4757':'#f9ca24'}}>
+                S{m1Data.ctx.activeScenario||'?'} {
+                  m1Data.ctx.status==='active'?'✓ Activo':
+                  m1Data.ctx.status==='tp1_reached'?'TP1 ✅':
+                  m1Data.ctx.status==='invalidated'?'❌ Inválido':
+                  m1Data.ctx.status==='scenario2'?'→ S2':'?'
+                }
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Scenario 2 details when active */}
+      {phase === 'scenario2' && aiZones?.scenarios?.s2 && (
+        <div style={{marginTop:8,borderTop:'1px solid #30363d',paddingTop:8}}>
+          <div style={{fontSize:10,fontWeight:800,color:'#f9ca24',marginBottom:4}}>🔀 Preparar Escenario 2</div>
+          <div style={{fontSize:10,color:'#e6edf3',marginBottom:3}}>
+            Dirección: <strong style={{color:aiZones.scenarios.s2.direction==='UP'?'#2ed573':'#ff4757'}}>
+              {aiZones.scenarios.s2.direction==='UP'?'▲ COMPRA':'▼ VENTA'}
+            </strong>
+          </div>
+          <div style={{fontSize:10,color:'#7d8590'}}>
+            Activación: <strong style={{color:'#f9ca24'}}>{aiZones.scenarios.s2.activation}</strong>
+          </div>
+          <div style={{fontSize:9,color:'#7d8590',marginTop:4}}>{aiZones.scenarios.s2.label?.slice(0,50)}</div>
         </div>
       )}
 
@@ -1161,7 +1198,7 @@ export default function Dashboard({user,subscription,onLogout}){
       isM1,
       m1MonitorData: isM1 && m1LiveData ? m1LiveData : null
     })
-  },[analyze,tf,zoom,offsetX,aiZones,aiActive])
+  },[analyze,tf,zoom,offsetX,aiZones,aiActive,m1LiveData])
 
   useEffect(()=>{renderChart()},[renderChart])
   useEffect(()=>{
